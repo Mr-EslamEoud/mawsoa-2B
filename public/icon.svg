@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Define fonts or filters if needed -->
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;700;900&amp;display=swap');
+      .text-title {
+        font-family: 'Cairo', 'Arial', sans-serif;
+        font-weight: 950;
+        fill: #112a46;
+      }
+      .text-subtitle {
+        font-family: 'Cairo', 'Arial', sans-serif;
+        font-weight: 700;
+        fill: #112a46;
+      }
+      .text-desc {
+        font-family: 'Cairo', 'Arial', sans-serif;
+        font-weight: 700;
+        fill: #1d4ed8;
+      }
+    </style>
+  </defs>
+
+  <!-- Outer Squircle Box (matches user image border) -->
+  <rect x="12" y="12" width="488" height="488" rx="100" fill="#ffffff" stroke="#112a46" stroke-width="12" />
+
+  <!-- 1. Orange Graduation Cap -->
+  <g id="graduation-cap">
+    <!-- Cap Base Underside (3D layer) -->
+    <path d="M 195 140 L 195 180 C 195 198, 317 198, 317 180 L 317 140 Z" fill="#e66a00" />
+    <path d="M 195 140 L 195 174 C 195 192, 317 192, 317 174 L 317 140 Z" fill="#ff7a00" />
+    
+    <!-- Flat Top Mortarboard Diamond -->
+    <!-- Front/Top facing diamond with subtle orange 3D edge -->
+    <path d="M 256 70 L 370 115 L 256 160 L 142 115 Z" fill="#e66a00" />
+    <path d="M 256 65 L 370 110 L 256 155 L 142 110 Z" fill="#ff8c00" />
+    <path d="M 256 65 L 362 107 L 256 149 L 150 107 Z" fill="#ff9f1a" />
+    <path d="M 256 65 L 354 104 L 256 143 L 158 104 Z" fill="#ffa801" />
+
+    <!-- Cap Button -->
+    <ellipse cx="256" cy="107" rx="8" ry="4" fill="#ff7a00" />
+
+    <!-- Tassel String and Bulb -->
+    <!-- Hanging down the left side -->
+    <path d="M 252 107 C 210 115, 182 145, 178 175" fill="none" stroke="#d56000" stroke-width="5" stroke-linecap="round" />
+    <path d="M 178 175 L 175 192" fill="none" stroke="#ff7a00" stroke-width="7" stroke-linecap="round" />
+    <!-- Golden Bulb/Tassel Base -->
+    <path d="M 173 192 C 165 195, 161 214, 170 216 C 178 214, 180 195, 173 192 Z" fill="#ff7a00" />
+  </g>
+
+  <!-- 2. Stylized Human Figures & Open Book (Centered) -->
+  <g id="book-and-student" transform="translate(0, 10)">
+    <!-- Stylized Human Figure (Emerging from book center) -->
+    <!-- Human Head -->
+    <circle cx="256" cy="225" r="16" fill="#112a46" />
+    
+    <!-- Human Body / Outstretched Arms -->
+    <path d="M 210 230 C 230 240, 240 250, 256 265 C 272 250, 282 240, 302 230 C 265 240, 247 240, 210 230 Z" fill="#112a46" />
+
+    <!-- Open Book Pages (Left and Right Wings) -->
+    <!-- Left Wing (Top Orange Blade) -->
+    <path d="M 250 245 C 215 220, 170 200, 108 205 C 130 220, 175 245, 235 264 Z" fill="#ff7a00" />
+    <!-- Left Wing (Bottom Dark Blue Swoop) -->
+    <path d="M 244 263 C 210 248, 140 230, 80 236 C 80 236, 120 270, 170 295 C 205 285, 225 275, 244 263 Z" fill="#112a46" />
+    <path d="M 244 266 C 210 252, 140 234, 76 240 C 76 240, 115 278, 170 304 C 202 293, 225 282, 244 266 Z" fill="#0f172a" />
+
+    <!-- Right Wing (Top Orange Blade) -->
+    <path d="M 262 245 C 297 220, 342 200, 404 205 C 382 220, 337 245, 277 264 Z" fill="#ff7a00" />
+    <!-- Right Wing (Bottom Dark Blue Swoop) -->
+    <path d="M 268 263 C 302 248, 372 230, 432 236 C 432 236, 392 270, 342 295 C 307 285, 287 275, 268 263 Z" fill="#112a46" />
+    <path d="M 268 266 C 302 252, 372 234, 436 240 C 436 240, 397 278, 342 304 C 309 293, 287 282, 268 266 Z" fill="#0f172a" />
+  </g>
+
+  <!-- 3. Typography Sector -->
+  <!-- "موسوعة" - Stylized Big Arabic Accent -->
+  <text x="256" y="365" class="text-title" font-size="76" text-anchor="middle" letter-spacing="1">مَوْسُوعَة</text>
+
+  <!-- "الكنز التعليمي" Divider with flanks -->
+  <g id="divider-with-text" transform="translate(0, 15)">
+    <!-- Thin Orange Lines on flanks -->
+    <line x1="102" y1="392" x2="148" y2="392" stroke="#ff7a00" stroke-width="4" stroke-linecap="round" />
+    
+    <!-- Arabic Text "الكنز التعليمي" -->
+    <!-- "الكنز" in Orange, "التعليمي" in Navy -->
+    <text x="256" y="402" class="text-subtitle" font-size="25" text-anchor="middle">
+      <tspan fill="#ff7a00">الكنز</tspan> <tspan fill="#112a46">التعليمي</tspan>
+    </text>
+
+    <line x1="364" y1="392" x2="410" y2="392" stroke="#ff7a00" stroke-width="4" stroke-linecap="round" />
+  </g>
+
+  <!-- Tagline at bottom -->
+  <text x="256" y="455" class="text-desc" font-size="15" text-anchor="middle" fill="#1d4ed8">بوابتك الذكية لإتقان مادة التاريخ</text>
+</svg>
