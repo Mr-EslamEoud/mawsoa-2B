@@ -196,11 +196,25 @@ export const buildCourseData = (flatQuestions: FlatQuestionRow[]): Unit[] => {
     const cleanConcept = cleanField(row.concept);
     const cleanParagraph = cleanField(row.paragraph);
 
+    let resolvedCorrect = cleanCorrect;
+    if (determinedType === 'mcq' && finalOptions.length > 0) {
+      const trimmedCorrect = cleanCorrect.trim().replace(/[\(\)\[\]\.\-\:\–\—\s]/g, '');
+      const letterIndexMap: Record<string, number> = {
+        'أ': 0, 'ا': 0, '1': 0, '١': 0, 'A': 0, 'a': 0, 'الاول': 0, 'الأول': 0,
+        'ب': 1, '2': 1, '٢': 1, 'B': 1, 'b': 1, 'الثاني': 1,
+        'ج': 2, '3': 2, '٣': 2, 'C': 2, 'c': 2, 'الثالث': 2,
+        'د': 3, '4': 3, '٤': 3, 'D': 3, 'd': 3, 'الرابع': 3,
+      };
+      if (letterIndexMap[trimmedCorrect] !== undefined && finalOptions[letterIndexMap[trimmedCorrect]]) {
+        resolvedCorrect = finalOptions[letterIndexMap[trimmedCorrect]];
+      }
+    }
+
     const question: Question = {
       type: determinedType,
       q: cleanQ,
       options: finalOptions,
-      correct: cleanCorrect,
+      correct: resolvedCorrect,
       reason: cleanReason,
       answer: cleanReason,
       concept: cleanConcept,

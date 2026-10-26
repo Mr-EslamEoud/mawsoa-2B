@@ -665,7 +665,7 @@ export const AdminResultsApprovalTab: React.FC<AdminResultsApprovalTabProps> = (
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    const cleanPhone = sub.studentPhone.replace(/[^\d]/g, '');
+                                    const cleanPhone = String(sub.studentPhone || '').replace(/[^\d]/g, '');
                                     const intl = cleanPhone.startsWith('0') ? `+20${cleanPhone.slice(1)}` : `+20${cleanPhone}`;
                                     const msg = encodeURIComponent(
                                       `مرحباً بك يا بطل (${sub.studentName}) 🌟\nمعك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +

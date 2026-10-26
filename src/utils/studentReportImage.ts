@@ -78,11 +78,11 @@ function drawOfficialSeal(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.textBaseline = 'middle';
   
   ctx.fillStyle = '#0f274a';
-  ctx.font = 'black 10px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 10px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText('★ منصة الكنز التعليمية ★', cx, cy - 24);
 
   ctx.fillStyle = '#c59b27';
-  ctx.font = 'black 14px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 14px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText('مُعتمد رسمياً', cx, cy - 8);
 
   ctx.fillStyle = '#0f274a';
@@ -222,20 +222,20 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.fillStyle = goldStripe;
   ctx.fillRect(80, currentY + 3, width - 160, 4);
 
-  // الترويسة العلوية المصغرة
+  // الترويسة العلوية المصغرة (تمت إزالة جمهورية مصر العربية)
   ctx.fillStyle = '#e2e8f0';
-  ctx.font = 'bold 13px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = 'bold 13px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('جمهورية مصر العربية • منصة الكنز التعليمية المتخصصة في التاريخ والجغرافيا', width / 2, currentY + 28);
+  ctx.fillText('منصة الكنز التعليمية المتخصصة في التاريخ والجغرافيا', width / 2, currentY + 28);
 
   // عنوان المنصة الرئيسي
   ctx.fillStyle = '#fde047';
-  ctx.font = 'black 32px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 32px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText('✨ موسوعة الكنز التعليمية ✨', width / 2, currentY + 65);
 
   // اسم المعلم ورتبته
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 20px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = 'bold 20px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText('إشراف وخبرة: الأستاذ إسلام سعود', width / 2, currentY + 102);
 
   // شريط اسم الوثيقة الرسمي بناءً على اختيار المعلم
@@ -251,7 +251,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.stroke();
 
   ctx.fillStyle = '#fef08a';
-  ctx.font = 'bold 16px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = 'bold 16px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText(docTitleText, width / 2, currentY + 147);
 
   currentY += headerHeight + spacing;
@@ -284,10 +284,10 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.textAlign = 'center';
   ctx.fillText(isFemale ? '👧' : '👦', width - 90, currentY + 57);
 
-  // اسم الطالب
+  // اسم الطالب بخط واضح وفخم ومميز
   ctx.textAlign = 'right';
   ctx.fillStyle = '#0f172a';
-  ctx.font = 'black 26px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 28px "Cairo", "Tajawal", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText(student.name, width - 145, currentY + 38);
 
   // شارات الطالب الأكاديمية
@@ -356,7 +356,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.fillText(isSingleUnit ? 'دروس الوحدة المنجزة' : 'الاختبارات المنجزة', width - 52, kpiY + 26);
   
   ctx.fillStyle = '#0f172a';
-  ctx.font = 'black 26px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 26px "Cairo", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText(`${toEasternArabic(solvedCount)} / ${toEasternArabic(totalLessonsInReport)}`, width - 52, kpiY + 60);
 
   ctx.fillStyle = completionRate === 100 ? '#15803d' : '#64748b';
@@ -376,7 +376,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.fillText(isSingleUnit ? 'متوسط درجات الوحدة' : 'المعدل العام للدرجات', kpi2X + kpiBoxWidth - 18, kpiY + 26);
 
   ctx.fillStyle = avgScore >= 85 ? '#15803d' : avgScore >= 65 ? '#1d4ed8' : avgScore > 0 ? '#ea580c' : '#94a3b8';
-  ctx.font = 'black 28px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 28px "Cairo", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText(`${toEasternArabic(avgScore)}٪`, kpi2X + kpiBoxWidth - 18, kpiY + 60);
 
   ctx.font = 'bold 13px "Cairo", "Segoe UI", Tahoma, sans-serif';
@@ -439,7 +439,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   // 5. عنوان جدول الدرجات التفصيلي الرسمي
   ctx.textAlign = 'right';
   ctx.fillStyle = '#0f172a';
-  ctx.font = 'black 22px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 22px "Cairo", "Segoe UI", Tahoma, sans-serif';
   const tableTitle = isSingleUnit && targetUnit
     ? `📊 جدول تفاصيل درجات واختبارات (${targetUnit.title}):`
     : '📊 جدول تفاصيل درجات واختبارات كافة وحدات ودروس المنهج:';
@@ -607,7 +607,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
         ctx.stroke();
 
         ctx.fillStyle = badgeText;
-        ctx.font = 'black 14px "Cairo", "Segoe UI", Tahoma, sans-serif';
+        ctx.font = '900 14px "Cairo", "Segoe UI", Tahoma, sans-serif';
         ctx.fillText(`${toEasternArabic(score)}٪`, rowCursorX + colScoreW / 2, currentY + tableRowHeight / 2);
       } else {
         ctx.fillStyle = '#94a3b8';
@@ -686,16 +686,36 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.fillText('💡 التوجيه التربوي والتقييم الأكاديمي الشامل من الأستاذ إسلام سعود:', width - 55, currentY + 28);
 
   const adviceText = avgScore >= 85
-    ? `ما شاء الله تبارك الله! يُظهر الطالب (${student.name}) استيعاباً رفيعاً وفهماً ناضجاً للمفاهيم ونقاط الربط. نوصي باستمرار حل التدريبات للمحافظة على التميز والتأهل لأعلى مراتب لوحة الشرف.`
+    ? `ما شاء الله! يُظهر الطالب (${student.name}) استيعاباً ممتازاً وتفوقاً ملحوظاً. نوصي بمواصلة التدريب للحفاظ على صدارة لوحة الشرف وتحقيق الدرجة النهائية بإذن الله.`
     : avgScore >= 65
-    ? `أداء طيب وجهد مشكور للطالب (${student.name}). لضمان التقفيل التام وتحقيق الدرجة النهائية، يُرجى التركيز على مراجعة التعليلات والمفاهيم المرتبطة في الأسئلة التي حدث فيها خطأ.`
+    ? `أداء طيب وجهد مشكور للطالب (${student.name}). نوصي بمراجعة بنك الأخطاء وتفسيرات الإجابات بدقة لضمان الإتقان التام والوصول إلى الدرجة النهائية.`
     : avgScore > 0
-    ? `يحتاج الطالب (${student.name}) إلى مزيد من التركيز والمراجعة المنتظمة، والاستفادة من نمط "إعادة الاختبار للتدريب" وبنك الأخطاء الدائم لترسيخ المفاهيم قبل الانتقال للوحدات التالية.`
+    ? `يحتاج الطالب (${student.name}) إلى مزيد من التركيز والمراجعة المنتظمة، والاستفادة من إعادة الاختبار وبنك الأخطاء لترسيخ المفاهيم ورفع المستوى.`
     : `لم يقم الطالب بأداء الاختبارات المقررة حتى الآن. يُرجى حثه على الانتظام والدخول لاختبارات المنصة أولاً بأول لمتابعة مستواه بصورة دقيقة.`;
 
   ctx.fillStyle = '#334155';
   ctx.font = 'bold 13.5px "Cairo", "Segoe UI", Tahoma, sans-serif';
-  ctx.fillText(adviceText, width - 55, currentY + 65);
+
+  // تقسيم النص تلقائياً إلى أسطر حتى لا يخرج عن حدود البطاقة إطلاقاً
+  const maxAdviceWidth = width - 110;
+  const words = adviceText.split(' ');
+  const adviceLines: string[] = [];
+  let curLine = '';
+
+  for (let i = 0; i < words.length; i++) {
+    const testLine = curLine ? `${curLine} ${words[i]}` : words[i];
+    if (ctx.measureText(testLine).width <= maxAdviceWidth) {
+      curLine = testLine;
+    } else {
+      if (curLine) adviceLines.push(curLine);
+      curLine = words[i];
+    }
+  }
+  if (curLine) adviceLines.push(curLine);
+
+  adviceLines.forEach((lineStr, lineIdx) => {
+    ctx.fillText(lineStr, width - 55, currentY + 58 + (lineIdx * 24));
+  });
 
   currentY += adviceBoxHeight + spacing;
 
@@ -714,7 +734,7 @@ export async function generateStudentReportImage(options: GenerateReportOptions)
   ctx.fillText('معلم المادة وخبير التقييم الأكاديمي: ✍️', width - 60, currentY + 38);
 
   ctx.fillStyle = '#c59b27';
-  ctx.font = 'black 22px "Cairo", "Segoe UI", Tahoma, sans-serif';
+  ctx.font = '900 22px "Cairo", "Segoe UI", Tahoma, sans-serif';
   ctx.fillText('الأستاذ: إسلام سعود', width - 60, currentY + 74);
 
   ctx.fillStyle = '#64748b';

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Unit, 
@@ -23,6 +24,7 @@ import {
   subjectName, 
   gradeName, 
   simpleHash, 
+  verifyStaffPassword,
   toEasternArabic, 
   formatPhoneStr, 
   detectArabicGender,
@@ -32,7 +34,8 @@ import {
   getYoutubeEmbedLink,
   getDirectPdfLink,
   getPdfViewerLink,
-  downloadWatermarkedPdf 
+  downloadWatermarkedPdf,
+  checkAnswerAccurately
 } from './utils';
 import { buildCourseData, FlatQuestionRow } from './courseBuilder';
 import defaultQuestionsData from './defaultQuestions.json';
@@ -44,6 +47,7 @@ import { LessonPdfManagerModal } from './components/LessonPdfManagerModal';
 import { StudentAnalyticsModal } from './components/StudentAnalyticsModal';
 import { TeacherExamSandboxModal } from './components/TeacherExamSandboxModal';
 import { AdminEssayReviewTab } from './components/AdminEssayReviewTab';
+import { AdminExamScheduleTab } from './components/AdminExamScheduleTab';
 import { StudentApprovedEssayModal } from './components/StudentApprovedEssayModal';
 import { StudentEssayListModal } from './components/StudentEssayListModal';
 import { MistakesNotebookModal } from './components/MistakesNotebookModal';
@@ -52,6 +56,8 @@ import { FaithFloatingToast } from './components/FaithFloatingToast';
 import { getGeminiApiKey, setGeminiApiKey, evaluateEssayAnswer } from './aiEvaluationService';
 import { 
   getExamConfig, 
+  getAllExamConfigs,
+  syncExamConfigsFromCloud,
   getQuestionMaxScore, 
   detectEssayType, 
   savePendingEssaySubmission, 
@@ -195,6 +201,7 @@ export default function App() {
     return [];
   });
   const [isSavingLessons, setIsSavingLessons] = useState<boolean>(false);
+  const [isSyncingExamConfigs, setIsSyncingExamConfigs] = useState<boolean>(false);
   const [isReviewMode, setIsReviewMode] = useState<boolean>(false);
   const [isPracticeMode, setIsPracticeMode] = useState<boolean>(false);
   const [showPasswordInput, setShowPasswordInput] = useState<boolean>(false);
@@ -336,6 +343,7 @@ export default function App() {
   const [isScreenObfuscated, setIsScreenObfuscated] = useState<boolean>(false);
   const [tabSwitchStrikes, setTabSwitchStrikes] = useState<number>(0);
   const tabSwitchStrikesRef = useRef<number>(0);
+  const lastStrikeTimestampRef = useRef<number>(0);
   const [tabSwitchWarningModal, setTabSwitchWarningModal] = useState<{ open: boolean; strikes: number; max: number } | null>(null);
   const [offlineGateStatus, setOfflineGateStatus] = useState<'none' | 'require_offline_to_start' | 'require_online_to_submit'>('none');
 
@@ -452,17 +460,19 @@ export default function App() {
 
 
 
-  // إرسال ومزامنة تسليمات المقالي سحابياً مع شيت جوجل
+  // إرسال ومزامنة تسليمات المقالي سحابياً مع شيت جوجل (مع طابور إعادة المحاولة التلقائي عند انقطاع النت)
   const syncEssaySubmissionToCloud = async (sub: StudentEssaySubmission) => {
     try {
       const isOnline = (studentData?.code && studentData.code.includes('ESON')) || (studentData as any)?.gender === 'أونلاين' || sub.studentType === 'أونلاين';
-      await fetch(API_URL, {
+      const cleanPhone = formatPhoneStr(sub.studentPhone || inputPhone || '');
+      const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
+      const res = await fetch(API_URL, {
         method: 'POST',
         body: JSON.stringify({
           action: 'saveEssaySubmission',
           date: new Date().toLocaleString('ar-EG'),
-          studentName: sub.studentName,
-          studentPhone: sub.studentPhone,
+          studentName: sub.studentName || studentName || 'طالب',
+          studentPhone: fullPhone,
           quizTitle: sub.quizTitle,
           questions: sub.questions,
           isApproved: sub.isFullyApproved,
@@ -470,8 +480,19 @@ export default function App() {
           apiKey: SECRET_API_KEY
         })
       });
+      if (!res.ok) throw new Error('Network error');
+      const resData = await res.json();
+      if (resData.status !== 'success') throw new Error('Server error');
     } catch (e) {
-      console.error("Cloud essay sync error:", e);
+      console.warn("Cloud essay sync failed, queued for offline auto-sync:", e);
+      try {
+        const offlineEssays: any[] = JSON.parse(localStorage.getItem('offlineEssaySubmissions') || '[]');
+        const exists = offlineEssays.some((item: any) => item.id === sub.id || (item.studentPhone === sub.studentPhone && item.quizTitle === sub.quizTitle));
+        if (!exists) {
+          offlineEssays.push(sub);
+          localStorage.setItem('offlineEssaySubmissions', JSON.stringify(offlineEssays));
+        }
+      } catch (storageErr) {}
     }
   };
 
@@ -570,7 +591,15 @@ export default function App() {
   }, [screen, inputPhone, studentData]);
   
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
-  const [data, setData] = useState<Unit[]>([]); 
+  const [data, setData] = useState<Unit[]>(() => {
+    try {
+      const cachedStr = localStorage.getItem('cachedQuestionsData');
+      const raw = cachedStr ? JSON.parse(cachedStr) : defaultQuestionsData;
+      return buildCourseData(raw as FlatQuestionRow[]);
+    } catch(e) {
+      return buildCourseData(defaultQuestionsData as FlatQuestionRow[]);
+    }
+  }); 
 
   const isLessonActive = (lessonId: string) => {
     if (publishedLessons.length === 0 && localStorage.getItem('publishedLessons_init') !== 'true') return true;
@@ -617,6 +646,8 @@ export default function App() {
     count: number;
     firstUnansweredIndex: number;
   } | null>(null);
+  const [preSubmitReviewModalOpen, setPreSubmitReviewModalOpen] = useState<boolean>(false);
+  const [preSubmitFilter, setPreSubmitFilter] = useState<'all' | 'mcq' | 'tf' | 'essay' | 'unanswered'>('all');
   const [skippedQuestions, setSkippedQuestions] = useState<number[]>([]);
   const [showSkippedModal, setShowSkippedModal] = useState<boolean>(false);
   const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
@@ -639,6 +670,68 @@ export default function App() {
   }, []);
   
   const [lessonModalOptions, setLessonModalOptions] = useState<Lesson | null>(null);
+
+  // إحصائيات مراجعة الاختبار قبل التسليم
+  const examReviewStats = useMemo(() => {
+    if (!activeLesson || !activeLesson.questions) {
+      return { total: 0, answered: 0, unanswered: 0, mcq: 0, tf: 0, essay: 0 };
+    }
+    let answered = 0;
+    let unanswered = 0;
+    let mcq = 0;
+    let tf = 0;
+    let essay = 0;
+
+    activeLesson.questions.forEach((q, idx) => {
+      const isEssay = q.type === 'essay';
+      const isTf = q.type === 'tf' || q.type === 't/f' || q.type === 'true_false' || 
+                   (Array.isArray(q.options) && q.options.length === 2 && (q.options.includes('صح') || q.options.includes('خطأ')));
+      if (isEssay) essay++;
+      else if (isTf) tf++;
+      else mcq++;
+
+      const ans = userAnswers[idx];
+      const hasAns = ans && (
+        isEssay 
+          ? Boolean(ans.studentAnswerText && ans.studentAnswerText.trim().length > 0)
+          : Boolean(ans.selected && ans.selected.trim().length > 0)
+      );
+
+      if (hasAns) answered++;
+      else unanswered++;
+    });
+
+    return { total: activeLesson.questions.length, answered, unanswered, mcq, tf, essay };
+  }, [activeLesson, userAnswers]);
+
+  // قائمة الأسئلة المفلترة للمراجعة قبل التسليم
+  const filteredReviewQuestions = useMemo(() => {
+    if (!activeLesson || !activeLesson.questions) return [];
+    return activeLesson.questions.map((q, idx) => {
+      const isEssay = q.type === 'essay';
+      const isTf = q.type === 'tf' || q.type === 't/f' || q.type === 'true_false' || 
+                   (Array.isArray(q.options) && q.options.length === 2 && (q.options.includes('صح') || q.options.includes('خطأ')));
+      const category: 'mcq' | 'tf' | 'essay' = isEssay ? 'essay' : (isTf ? 'tf' : 'mcq');
+      const ans = userAnswers[idx];
+      const hasAns = ans && (
+        isEssay 
+          ? Boolean(ans.studentAnswerText && ans.studentAnswerText.trim().length > 0)
+          : Boolean(ans.selected && ans.selected.trim().length > 0)
+      );
+      const answerText = isEssay ? (ans?.studentAnswerText || '') : (ans?.selected || '');
+      return {
+        q,
+        idx,
+        category,
+        hasAns,
+        answerText
+      };
+    }).filter(item => {
+      if (preSubmitFilter === 'all') return true;
+      if (preSubmitFilter === 'unanswered') return !item.hasAns;
+      return item.category === preSubmitFilter;
+    });
+  }, [activeLesson, userAnswers, preSubmitFilter]);
   
   const isLessonTimerActive = (lessonTitle?: string, lessonId?: string): boolean => {
     if (timerMode === 'disabled') return false;
@@ -1387,12 +1480,17 @@ export default function App() {
           setIsScreenObfuscated(true);
         }
         if (securitySettings.lockdownEnabled) {
-          tabSwitchStrikesRef.current += 1;
-          const currentStrikes = tabSwitchStrikesRef.current;
-          setTabSwitchStrikes(currentStrikes);
-          if (currentStrikes > securitySettings.maxTabSwitchStrikes) {
-            finishQuizInternal();
-            showAlert(`🚫 تم إنهاء وسحب ورقة الامتحان تلقائياً لتكرار مغادرة شاشة الاختبار (${securitySettings.maxTabSwitchStrikes} مخالفات)!`);
+          const now = Date.now();
+          // حماية من الاحتساب المزدوج عند التبديل السريع بين التطبيقات أو إشعارات النظام
+          if (now - lastStrikeTimestampRef.current >= 1200) {
+            lastStrikeTimestampRef.current = now;
+            tabSwitchStrikesRef.current += 1;
+            const currentStrikes = tabSwitchStrikesRef.current;
+            setTabSwitchStrikes(currentStrikes);
+            if (currentStrikes > securitySettings.maxTabSwitchStrikes) {
+              finishQuizInternal();
+              showAlert(`🚫 تم إنهاء وسحب ورقة الامتحان تلقائياً لتكرار مغادرة شاشة الاختبار (${securitySettings.maxTabSwitchStrikes} مخالفات)!`);
+            }
           }
         }
       } else if (document.visibilityState === 'visible') {
@@ -1552,6 +1650,13 @@ export default function App() {
                 localStorage.setItem('app_exam_security_settings', JSON.stringify(parsed));
               }
             } catch(e) {}
+          }
+          if(result.examConfigs) {
+            try {
+              syncExamConfigsFromCloud(result.examConfigs);
+            } catch(e) {
+              console.error("Error syncing exam configs on load:", e);
+            }
           }
         }
       } catch(e) {}
@@ -2108,6 +2213,72 @@ export default function App() {
               setLessonScores(finalScores);
             }
           } catch(e) { console.error(e); }
+
+          // --- مزامنة نتائج وتصحيح المقالي المعتمدة للطالب من السحابة ---
+          try {
+            const essayRes = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}&t=${noCache}`);
+            const essayData = await essayRes.json();
+            if (essayData && essayData.status === 'success' && Array.isArray(essayData.data)) {
+              const myPhone = formatPhoneStr(inputPhone);
+              const myRows = essayData.data.filter((row: any) => formatPhoneStr(row.studentPhone) === myPhone);
+              if (myRows.length > 0) {
+                const groupedMap = new Map<string, any>();
+                myRows.forEach((row: any) => {
+                  const key = String(row.quizTitle || '').trim();
+                  if (!key) return;
+                  if (!groupedMap.has(key)) {
+                    groupedMap.set(key, {
+                      id: `cloud_${myPhone}___${key}`,
+                      studentName: row.studentName || studentName,
+                      studentPhone: myPhone,
+                      quizTitle: key,
+                      lessonId: key,
+                      submissionDate: row.date || '',
+                      studentType: row.studentType || 'سنتر',
+                      questions: [],
+                      isFullyApproved: false,
+                      finalScore: 0,
+                      maxPossibleScore: 0
+                    });
+                  }
+                  const grp = groupedMap.get(key)!;
+                  const scoreNum = row.teacherScore !== "" && row.teacherScore !== undefined ? Number(row.teacherScore) : undefined;
+                  const isAppr = String(row.status || '').trim() === 'معتمد';
+                  const cleanQText = (row.questionText || `سؤال مقالي ${grp.questions.length + 1}`).trim();
+                  
+                  const existingQ = grp.questions.find((q: any) => q.questionText.trim() === cleanQText);
+                  if (existingQ) {
+                    if (scoreNum !== undefined && existingQ.teacherScore === undefined) existingQ.teacherScore = scoreNum;
+                    if (row.teacherFeedback && !existingQ.teacherFeedback) existingQ.teacherFeedback = row.teacherFeedback;
+                    if (!existingQ.isApproved && isAppr) existingQ.isApproved = true;
+                    return;
+                  }
+
+                  grp.questions.push({
+                    qIndex: grp.questions.length,
+                    questionText: cleanQText,
+                    essayType: 'سؤال مقالي',
+                    modelAnswer: '',
+                    studentText: row.studentAnswerText || '',
+                    maxScore: 2,
+                    teacherScore: scoreNum,
+                    teacherFeedback: row.teacherFeedback || '',
+                    isApproved: isAppr
+                  });
+                });
+                const localList = getPendingEssaySubmissions();
+                const mergedMap = new Map<string, StudentEssaySubmission>();
+                localList.forEach(ls => mergedMap.set(`${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`, ls));
+                groupedMap.forEach(grp => {
+                  grp.isFullyApproved = grp.questions.length > 0 && grp.questions.every((q: any) => q.isApproved);
+                  grp.finalScore = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore || 0), 0);
+                  const mKey = `${myPhone}___${grp.quizTitle}`;
+                  mergedMap.set(mKey, grp);
+                });
+                localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(Array.from(mergedMap.values())));
+              }
+            }
+          } catch(e) {}
         }
         
         const localCompleted = JSON.parse(localStorage.getItem('completedLessons') || '[]');
@@ -2201,6 +2372,13 @@ export default function App() {
                 localStorage.setItem('app_exam_security_settings', JSON.stringify(parsed));
               }
             } catch(e) {}
+          }
+          if(sData.examConfigs) {
+            try {
+              syncExamConfigsFromCloud(sData.examConfigs);
+            } catch(e) {
+              console.error("Error syncing exam configs on refresh:", e);
+            }
           }
         }
         showAlert('تم تحديث المحتوى والإشعارات بنجاح! 🚀');
@@ -2430,7 +2608,7 @@ export default function App() {
           setData(builtData);
           setExpandedUnits([]);
           if (qData.maps) setMapsList(qData.maps as InteractiveMap[]); else setMapsList([]); 
-          setScreen('index'); 
+          setScreen(targetScreen === 'admin' ? 'admin' : 'index'); 
           return;
         }
       } catch(e) { 
@@ -2469,8 +2647,8 @@ export default function App() {
         return; 
       }
       const user = BASE_STUDENTS[formattedPhone];
-      const inputHash = simpleHash(inputPassword);
-      if (inputHash === user.passHash) {
+      const isMatch = await verifyStaffPassword(inputPassword, user);
+      if (isMatch) {
         setStudentName(user.name);
         if (user.role === 'admin') { 
           fetchAdminData(); 
@@ -2638,20 +2816,24 @@ export default function App() {
         setStudentData(st);
         
         const fingerprint = generateDeviceFingerprint();
-        const fpRes = await fetch(API_URL, { 
-          method: 'POST', 
-          body: JSON.stringify({ 
-            action: 'saveDeviceFingerprint', 
-            phone: `${formattedPhone}_${st.name}`, 
-            fingerprint: fingerprint, 
-            apiKey: SECRET_API_KEY 
-          }) 
-        });
-        const fpData = await fpRes.json();
-        if (fpData.status === 'blocked') { 
-          setLoginError('لا يمكن فتح التطبيق! لقد سبق واستخدم هذا الحساب في متصفح آخر.'); 
-          setIsLoading(false); 
-          return; 
+        try {
+          const fpRes = await fetch(API_URL, { 
+            method: 'POST', 
+            body: JSON.stringify({ 
+              action: 'saveDeviceFingerprint', 
+              phone: `${formattedPhone}_${st.name}`, 
+              fingerprint: fingerprint, 
+              apiKey: SECRET_API_KEY 
+            }) 
+          });
+          const fpData = await fpRes.json();
+          if (fpData.status === 'blocked') { 
+            setLoginError('لا يمكن فتح التطبيق! لقد سبق واستخدم هذا الحساب في متصفح آخر. برجاء التواصل مع الإدارة لفك الارتباط.'); 
+            setIsLoading(false); 
+            return; 
+          }
+        } catch (fpErr) {
+          console.warn("Device fingerprint verification warning:", fpErr);
         }
         
         localStorage.setItem('loggedInUser', JSON.stringify(st));
@@ -3307,6 +3489,8 @@ export default function App() {
     try {
       localStorage.setItem('publishedLessons', JSON.stringify(publishedLessons));
       localStorage.setItem('publishedLessons_init', 'true');
+      const allConfigs = getAllExamConfigs();
+      const currentGeminiKey = geminiKeyInput ? geminiKeyInput.trim() : getGeminiApiKey();
       await fetch(API_URL, {
         method: 'POST',
         body: JSON.stringify({
@@ -3316,15 +3500,73 @@ export default function App() {
           timerMode: timerMode,
           timerUnitTarget: JSON.stringify(timerUnitTargets),
           timerSecondsPerQ: timerSecondsPerQ,
+          timerType: timerType,
+          examTotalMinutes: examTotalMinutes,
           publishedLessons: JSON.stringify(publishedLessons),
+          geminiApiKey: currentGeminiKey,
+          showMistakesNotebook: showMistakesNotebookSetting,
+          showResetButtons: showResetButtonSetting,
+          certSettings: JSON.stringify(certSettings),
+          securitySettings: JSON.stringify(securitySettings),
+          examConfigs: JSON.stringify(allConfigs),
           apiKey: SECRET_API_KEY
         })
       });
-      showAlert('تم حفظ وتحديث حالة نشر الدروس للطلاب بنجاح! 🚀');
+      showAlert('تم حفظ وتحديث حالة نشر الدروس وجدولة الامتحانات للطلاب بنجاح! 🚀');
     } catch(e) {
       showAlert('تم الحفظ في المتصفح بنجاح! (يرجى التأكد من اتصال الإنترنت لتحديث السيرفر)');
     }
     setIsSavingLessons(false);
+  };
+
+  const handleSyncExamConfigsToCloud = async (silent: boolean = false): Promise<boolean> => {
+    setIsSyncingExamConfigs(true);
+    try {
+      const allConfigs = getAllExamConfigs();
+      const currentGeminiKey = geminiKeyInput ? geminiKeyInput.trim() : getGeminiApiKey();
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'updateSettings',
+          fee: platformFee,
+          announcement: announcement,
+          timerMode: timerMode,
+          timerUnitTarget: JSON.stringify(timerUnitTargets),
+          timerSecondsPerQ: timerSecondsPerQ,
+          timerType: timerType,
+          examTotalMinutes: examTotalMinutes,
+          publishedLessons: JSON.stringify(publishedLessons),
+          geminiApiKey: currentGeminiKey,
+          showMistakesNotebook: showMistakesNotebookSetting,
+          showResetButtons: showResetButtonSetting,
+          certSettings: JSON.stringify(certSettings),
+          securitySettings: JSON.stringify(securitySettings),
+          examConfigs: JSON.stringify(allConfigs),
+          apiKey: SECRET_API_KEY
+        })
+      });
+      const data = await res.json();
+      if (data && data.status === 'success') {
+        if (!silent) {
+          showAlert('تم رفع ومزامنة كافة جداول ومواعيد الامتحانات إلى السحابة بنجاح! ☁️✨');
+        }
+        setIsSyncingExamConfigs(false);
+        return true;
+      } else {
+        if (!silent) {
+          showAlert('تعذر حفظ الجداول بالسحابة: ' + ((data && data.message) || 'خطأ غير معروف'));
+        }
+        setIsSyncingExamConfigs(false);
+        return false;
+      }
+    } catch (e: any) {
+      console.warn("Cloud sync exam configs warning:", e);
+      if (!silent) {
+        showAlert('تم حفظ الإعدادات في المتصفح بنجاح! 💾\n(تعذر الاتصال بالسحابة حالياً، وسيتم رفعها تلقائياً عند استقرار الإنترنت).');
+      }
+      setIsSyncingExamConfigs(false);
+      return false;
+    }
   };
 
   const fetchAdminData = async () => {
@@ -3402,6 +3644,72 @@ export default function App() {
           setStudentsList(stdData.data);
         }
       } catch(e) {}
+
+      // جلب تسليمات المقالي من السحابة لتحديث شارة الإشعارات ولوحة المعلم
+      try {
+        const essayRes = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}`);
+        const essayData = await essayRes.json();
+        if (essayData && essayData.status === 'success' && Array.isArray(essayData.data)) {
+          const groupedMap = new Map<string, any>();
+          essayData.data.forEach((row: any) => {
+            if (!row.studentPhone || !row.quizTitle) return;
+            const cleanPhone = formatPhoneStr(row.studentPhone);
+            const key = `${cleanPhone}___${row.quizTitle.trim()}`;
+            if (!groupedMap.has(key)) {
+              groupedMap.set(key, {
+                id: `cloud_${key}`,
+                studentName: row.studentName || 'طالب',
+                studentPhone: cleanPhone,
+                quizTitle: row.quizTitle.trim(),
+                lessonId: row.quizTitle.trim(),
+                submissionDate: row.date || '',
+                studentType: row.studentType || 'سنتر',
+                questions: [],
+                isFullyApproved: false,
+                finalScore: 0,
+                maxPossibleScore: 0
+              });
+            }
+            const grp = groupedMap.get(key)!;
+            const scoreNum = row.teacherScore !== "" && row.teacherScore !== undefined ? Number(row.teacherScore) : undefined;
+            const isAppr = String(row.status || '').trim() === 'معتمد';
+            const cleanQText = (row.questionText || `سؤال مقالي ${grp.questions.length + 1}`).trim();
+
+            const existingQ = grp.questions.find((q: any) => q.questionText.trim() === cleanQText);
+            if (existingQ) {
+              if (scoreNum !== undefined && existingQ.teacherScore === undefined) existingQ.teacherScore = scoreNum;
+              if (row.teacherFeedback && !existingQ.teacherFeedback) existingQ.teacherFeedback = row.teacherFeedback;
+              if (!existingQ.isApproved && isAppr) existingQ.isApproved = true;
+              return;
+            }
+
+            grp.questions.push({
+              qIndex: grp.questions.length,
+              questionText: cleanQText,
+              essayType: 'سؤال مقالي',
+              modelAnswer: '',
+              studentText: row.studentAnswerText || '',
+              maxScore: 2,
+              teacherScore: scoreNum,
+              teacherFeedback: row.teacherFeedback || '',
+              isApproved: isAppr
+            });
+          });
+          const cloudSubs: StudentEssaySubmission[] = [];
+          groupedMap.forEach(grp => {
+            grp.isFullyApproved = grp.questions.length > 0 && grp.questions.every((q: any) => q.isApproved);
+            cloudSubs.push(grp);
+          });
+          const localList = getPendingEssaySubmissions();
+          const mergedMap = new Map<string, StudentEssaySubmission>();
+          cloudSubs.forEach(cs => mergedMap.set(`${formatPhoneStr(cs.studentPhone)}___${cs.quizTitle.trim()}`, cs));
+          localList.forEach(ls => {
+            const mKey = `${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`;
+            if (!mergedMap.has(mKey)) mergedMap.set(mKey, ls);
+          });
+          localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(Array.from(mergedMap.values())));
+        }
+      } catch(e) {}
     } catch(e) { 
       console.warn('fetchAdminData connection error:', e);
     }
@@ -3421,7 +3729,13 @@ export default function App() {
             apiKey: SECRET_API_KEY
           })
         });
-        const res = await response.json();
+        const rawText = await response.text();
+        let res: any;
+        try {
+          res = JSON.parse(rawText);
+        } catch {
+          throw new Error('استجاب الخادم بصيغة غير متوقعة. قد تكون سحابة Google قيد الصيانة أو انتهت مهلة الانتظار.');
+        }
         if (res.status === 'success') {
           showAlert(`✅ تمت المزامنة السحابية بنجاح!\n\n📄 الملف: ${res.fileName || 'أحدث ملف'}\n📅 تاريخ الباك آب: ${res.fileDate || ''}\n👥 إجمالي طلاب المرحلة بالنظام: ${res.totalTargetStudents || 0}\n✨ الطلاب المحدثة اشتراكاتهم: ${res.updatedCount || 0}\n➕ الطلاب الجدد المضافين: ${res.addedCount || 0}\n💳 إجمالي الشهور المسددة: ${res.monthsUpdatedCount || 0}`);
           fetchAdminData();
@@ -3442,11 +3756,24 @@ export default function App() {
     
     setIsSyncingLocal(true);
     const reader = new FileReader();
+    reader.onerror = () => {
+      showAlert('❌ فشل قراءة الملف من جهازك. يرجى التأكد من صلاحيات الملف والمحاولة مرة أخرى.');
+      setIsSyncingLocal(false);
+      e.target.value = '';
+    };
     reader.onload = async (event) => {
       try {
         const content = event.target?.result as string;
-        const parsed = JSON.parse(content);
-        if (!parsed.students) {
+        let parsed: any;
+        try {
+          parsed = JSON.parse(content);
+        } catch {
+          showAlert('❌ الملف غير صالح: صيغة JSON معطوبة أو تالفة.');
+          setIsSyncingLocal(false);
+          return;
+        }
+
+        if (!parsed || !parsed.students) {
           showAlert('❌ الملف غير صالح: لا يحتوي على بيانات طلاب.');
           setIsSyncingLocal(false);
           return;
@@ -3467,7 +3794,13 @@ export default function App() {
             apiKey: SECRET_API_KEY
           })
         });
-        const res = await response.json();
+        const rawText = await response.text();
+        let res: any;
+        try {
+          res = JSON.parse(rawText);
+        } catch {
+          throw new Error('استجاب الخادم بصيغة غير متوقعة أثناء معالجة ملف النسخة الاحتياطية.');
+        }
         if (res.status === 'success') {
           showAlert(`✅ تم تحديث الاشتراكات من الملف المحلي بنجاح!\n\n👥 إجمالي طلاب المرحلة بالملف: ${res.totalTargetStudents || s2Students.length}\n✨ الطلاب المحدثة اشتراكاتهم: ${res.updatedCount || 0}\n➕ الطلاب الجدد المضافين: ${res.addedCount || 0}\n💳 إجمالي الشهور المسددة: ${res.monthsUpdatedCount || 0}`);
           fetchAdminData();
@@ -3505,29 +3838,64 @@ export default function App() {
   
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     
-    ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 70px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('شكر وتقدير', 500, 130);
-    ctx.fillStyle = '#475569'; ctx.font = 'bold 30px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('يسر الأستاذ إسلام سعود أن يمنح هذه الشهادة لـ :', 500, 230);
-    ctx.fillStyle = '#d97706'; ctx.font = '900 55px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(studentName, 500, 320);
+    ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 70px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('شكر وتقدير', 500, 120);
+    ctx.fillStyle = '#475569'; ctx.font = 'bold 26px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('يسر الأستاذ إسلام سعود أن يمنح هذه الشهادة لـ :', 500, 205);
+    ctx.fillStyle = '#d97706'; ctx.font = '900 50px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(studentName, 500, 275);
     
-    // ضبط نص الشهادة بحسب نوعها (درس / وحدة كاملة / شامل)
-    let descText = `نظراً لمجهوده وتفانيه لإتمام (${unitTitle})`;
+    // سطر 1: نوع الإنجاز في سطر مستقل
+    let introText = 'نظراً لمجهوده وتفانيه لإتمام:';
     if (certType === 'lesson') {
-      descText = `نظراً لتفوقه في اختبار: (${unitTitle})`;
+      introText = 'نظراً لتفوقه واجتيازه بجدارة اختبار:';
     } else if (certType === 'comprehensive') {
-      descText = `نظراً لنبوغه في: (${unitTitle})`;
+      introText = 'نظراً لنبوغه وتفوقه في:';
     } else if (certType === 'unit') {
-      descText = `نظراً لإتمام واجتياز جميع دروس: (${unitTitle})`;
+      introText = 'نظراً لإتمام واجتياز جميع دروس:';
+    }
+    ctx.fillStyle = '#475569'; ctx.font = 'bold 23px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(introText, 500, 340);
+
+    // سطر 2: اسم الدرس أو الوحدة في السطر الأسفل منه بشارة مميزة تمنع الخروج عن الإطار
+    const rawUnitTitle = (unitTitle || '').trim();
+    const formattedUnitTitle = `« ${rawUnitTitle} »`;
+    let titleFontSize = 26;
+    if (rawUnitTitle.length > 55) {
+      titleFontSize = 19;
+    } else if (rawUnitTitle.length > 40) {
+      titleFontSize = 22;
     }
 
-    ctx.fillStyle = '#475569'; ctx.font = 'bold 24px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(descText, 500, 400);
-    ctx.font = 'bold 24px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(`ببراعة وعبقرية بنسبة ${toEasternArabic(unitPerc)}%`, 500, 445);
-    ctx.fillStyle = '#db2777'; ctx.font = '900 35px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أكمل يا بطلي فحقا فخور بك ❤️', 500, 510);
+    ctx.font = `900 ${titleFontSize}px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif`;
+    const measuredTitleWidth = ctx.measureText(formattedUnitTitle).width;
+    const badgeW = Math.min(840, measuredTitleWidth + 48);
+    const badgeH = 42;
+    const badgeX = 500 - (badgeW / 2);
+    const badgeY = 388 - (badgeH / 2);
+
+    ctx.fillStyle = '#eff6ff';
+    if (typeof (ctx as any).roundRect === 'function') {
+      ctx.beginPath();
+      (ctx as any).roundRect(badgeX, badgeY, badgeW, badgeH, 12);
+      ctx.fill();
+      ctx.strokeStyle = '#bfdbfe';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+    }
+
+    ctx.fillStyle = '#1d4ed8';
+    ctx.font = `900 ${titleFontSize}px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif`;
+    ctx.fillText(formattedUnitTitle, 500, 388);
+
+    ctx.fillStyle = '#1e3a8a';
+    ctx.font = '900 27px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+    ctx.fillText(`ببراعة وعبقرية بنسبة ${toEasternArabic(unitPerc)}%`, 500, 448);
+    ctx.fillStyle = '#db2777'; ctx.font = '900 31px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أكمل يا بطلي فحقاً فخور بك ❤️', 500, 510);
   
     ctx.beginPath(); ctx.moveTo(150, 560); ctx.lineTo(850, 560); ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2; ctx.stroke();
   
-    ctx.fillStyle = '#0f172a'; ctx.font = '900 30px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أ/ إسلام سعود', 800, 610);
-    ctx.fillStyle = '#16a34a'; ctx.font = '900 40px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(`${toEasternArabic(unitPerc)}٪`, 500, 610);
-    ctx.fillStyle = '#64748b'; ctx.font = 'bold 25px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(new Date().toLocaleDateString('ar-EG'), 200, 610);
+    ctx.fillStyle = '#0f172a'; ctx.font = '900 30px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أ/ إسلام سعود', 800, 615);
+    ctx.fillStyle = '#16a34a'; ctx.font = '900 40px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(`${toEasternArabic(unitPerc)}٪`, 500, 615);
+    ctx.fillStyle = '#64748b'; ctx.font = 'bold 22px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(new Date().toLocaleDateString('ar-EG'), 220, 615);
   
     const link = document.createElement('a');
     const cleanStudent = studentName.trim().replace(/\s+/g, '_');
@@ -4588,20 +4956,49 @@ function doPost(e) {
       }
       var questions = payload.questions || [];
       var sType = payload.studentType || 'سنتر';
+      var eData = essaySheet.getDataRange().getValues();
+      var targetPhone = cleanPhone(payload.studentPhone);
+      var targetQuiz = String(payload.quizTitle || '').trim();
+
       if (Array.isArray(questions)) {
         questions.forEach(function(q) {
-          essaySheet.appendRow([
-            payload.date || new Date().toLocaleString('ar-EG'),
-            payload.studentName,
-            payload.studentPhone,
-            payload.quizTitle,
-            q.questionText || q.q,
-            q.studentText || q.studentAnswerText || "",
-            q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : ""),
-            q.teacherFeedback || q.aiFeedback || "",
-            payload.isApproved ? "معتمد" : "قيد المراجعة",
-            sType
-          ]);
+          var qText = String(q.questionText || q.q || '').trim();
+          var foundRowIdx = -1;
+          for (var ei = 1; ei < eData.length; ei++) {
+            if (cleanPhone(eData[ei][2]) === targetPhone && 
+                String(eData[ei][3]).trim() === targetQuiz && 
+                String(eData[ei][4]).trim() === qText) {
+              foundRowIdx = ei + 1;
+              break;
+            }
+          }
+
+          var tScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : "");
+          var tFeedback = q.teacherFeedback || q.aiFeedback || "";
+          var statusVal = payload.isApproved ? "معتمد" : "قيد المراجعة";
+
+          if (foundRowIdx > 0) {
+            // تحديث الإجابة والدرجة للصف الموجود مسبقاً لمنع التكرار
+            essaySheet.getRange(foundRowIdx, 1).setValue(payload.date || new Date().toLocaleString('ar-EG'));
+            essaySheet.getRange(foundRowIdx, 6).setValue(q.studentText || q.studentAnswerText || "");
+            if (tScore !== "") essaySheet.getRange(foundRowIdx, 7).setValue(tScore);
+            if (tFeedback !== "") essaySheet.getRange(foundRowIdx, 8).setValue(tFeedback);
+            essaySheet.getRange(foundRowIdx, 9).setValue(statusVal);
+          } else {
+            // إضافة صف جديد
+            essaySheet.appendRow([
+              payload.date || new Date().toLocaleString('ar-EG'),
+              payload.studentName,
+              payload.studentPhone,
+              payload.quizTitle,
+              qText,
+              q.studentText || q.studentAnswerText || "",
+              tScore,
+              tFeedback,
+              statusVal,
+              sType
+            ]);
+          }
         });
       }
       return respondJSON({status: 'success'});
@@ -6384,6 +6781,7 @@ function initAllSheetsMenu() {
           showResetButtons: showResetButtonSetting,
           certSettings: JSON.stringify(certSettings),
           securitySettings: JSON.stringify(securitySettings),
+          examConfigs: JSON.stringify(getAllExamConfigs()),
           apiKey: SECRET_API_KEY 
         }) 
       });
@@ -6454,6 +6852,29 @@ function initAllSheetsMenu() {
             localStorage.setItem('offlineResults', JSON.stringify(uniqueCombined));
           }
         }
+
+        // مزامنة تسليمات المقالي العالقة بسبب انقطاع النت
+        try {
+          const offlineEssayStr = localStorage.getItem('offlineEssaySubmissions');
+          if (offlineEssayStr) {
+            const offlineEssays: any[] = JSON.parse(offlineEssayStr);
+            if (Array.isArray(offlineEssays) && offlineEssays.length > 0) {
+              const remainingEssays: any[] = [];
+              localStorage.removeItem('offlineEssaySubmissions');
+              for (const essaySub of offlineEssays) {
+                try {
+                  await syncEssaySubmissionToCloud(essaySub);
+                } catch (err) {
+                  remainingEssays.push(essaySub);
+                }
+              }
+              if (remainingEssays.length > 0) {
+                const currentOfflineEssays = JSON.parse(localStorage.getItem('offlineEssaySubmissions') || '[]');
+                localStorage.setItem('offlineEssaySubmissions', JSON.stringify([...remainingEssays, ...currentOfflineEssays]));
+              }
+            }
+          }
+        } catch(essayErr) {}
       } catch(e) {
       } finally {
         isSyncing = false;
@@ -6616,6 +7037,32 @@ function initAllSheetsMenu() {
         }
       });
 
+      // التحقق مما إذا كان هذا الاختبار قد تم تسليمه رسمياً من قبل (قاعدة التسليم لمرة واحدة فقط)
+      const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+      const cleanPhone = formatPhoneStr(phone);
+      const completedList: string[] = (() => {
+        try { return JSON.parse(localStorage.getItem('completedLessons') || '[]'); } catch(e) { return []; }
+      })();
+      const pendingSubs = getPendingEssaySubmissions();
+      const hasPriorEssaySub = pendingSubs.some(s => 
+        (s.lessonId === activeLesson.id || s.quizTitle?.trim() === activeLesson.title?.trim()) &&
+        formatPhoneStr(s.studentPhone) === cleanPhone
+      );
+      const hasPriorScore = lessonScores[activeLesson.id] !== undefined;
+      const isAlreadySubmitted = Boolean(isPracticeMode || completedList.includes(activeLesson.id) || hasPriorEssaySub || hasPriorScore);
+
+      // إذا كانت هذه هي المحاولة الرسمية الأولى، نسجل إتمام الاختبار فوراً في القائمة المكتملة ونمسح الجلسة المعلقة
+      if (!isAlreadySubmitted) {
+        try {
+          const completed = JSON.parse(localStorage.getItem('completedLessons') || '[]');
+          if (!completed.includes(activeLesson.id)) {
+            completed.push(activeLesson.id);
+            localStorage.setItem('completedLessons', JSON.stringify(completed));
+          }
+        } catch(e) {}
+        localStorage.removeItem('savedSession');
+      }
+
       const hasEssayQuestions = activeLesson.questions.some(q => q.type === 'essay');
       const examConfig = getExamConfig(activeLesson.id);
       if (activeLesson.id === 'mistakes_bank') {
@@ -6652,7 +7099,7 @@ function initAllSheetsMenu() {
           setEssaySubmissionModal({
             isOpen: true,
             isGrading: true,
-            message: "جاري مراجعة وتصحيح الاجابة تمنياتي بالنجاح والتوفيق أ/إسلام سعود",
+            message: "جاري تصحيح إجاباتك بالذكاء الاصطناعي واعتماد النتيجة...",
             quizTitle: activeLesson.title
           });
 
@@ -6719,37 +7166,41 @@ function initAllSheetsMenu() {
 
             setUserAnswers(finalAnswers);
 
-            const instantSub: StudentEssaySubmission = {
-              id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
-              studentName: studentName || 'طالب',
-              studentPhone: inputPhone || '0000',
-              quizTitle: activeLesson.title,
-              lessonId: activeLesson.id,
-              submissionDate: new Date().toLocaleDateString('ar-EG'),
-              questions: essayItemsForStorage,
-              isFullyApproved: true,
-              finalScore: earnedScore,
-              maxPossibleScore: structure.examTotalScore
-            };
-            savePendingEssaySubmission(instantSub);
-            syncEssaySubmissionToCloud(instantSub);
+            // الإرسال السحابي وحفظ الدرجة الرسمية يتم فقط للمحاولة الأولى غير التدريبية
+            if (!isAlreadySubmitted) {
+              const instantSub: StudentEssaySubmission = {
+                id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
+                studentName: studentName || 'طالب',
+                studentPhone: inputPhone || '0000',
+                quizTitle: activeLesson.title,
+                lessonId: activeLesson.id,
+                submissionDate: new Date().toLocaleDateString('ar-EG'),
+                questions: essayItemsForStorage,
+                isFullyApproved: true,
+                finalScore: earnedScore,
+                maxPossibleScore: structure.examTotalScore
+              };
+              savePendingEssaySubmission(instantSub);
+              syncEssaySubmissionToCloud(instantSub);
 
-            if (activeLesson.id !== 'mistakes_bank') {
-              saveResultToDB({ quizName: activeLesson.title, score: `${calculatedPerc}%` });
-              setLessonScores(prev => {
-                if (prev[activeLesson.id] === undefined) {
-                  const newScores = { ...prev, [activeLesson.id]: Math.round(earnedScore) };
-                  localStorage.setItem('lessonScores', JSON.stringify(newScores));
-                  return newScores;
-                }
-                return prev;
-              });
+              if (activeLesson.id !== 'mistakes_bank') {
+                saveResultToDB({ quizName: activeLesson.title, score: `${calculatedPerc}%` });
+                setLessonScores(prev => {
+                  if (prev[activeLesson.id] === undefined) {
+                    const newScores = { ...prev, [activeLesson.id]: Math.round(earnedScore) };
+                    localStorage.setItem('lessonScores', JSON.stringify(newScores));
+                    return newScores;
+                  }
+                  return prev;
+                });
+              }
             }
 
             setIsScreenObfuscated(false);
             setTabSwitchStrikes(0);
             tabSwitchStrikesRef.current = 0;
             setTabSwitchWarningModal(null);
+            setPreSubmitReviewModalOpen(false);
             setOfflineGateStatus('none');
             setExamTimeLeft(null);
             examEndTimeRef.current = null;
@@ -6759,16 +7210,38 @@ function initAllSheetsMenu() {
           return;
         } else {
           // الوضع الهجين (اعتماد المعلم أولاً)
+          if (isAlreadySubmitted) {
+            // الطالب سبق له تسليم هذا الاختبار رسمياً، وهذه محاولة تدريبية فقط
+            setIsScreenObfuscated(false);
+            setTabSwitchStrikes(0);
+            tabSwitchStrikesRef.current = 0;
+            setTabSwitchWarningModal(null);
+            setPreSubmitReviewModalOpen(false);
+            setOfflineGateStatus('none');
+            setExamTimeLeft(null);
+            examEndTimeRef.current = null;
+            setEssaySubmissionModal({
+              isOpen: true,
+              isGrading: false,
+              message: "✨ تم إنهاء جلسة التدريب بنجاح! نؤكد لك أنه تم حفظ واعتماد محاولتك الرسمية الأولى لدى المعلم أ/ إسلام سعود، ولن يتم إرسال أي محاولات تدريبية أخرى حفاظاً على درجتك الرسمية.",
+              quizTitle: activeLesson.title
+            });
+            return;
+          }
+
+          // المحاولة الرسمية الأولى: تجميع الأسئلة وتقييمها بالذكاء الاصطناعي ثم إرسالها للمعلم لمرة واحدة فقط
           const structure = calculateExamStructure(activeLesson.questions, examConfig);
-          const essayItemsForStorage: any[] = [];
+          const allItemsForStorage: EssayReviewQuestionItem[] = [];
+          const essayItemsForStorage: EssayReviewQuestionItem[] = [];
+          let initialEarnedScore = 0;
 
           activeLesson.questions.forEach((q, idx) => {
-            if (q.type === 'essay') {
-              const ans = finalAnswers[idx];
-              const maxQScore = getQuestionMaxScore(q, idx, examConfig);
-              const studentText = ans?.studentAnswerText || ans?.selected || '';
+            const ans = finalAnswers[idx];
+            const maxQScore = getQuestionMaxScore(q, idx, examConfig);
+            const studentText = ans?.studentAnswerText || ans?.selected || '';
 
-              essayItemsForStorage.push({
+            if (q.type === 'essay') {
+              const item: EssayReviewQuestionItem = {
                 qIndex: idx,
                 questionText: q.q,
                 essayType: q.essayType || detectEssayType(q.q).label,
@@ -6776,43 +7249,60 @@ function initAllSheetsMenu() {
                 studentText,
                 maxScore: maxQScore,
                 isApproved: false
+              };
+              essayItemsForStorage.push(item);
+              allItemsForStorage.push(item);
+            } else {
+              const isCorrect = Boolean(ans?.isCorrect);
+              const qScore = isCorrect ? maxQScore : 0;
+              initialEarnedScore += qScore;
+              const isTf = q.type === 'tf' || q.type === 't/f' || q.type === 'true_false' ||
+                           (Array.isArray(q.options) && q.options.length === 2 && (q.options.includes('صح') || q.options.includes('خطأ')));
+              allItemsForStorage.push({
+                qIndex: idx,
+                questionText: q.q,
+                essayType: isTf ? 'صح وخطأ' : 'اختر من متعدد',
+                modelAnswer: q.correct || q.answer || '',
+                studentText: studentText || (isCorrect ? (q.correct || 'إجابة صحيحة') : 'إجابة خاطئة'),
+                maxScore: maxQScore,
+                teacherScore: qScore,
+                aiScore: qScore,
+                teacherFeedback: isCorrect ? 'إجابة صحيحة وموفقة.' : `إجابة خاطئة - الإجابة الصحيحة هي: ${q.correct || q.answer}`,
+                aiFeedback: isCorrect ? 'إجابة صحيحة وموفقة.' : `إجابة خاطئة - الإجابة الصحيحة هي: ${q.correct || q.answer}`,
+                isApproved: true
               });
             }
           });
 
-          const hybridSub: StudentEssaySubmission = {
-            id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
-            studentName: studentName || 'طالب',
-            studentPhone: inputPhone || '0000',
-            quizTitle: activeLesson.title,
-            lessonId: activeLesson.id,
-            submissionDate: new Date().toLocaleDateString('ar-EG'),
-            questions: essayItemsForStorage,
-            isFullyApproved: false,
-            maxPossibleScore: structure.examTotalScore
-          };
-          savePendingEssaySubmission(hybridSub);
-          syncEssaySubmissionToCloud(hybridSub);
-
           (async () => {
+            let essayEarned = 0;
             for (const item of essayItemsForStorage) {
               const q = activeLesson.questions[item.qIndex];
               if (q && item.studentText) {
-                const evalRes = await evaluateEssayAnswer(q, item.studentText, item.maxScore);
-                item.aiScore = evalRes.score;
-                item.aiFeedback = evalRes.feedback;
+                try {
+                  const evalRes = await evaluateEssayAnswer(q, item.studentText, item.maxScore);
+                  item.aiScore = evalRes.score;
+                  item.aiFeedback = evalRes.feedback;
+                  essayEarned += evalRes.score;
+                } catch(e) {}
               }
             }
-            savePendingEssaySubmission({
+            const evaluatedSub: StudentEssaySubmission = {
               id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
               studentName: studentName || 'طالب',
               studentPhone: inputPhone || '0000',
               quizTitle: activeLesson.title,
               lessonId: activeLesson.id,
               submissionDate: new Date().toLocaleDateString('ar-EG'),
-              questions: essayItemsForStorage,
+              questions: allItemsForStorage,
               isFullyApproved: false,
+              finalScore: initialEarnedScore + essayEarned,
               maxPossibleScore: structure.examTotalScore
+            };
+            savePendingEssaySubmission(evaluatedSub);
+            syncEssaySubmissionToCloud({
+              ...evaluatedSub,
+              questions: essayItemsForStorage
             });
           })();
 
@@ -6820,13 +7310,14 @@ function initAllSheetsMenu() {
           setTabSwitchStrikes(0);
           tabSwitchStrikesRef.current = 0;
           setTabSwitchWarningModal(null);
+          setPreSubmitReviewModalOpen(false);
           setOfflineGateStatus('none');
           setExamTimeLeft(null);
           examEndTimeRef.current = null;
           setEssaySubmissionModal({
             isOpen: true,
             isGrading: false,
-            message: "جاري مراجعة وتصحيح الاجابة تمنياتي بالنجاح والتوفيق أ/إسلام سعود",
+            message: "⏳ تم تسليم إجاباتك بنجاح! جاري مراجعة وتصحيح الاختبار واعتماد النتيجة من المعلم أ/ إسلام سعود.",
             quizTitle: activeLesson.title
           });
           return;
@@ -6838,7 +7329,7 @@ function initAllSheetsMenu() {
       const perc = Math.round((correct/totalQs)*100);
 
       // المحاولة الأولى الرسمية فقط: تسجيل النقاط والإنجازات والنتائج السحابية
-      if (!isPracticeMode) {
+      if (!isPracticeMode && !isAlreadySubmitted) {
         // --- Streak Logic ---
         const todayStr = new Date().toDateString();
         setStreak(prev => {
@@ -6894,6 +7385,7 @@ function initAllSheetsMenu() {
     setTabSwitchStrikes(0);
     tabSwitchStrikesRef.current = 0;
     setTabSwitchWarningModal(null);
+    setPreSubmitReviewModalOpen(false);
     setOfflineGateStatus('none');
     setExamTimeLeft(null);
     examEndTimeRef.current = null;
@@ -6906,28 +7398,13 @@ function initAllSheetsMenu() {
       return;
     }
 
+    // فتح شاشة مراجعة الامتحان التفاعلية قبل الاعتماد النهائي
     if (!force && activeLesson) {
-      const unansweredIndices: number[] = [];
-      activeLesson.questions.forEach((q, idx) => {
-        const ans = userAnswers[idx];
-        if (!ans) {
-          unansweredIndices.push(idx);
-        } else if (q.type === 'essay' && (!ans.studentAnswerText || ans.studentAnswerText.trim() === '')) {
-          unansweredIndices.push(idx);
-        } else if (q.type !== 'essay' && (!ans.selected || ans.selected.trim() === '')) {
-          unansweredIndices.push(idx);
-        }
-      });
-
-      if (unansweredIndices.length > 0) {
-        setUnansweredWarningModal({
-          count: unansweredIndices.length,
-          firstUnansweredIndex: unansweredIndices[0]
-        });
-        return;
-      }
+      setPreSubmitReviewModalOpen(true);
+      return;
     }
 
+    setPreSubmitReviewModalOpen(false);
     setUnansweredWarningModal(null);
     finishQuizInternal();
   };
@@ -6964,8 +7441,9 @@ function initAllSheetsMenu() {
     }
 
     const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
-    const submissions = getStudentSubmissions(phone);
-    const pendingSub = submissions.find(s => (s.lessonId === lesson.id || s.quizTitle === lesson.title) && !s.isFullyApproved);
+    const cleanPhone = formatPhoneStr(phone);
+    const submissions = getStudentSubmissions(cleanPhone);
+    const pendingSub = submissions.find(s => (s.lessonId === lesson.id || s.quizTitle?.trim() === lesson.title?.trim()) && !s.isFullyApproved);
     if (pendingSub) {
       showAlert('⏳ هذا الاختبار قيد المراجعة والاعتماد حالياً من المعلم أ/ إسلام سعود، ستتمكن من مراجعته والتدريب عليه فور اعتماد النتيجة.');
       return;
@@ -7443,14 +7921,14 @@ function initAllSheetsMenu() {
       const isTeacherAdmin = BASE_STUDENTS[formatPhoneStr(inputPhone)]?.role === 'admin';
       return (
         <div className={`h-[100dvh] flex flex-col watermark-container ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
-          <div className={`shadow-sm px-3 pt-3 md:pt-4 lg:pt-3 pb-2 z-10 border-b-2 flex justify-between items-center gap-2 sm:gap-4 w-full shrink-0 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white'}`} style={{ paddingRight: '13px', paddingBottom: '-5px', paddingTop: '10px', paddingLeft: '10px' }}>
+          <div className={`shadow-sm px-3 pt-2.5 pb-2 z-10 border-b-2 flex justify-between items-center gap-2 sm:gap-4 w-full shrink-0 ${isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-white'}`}>
             <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
-              <i className="fas fa-graduation-cap text-2xl sm:text-3xl md:text-4xl text-gold shrink-0" style={{ fontSize: '26px', lineHeight: '24px', marginRight: '-9px', borderRadius: '-2px' }}></i>
+              <i className="fas fa-graduation-cap text-2xl sm:text-3xl md:text-4xl text-gold shrink-0" style={{ fontSize: '26px', lineHeight: '24px' }}></i>
               <div className="flex flex-col items-start text-right min-w-0 shrink">
                 <div className="flex items-center gap-2">
                   <div className="font-black text-[12px] sm:text-lg md:text-xl lg:text-2xl leading-none whitespace-nowrap">
-                    <span className="text-secondary" style={{ marginRight: '-6px', marginLeft: '1px', marginTop: '0px', marginBottom: '2px', lineHeight: '12px', fontSize: '13px', textAlign: 'center', paddingTop: '5px', paddingBottom: '0px', paddingRight: '0px', paddingLeft: '0px' }}>موسوعة </span>
-                    <span className={isDarkMode ? 'text-gray-100' : 'text-primary'} style={{ marginTop: '-1px', paddingTop: '5px' }}>الكنز التعليمي</span>
+                    <span className="text-secondary">موسوعة </span>
+                    <span className={isDarkMode ? 'text-gray-100' : 'text-primary'}>الكنز التعليمي</span>
                   </div>
                   {streak.count > 0 && (
                     <div className={`px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-black flex items-center gap-1 shadow-sm border ${isDarkMode ? 'bg-orange-950/40 border-orange-700 text-orange-400' : 'bg-orange-50 border-orange-200 text-orange-600'}`} title="شعلة التحدي اليومي">
@@ -7459,24 +7937,24 @@ function initAllSheetsMenu() {
                   )}
                 </div>
                 <div className="text-[8px] sm:text-[10px] md:text-xs lg:text-sm font-bold mt-1 flex gap-1 justify-start whitespace-nowrap">
-                  <span className={isDarkMode ? "text-gray-200 font-bold" : "text-primary font-bold"} style={{ lineHeight: '19px', marginTop: '3px' }}>رؤية وإعداد</span>
-                  <span className="text-pink-600 font-black" style={{ lineHeight: '19px', fontSize: '10px', height: '20px', marginTop: '3px' }}>أ/ إسلام سعود</span>
+                  <span className={isDarkMode ? "text-gray-200 font-bold" : "text-primary font-bold"}>رؤية وإعداد</span>
+                  <span className="text-pink-600 font-black">أ/ إسلام سعود</span>
                 </div>
               </div>
             </div>
             
-            <div className="flex flex-col items-end gap-1.5 shrink-0 w-full max-w-[65%] sm:max-w-[55%]">
-              <div className="flex items-center gap-1.5 w-full justify-end" style={isDesktop ? { height: 'auto' } : { paddingRight: '0px', paddingLeft: '-2px', height: '23px', width: '177.797px' }}>
+            <div className="flex flex-col items-end gap-1.5 shrink-0 max-w-[65%] sm:max-w-[55%]">
+              <div className="flex items-center gap-1.5 w-full justify-end">
                 {isTeacherAdmin && (
                   <button onClick={() => setScreen('admin')} className="bg-[#eff6ff] text-[#2563eb] border border-[#bfdbfe] px-1.5 py-0.5 md:py-1 rounded-md text-[8px] md:text-xs lg:text-sm font-black flex items-center gap-1 shadow-sm hover:bg-blue-100 transition-colors shrink-0">
                     إدارة <i className="fas fa-user-shield"></i>
                   </button>
                 )}
-                <button onClick={toggleFullscreen} className={`w-6 h-6 md:w-8 md:h-8 rounded-md flex items-center justify-center text-[10px] md:text-sm shadow-sm transition-colors shrink-0 border cursor-pointer ${isFullscreen ? 'bg-secondary text-white border-secondary' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`} title="تكبير" style={{ paddingBottom: '0px', paddingRight: '0px', marginRight: '0px', marginBottom: '0px', marginLeft: '3px' }}>
-                  <i className={`fas ${isFullscreen?'fa-compress':'fa-expand'}`} style={{ lineHeight: '11px', fontSize: '10px', marginLeft: '-4px', marginRight: '-2px', marginBottom: '-2px', marginTop: '-1px' }}></i>
+                <button onClick={toggleFullscreen} className={`w-7 h-7 sm:w-8 sm:h-8 rounded-md flex items-center justify-center text-[10px] sm:text-xs shadow-sm transition-colors shrink-0 border cursor-pointer ${isFullscreen ? 'bg-secondary text-white border-secondary' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`} title="تكبير">
+                  <i className={`fas ${isFullscreen?'fa-compress':'fa-expand'}`}></i>
                 </button>
-                <button onClick={()=>setIsDarkMode(!isDarkMode)} className={`w-6 h-6 md:w-8 md:h-8 rounded-md flex items-center justify-center text-[10px] md:text-sm shadow-sm transition-colors shrink-0 border cursor-pointer ${isDarkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`} title="ليلي" style={{ marginRight: '-6px', marginLeft: '0px', marginTop: '0px', lineHeight: '12px', fontSize: '11px', textAlign: 'center', paddingTop: '-3px', paddingLeft: '-3px', paddingRight: '-2px', paddingBottom: '-2px', borderColor: '#022366' }}>
-                  <i className={`fas ${isDarkMode?'fa-sun':'fa-moon'}`} style={{ marginRight: '0px', marginLeft: '0px', textAlign: 'center' }}></i>
+                <button onClick={()=>setIsDarkMode(!isDarkMode)} className={`w-7 h-7 sm:w-8 sm:h-8 rounded-md flex items-center justify-center text-[10px] sm:text-xs shadow-sm transition-colors shrink-0 border cursor-pointer ${isDarkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`} title="ليلي">
+                  <i className={`fas ${isDarkMode?'fa-sun':'fa-moon'}`}></i>
                 </button>
                 <div className={`px-2 py-0.5 md:py-1 rounded-md text-[8px] sm:text-xs md:text-sm font-black shadow-sm text-center shrink-0 whitespace-nowrap border ${isDarkMode ? 'bg-amber-900 text-amber-100 border-amber-600' : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
                   {gradeName}
@@ -7617,6 +8095,8 @@ function initAllSheetsMenu() {
                     return q;
                   });
                   setActiveLesson({ id: 'mistakes_bank', title: 'بنك الأخطاء 🎯', questions: shuffledMistakes, completed: false });
+                  setIsReviewMode(false);
+                  setIsPracticeMode(true);
                   setCurrentQIndex(0);
                   setUserAnswers([]);
                   setSkippedQuestions([]);
@@ -7709,26 +8189,27 @@ function initAllSheetsMenu() {
                               <div 
                                 key={lesson.id} 
                                 onClick={() => { 
-                                  // فحص الجدولة أولاً
+                                  const hasMedia = Boolean(lesson.audio || lesson.video || lesson.pdf || (lesson.pdfFiles && lesson.pdfFiles.length > 0));
+
+                                  // فصل المواد التعليمية (PDF / صوتيات / فيديو) عن قفل الامتحان:
+                                  // إتاحة تصفح المذكرات والاستماع للشروحات دائماً وبحرية تامة حتى وإن كان الامتحان مجدولاً أو منتهياً
+                                  if (hasMedia) {
+                                    setLessonModalOptions(lesson);
+                                    return;
+                                  }
+
+                                  // إذا كان الدرس امتحاناً فقط دون أي وسائط دراسية، نطبق قيود الجدولة والاعتماد
                                   if (availability.status === 'upcoming') {
                                     showAlert(`⏳ هذا الامتحان مجدول وسيبدأ في:\n${formatScheduleDate(availability.startDate)}\n\nيرجى الاستعداد والمراجعة حتى موعد فتح الامتحان.`);
                                     return;
                                   }
 
                                   if (availability.status === 'expired') {
-                                    if (lesson.audio || lesson.video || lesson.pdf || (lesson.pdfFiles && lesson.pdfFiles.length > 0)) {
-                                      setLessonModalOptions(lesson);
-                                      return;
-                                    }
                                     showAlert(`🔒 عذراً، انتهت فترة إتاحة هذا الامتحان في:\n${formatScheduleDate(availability.endDate)}\n\nتم إغلاق الامتحان ولا يمكن تقديم إجابات جديدة.`);
                                     return;
                                   }
 
                                   if (availability.status === 'not_targeted') {
-                                    if (lesson.audio || lesson.video || lesson.pdf || (lesson.pdfFiles && lesson.pdfFiles.length > 0)) {
-                                      setLessonModalOptions(lesson);
-                                      return;
-                                    }
                                     showAlert(`🚫 ${availability.message}`);
                                     return;
                                   }
@@ -7740,11 +8221,8 @@ function initAllSheetsMenu() {
                                     showAlert('⏳ هذا الاختبار قيد المراجعة والاعتماد حالياً من المعلم أ/ إسلام سعود، ستتمكن من مراجعته والتدريب عليه فور اعتماد النتيجة.');
                                     return;
                                   }
-                                  if (lesson.audio || lesson.video || lesson.pdf || (lesson.pdfFiles && lesson.pdfFiles.length > 0)) {
-                                    setLessonModalOptions(lesson);
-                                  } else {
-                                    startQuizForLesson(lesson);
-                                  }
+
+                                  startQuizForLesson(lesson);
                                 }} 
                                 className={`px-6 py-5 flex justify-between items-center cursor-pointer transition-colors ${
                                   isDarkMode ? 'hover:bg-gray-700/40' : 'hover:bg-gray-50/50'
@@ -8072,23 +8550,13 @@ function initAllSheetsMenu() {
     }
     
     if (screen === 'quiz' && activeLesson && question) {
-      const checkCorrectAnswer = (opt: string, corr: string) => {
-        if (!opt || !corr) return false;
-        const o = opt.trim().toLowerCase();
-        const c = corr.trim().toLowerCase();
-        if (o === c) return true;
-        const isT_opt = o.includes('صحيح') || o === 'صح' || o === 'ص' || o === 'true' || o === 't' || o === '1';
-        const isF_opt = o.includes('خطأ') || o.includes('خاطئ') || o === 'خ' || o === 'false' || o === 'f' || o === '2';
-        const isT_corr = c.includes('صحيح') || c === 'صح' || c === 'ص' || c === 'true' || c === 't' || c === '1';
-        const isF_corr = c.includes('خطأ') || c.includes('خاطئ') || c === 'خ' || c === 'false' || c === 'f' || c === '2';
-        if (isT_opt && isT_corr) return true;
-        if (isF_opt && isF_corr) return true;
-        return false;
+      const checkCorrectAnswer = (opt: string, corr: string, optIdx?: number) => {
+        return checkAnswerAccurately(opt, corr, optIdx, question?.options);
       };
 
-      const handleOptionClick = (option: string) => {
+      const handleOptionClick = (option: string, optionIdx?: number) => {
         if (isAnswered) return;
-        const isCorrect = checkCorrectAnswer(option, question!.correct);
+        const isCorrect = checkCorrectAnswer(option, question!.correct, optionIdx);
         const newAns = [...userAnswers]; 
         newAns[currentQIndex] = { 
           isCorrect, 
@@ -8376,7 +8844,7 @@ function initAllSheetsMenu() {
                 return (
                   <div className="flex flex-col gap-4 mb-8">
                     {optionsToRender.map((opt, idx) => {
-                      const isCorrectMatch = checkCorrectAnswer(opt, question!.correct);
+                      const isCorrectMatch = checkCorrectAnswer(opt, question!.correct, idx);
                       let btnClass = isDarkMode
                         ? "bg-slate-800/80 border-2 border-slate-500 text-gray-100 p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-slate-800"
                         : "bg-[#ebf5ff] border-2 border-[#bcccf0]/70 text-primary p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-[#e1f0fe]";
@@ -8396,7 +8864,7 @@ function initAllSheetsMenu() {
                               : "bg-gray-50 border-gray-150 p-4 rounded-2xl font-bold text-xl flex items-center opacity-50 border-2";
                           }
                         } else {
-                          // نمط الاختبار الجاد: تحديد إجابة الطالب فقط بدون كشف الصح والخطأ
+                          // نمط الاختبار الجاد: تحديد إجابة الطالب فقط بشكل محايد تماماً بدون كشف الصح والخطأ
                           if (currentAnswer.selected === opt) {
                             btnClass = isDarkMode
                               ? "bg-primary/25 border-primary text-blue-200 p-4 rounded-2xl font-bold text-xl flex items-center shadow-md border-2 ring-2 ring-primary/40"
@@ -8408,11 +8876,10 @@ function initAllSheetsMenu() {
                           }
                         }
                       }
-                      const isOptTrue = opt.includes('صحيح') || opt === 'صح' || opt.toLowerCase() === 'true';
                       return (
                         <button 
                           key={idx} 
-                          onClick={()=>handleOptionClick(opt)} 
+                          onClick={()=>handleOptionClick(opt, idx)} 
                           className={btnClass} 
                           disabled={isAnswered}
                         >
@@ -8430,9 +8897,7 @@ function initAllSheetsMenu() {
                                     : (currentAnswer.selected === opt
                                         ? 'bg-primary text-white shadow-md scale-105'
                                         : (isDarkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500')))
-                                : (isTf 
-                                    ? (isOptTrue ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white')
-                                    : 'bg-[#074ba3] text-white')
+                                : (isDarkMode ? 'bg-slate-700 text-gray-200' : 'bg-[#074ba3] text-white')
                             }`}
                             style={{
                               borderStyle: 'solid',
@@ -8442,10 +8907,8 @@ function initAllSheetsMenu() {
                           >
                             {isAnswered && currentAnswer && isReviewMode ? (
                               isCorrectMatch ? <i className="fas fa-check text-base"></i> : (currentAnswer.selected === opt ? <i className="fas fa-times text-base"></i> : ['أ','ب','ج','د'][idx])
-                            ) : isTf ? (
-                              isOptTrue ? <i className="fas fa-check text-base"></i> : <i className="fas fa-times text-base"></i>
                             ) : (
-                              ['أ','ب','ج','د'][idx]
+                              ['أ','ب','ج','د'][idx] || (idx + 1)
                             )}
                           </span>
                           <span className="text-right leading-relaxed whitespace-pre-line">{opt}</span>
@@ -8976,6 +9439,8 @@ function initAllSheetsMenu() {
                     const newLesson = { ...activeLesson, questions: shuffledWrongQs };
                     setData(data.map(u=>({...u,lessons:u.lessons.map(l=>l.id===activeLesson.id?newLesson:l)})));
                     setActiveLesson(newLesson);
+                    setIsReviewMode(false);
+                    setIsPracticeMode(true);
                     setUserAnswers([]);
                     setCurrentQIndex(0);
                     setSkippedQuestions([]);
@@ -9199,6 +9664,7 @@ function initAllSheetsMenu() {
             <div className="w-full md:w-64 shrink-0 bg-white rounded-2xl shadow-sm border border-gray-100 p-2.5 flex flex-row md:flex-col overflow-x-auto custom-scrollbar gap-2">
               <button onClick={() => setAdminActiveTab('results')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='results'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-chart-bar w-5 text-center"></i> النتائج والمتابعة</button>
               <button onClick={() => setAdminActiveTab('lessons')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='lessons'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-layer-group w-5 text-center text-emerald-500"></i> إدارة ونشر الدروس</button>
+              <button onClick={() => setAdminActiveTab('schedules')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='schedules'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-calendar-alt w-5 text-center text-indigo-500"></i> جدولة الامتحانات 📅</button>
               <button 
                 onClick={() => setAdminActiveTab('essay_review')} 
                 className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${
@@ -10185,6 +10651,9 @@ function initAllSheetsMenu() {
                   onPreviewExam={(lesson, config) => {
                     setSandboxExam({ lesson, config });
                   }}
+                  onSaveConfig={() => {
+                    handleSyncExamConfigsToCloud(true);
+                  }}
                   onClose={() => setSelectedExamForConfig(null)}
                   isDarkMode={isDarkMode}
                 />
@@ -10243,11 +10712,25 @@ function initAllSheetsMenu() {
                 />
               )}
 
+              {adminActiveTab === 'schedules' && (
+                <AdminExamScheduleTab
+                  data={data}
+                  isDarkMode={isDarkMode}
+                  onNavigateToLessonConfig={(lesson, unitTitle) => {
+                    setSelectedExamForConfig({ lesson, unitTitle });
+                  }}
+                  isLessonActive={(lessonId) => isLessonActive(lessonId)}
+                  onSyncToCloud={handleSyncExamConfigsToCloud}
+                  isSyncingToCloud={isSyncingExamConfigs}
+                />
+              )}
+
               {adminActiveTab === 'essay_review' && (
                 <AdminEssayReviewTab
                   onSaveResultToDB={saveResultToDB}
                   isDarkMode={isDarkMode}
                   onlineStudents={adminOnlineStudents}
+                  data={data}
                 />
               )}
 
@@ -12781,7 +13264,11 @@ function initAllSheetsMenu() {
               const cfg = lessonModalOptions ? getExamConfig(lessonModalOptions.id) : null;
               const sCat = getCurrentStudentCategory();
               const avail = cfg ? getExamAvailability(cfg, sCat) : null;
-              const isLocked = avail && (avail.status === 'upcoming' || avail.status === 'expired' || avail.status === 'not_targeted');
+              const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+              const cleanPhone = formatPhoneStr(phone);
+              const submissions = getStudentSubmissions(cleanPhone);
+              const pendingSub = lessonModalOptions ? submissions.find(s => (s.lessonId === lessonModalOptions.id || s.quizTitle?.trim() === lessonModalOptions.title?.trim()) && !s.isFullyApproved) : null;
+              const isLocked = Boolean((avail && (avail.status === 'upcoming' || avail.status === 'expired' || avail.status === 'not_targeted')) || pendingSub);
 
               return (
                 <div className="flex flex-col gap-3 mt-2 mt-auto">
@@ -12792,7 +13279,9 @@ function initAllSheetsMenu() {
                     }} 
                     className={`w-full font-black text-lg py-3 rounded-xl shadow-md transition-colors flex justify-center items-center gap-2 cursor-pointer ${
                       isLocked
-                        ? avail?.status === 'upcoming'
+                        ? pendingSub
+                          ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30'
+                          : avail?.status === 'upcoming'
                           ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30'
                           : avail?.status === 'expired'
                           ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/30'
@@ -12802,7 +13291,9 @@ function initAllSheetsMenu() {
                   >
                     <i className={`fas ${
                       isLocked
-                        ? avail?.status === 'upcoming'
+                        ? pendingSub
+                          ? 'fa-hourglass-half'
+                          : avail?.status === 'upcoming'
                           ? 'fa-clock'
                           : avail?.status === 'expired'
                           ? 'fa-lock'
@@ -12810,9 +13301,11 @@ function initAllSheetsMenu() {
                         : 'fa-pen-alt'
                     }`}></i>
                     <span>
-                      {isLocked
+                      {pendingSub
+                        ? 'الامتحان قيد مراجعة المعلم ⏳'
+                        : isLocked
                         ? avail?.status === 'upcoming'
-                          ? `يبدأ: ${formatScheduleDate(avail.startDate)} ⏳`
+                          ? `يبدأ: ${formatScheduleDate(avail?.startDate)} ⏳`
                           : avail?.status === 'expired'
                           ? 'الامتحان منتهي ومغلق 🔒'
                           : 'غير متاح لفئتك 🚫'
@@ -12935,73 +13428,281 @@ function initAllSheetsMenu() {
         </div>
       )}
 
-      {unansweredWarningModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[1500] flex items-center justify-center p-4 animate-fade-in" dir="rtl">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-amber-500 flex flex-col items-center">
-            <div className="w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 flex items-center justify-center text-3xl mb-3 shadow-inner">
-              <i className="fas fa-exclamation-triangle animate-bounce"></i>
-            </div>
-
-            <h3 className="text-xl font-black text-gray-900 dark:text-gray-100 mb-1">تنبيه قبل إنهاء الاختبار</h3>
-            <span className="text-xs font-bold text-gray-400 mb-4">{activeLesson?.title}</span>
-
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 rounded-2xl p-4 my-2 w-full text-right">
-              <p className="text-sm sm:text-base font-black text-amber-950 dark:text-amber-200 leading-relaxed mb-2">
-                ⚠️ يوجد لديك <span className="text-rose-600 dark:text-rose-400 text-lg font-black">{toEasternArabic(unansweredWarningModal.count)}</span> {unansweredWarningModal.count === 1 ? 'سؤال لم تقم بحله' : 'أسئلة لم تقم بحلها'} بعد!
-              </p>
-              <p className="text-xs font-bold text-amber-800 dark:text-amber-300 leading-relaxed">
-                إذا قمت بإنهاء الاختبار الآن، فسيتم احتساب {unansweredWarningModal.count === 1 ? 'هذا السؤال خاطئاً وترحيله' : 'هذه الأسئلة خاطئة وترحيلها'} تلقائياً إلى بنك الأخطاء.
-              </p>
-            </div>
-
-            <div className="w-full flex flex-col gap-2.5 mt-5">
+      {/* شاشة مراجعة الامتحان التفاعلية قبل التسليم النهائي */}
+      {preSubmitReviewModalOpen && activeLesson && createPortal(
+        <div 
+          className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[99999] flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in" 
+          dir="rtl"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border-2 border-slate-200 dark:border-slate-800">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent dark:from-primary/20 p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-primary text-white flex items-center justify-center text-xl shadow-md shrink-0">
+                  <i className="fas fa-list-check"></i>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg md:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>مراجعة إجابات الامتحان قبل التسليم</span>
+                    <span className="text-xs bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-bold">خطوة تأكيدية</span>
+                  </h3>
+                  <p className="text-xs sm:text-sm font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                    {activeLesson.title} • راجع إجاباتك لكل سؤال، واضغط على أي سؤال للعودة إليه وتعديله قبل التسليم النهائي.
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  const targetIdx = unansweredWarningModal.firstUnansweredIndex;
-                  setUnansweredWarningModal(null);
-                  setCurrentQIndex(targetIdx);
-                }}
-                className="w-full bg-primary hover:bg-primary-dark text-white font-black py-3 px-6 rounded-xl shadow-md active:scale-95 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => setPreSubmitReviewModalOpen(false)}
+                className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                title="إغلاق والعودة للامتحان"
               >
-                <i className="fas fa-pencil-alt"></i>
-                <span>مراجعة وحل الأسئلة المتبقية ✍️</span>
+                <i className="fas fa-times text-base"></i>
               </button>
+            </div>
+
+            {/* Quick Stats Bar */}
+            <div className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs sm:text-sm font-bold">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="bg-white dark:bg-slate-900 px-3 py-1 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200">
+                  📊 إجمالي الأسئلة: <b className="text-primary font-black">{toEasternArabic(activeLesson.questions.length)}</b>
+                </span>
+                <span className="bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1 rounded-xl border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300">
+                  ✅ تم الإجابة: <b className="font-black">{toEasternArabic(examReviewStats.answered)}</b>
+                </span>
+                <span className={`px-3 py-1 rounded-xl border font-bold ${
+                  examReviewStats.unanswered > 0
+                    ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 animate-pulse'
+                    : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500'
+                }`}>
+                  ⚠️ أسئلة متروكة: <b className="font-black">{toEasternArabic(examReviewStats.unanswered)}</b>
+                </span>
+              </div>
+            </div>
+
+            {/* Category Filter Tabs */}
+            <div className="p-3 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5 sm:gap-2 overflow-x-auto shrink-0 scrollbar-none">
+              <button
+                type="button"
+                onClick={() => setPreSubmitFilter('all')}
+                className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                  preSubmitFilter === 'all'
+                    ? 'bg-primary text-white shadow-md'
+                    : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <i className="fas fa-layer-group text-xs"></i>
+                <span>الكل</span>
+                <span className="text-[10px] bg-black/20 px-1.5 py-0.2 rounded-full">{toEasternArabic(examReviewStats.total)}</span>
+              </button>
+
+              {examReviewStats.mcq > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPreSubmitFilter('mcq')}
+                  className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                    preSubmitFilter === 'mcq'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <i className="fas fa-check-circle text-xs"></i>
+                  <span>اختر من متعدد 🔘</span>
+                  <span className="text-[10px] bg-black/20 px-1.5 py-0.2 rounded-full">{toEasternArabic(examReviewStats.mcq)}</span>
+                </button>
+              )}
+
+              {examReviewStats.tf > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPreSubmitFilter('tf')}
+                  className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                    preSubmitFilter === 'tf'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <i className="fas fa-scale-balanced text-xs"></i>
+                  <span>صح وخطأ ⚖️</span>
+                  <span className="text-[10px] bg-black/20 px-1.5 py-0.2 rounded-full">{toEasternArabic(examReviewStats.tf)}</span>
+                </button>
+              )}
+
+              {examReviewStats.essay > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPreSubmitFilter('essay')}
+                  className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                    preSubmitFilter === 'essay'
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <i className="fas fa-pen-fancy text-xs"></i>
+                  <span>الأسئلة المقالية ✍️</span>
+                  <span className="text-[10px] bg-black/20 px-1.5 py-0.2 rounded-full">{toEasternArabic(examReviewStats.essay)}</span>
+                </button>
+              )}
 
               <button
                 type="button"
-                onClick={() => {
-                  setUnansweredWarningModal(null);
-                  handleFinishQuiz(true);
-                }}
-                className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 font-black py-2.5 px-4 rounded-xl active:scale-95 transition-all text-xs flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => setPreSubmitFilter('unanswered')}
+                className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                  preSubmitFilter === 'unanswered'
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
               >
-                <i className="fas fa-check-double"></i>
-                <span>تأكيد الإنهاء واحتسابها في بنك الأخطاء</span>
+                <i className="fas fa-triangle-exclamation text-xs"></i>
+                <span>المتروكة ⚠️</span>
+                <span className="text-[10px] bg-black/20 px-1.5 py-0.2 rounded-full">{toEasternArabic(examReviewStats.unanswered)}</span>
               </button>
             </div>
-          </div>
-        </div>
-      )}
 
-      {essaySubmissionModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[1500] flex items-center justify-center p-4 animate-fade-in" dir="rtl">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-primary flex flex-col items-center">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center text-3xl mb-3">
-              {essaySubmissionModal.isGrading ? (
-                <i className="fas fa-spinner fa-spin text-primary"></i>
+            {/* Questions List */}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5">
+              {filteredReviewQuestions.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 dark:text-slate-500 font-bold">
+                  <i className="fas fa-inbox text-4xl mb-3 opacity-40"></i>
+                  <p>لا توجد أسئلة تطابق هذا الفلتر حالياً</p>
+                </div>
               ) : (
-                <i className="fas fa-check-circle text-emerald-600"></i>
+                filteredReviewQuestions.map((item) => {
+                  const typeLabel = item.category === 'essay' ? 'سؤال مقالي' : (item.category === 'tf' ? 'صح وخطأ' : 'اختر من متعدد');
+                  const typeColor = item.category === 'essay' ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300' : (item.category === 'tf' ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300');
+
+                  return (
+                    <div
+                      key={item.idx}
+                      className={`p-3 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        item.hasAns
+                          ? 'bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 shadow-xs'
+                          : 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/50 shadow-xs'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        {/* Top badges */}
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          <span className="text-xs font-black bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 px-2 py-0.5 rounded-lg">
+                            سؤال {toEasternArabic(item.idx + 1)}
+                          </span>
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg ${typeColor}`}>
+                            {typeLabel}
+                          </span>
+                          {item.hasAns ? (
+                            <span className="text-[11px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                              <i className="fas fa-check text-[10px]"></i>
+                              <span>تم الحل</span>
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 px-2 py-0.5 rounded-lg flex items-center gap-1 animate-pulse">
+                              <i className="fas fa-exclamation-triangle text-[10px]"></i>
+                              <span>لم تجب بعد</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Question Text */}
+                        <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 line-clamp-2 leading-relaxed">
+                          {item.q.q}
+                        </p>
+
+                        {/* Student Answer Preview */}
+                        <div className="mt-1.5 text-xs">
+                          {item.hasAns ? (
+                            <div className="text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50/60 dark:bg-emerald-950/30 px-2.5 py-1 rounded-lg inline-block border border-emerald-100 dark:border-emerald-900/40 max-w-full truncate">
+                              <span className="text-slate-500 dark:text-slate-400 font-semibold ml-1">إجابتك:</span>
+                              "{item.answerText.length > 90 ? item.answerText.substring(0, 90) + '...' : item.answerText}"
+                            </div>
+                          ) : (
+                            <span className="text-rose-600 dark:text-rose-400 font-semibold text-[11px]">
+                              ⚠️ هذا السؤال فارغ حتى الآن
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Jump button */}
+                      <div className="shrink-0 pt-1 sm:pt-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentQIndex(item.idx);
+                            setPreSubmitReviewModalOpen(false);
+                          }}
+                          className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs px-3.5 py-2 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                          <span>انتقال للسؤال</span>
+                          <i className="fas fa-arrow-left text-[11px]"></i>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
 
-            <h3 className="text-xl font-black text-primary mb-0.5">موسوعة الكنز التعليمي</h3>
-            <span className="text-xs font-bold text-gray-400 mb-4">{essaySubmissionModal.quizTitle}</span>
+            {/* Footer */}
+            <div className="bg-slate-50 dark:bg-slate-800/80 p-3 sm:p-4 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2.5 shrink-0">
+              {examReviewStats.unanswered > 0 && (
+                <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 rounded-xl px-3 py-2 text-xs font-bold flex items-center gap-2">
+                  <i className="fas fa-exclamation-triangle text-amber-600 shrink-0"></i>
+                  <span>
+                    تنبيه: يوجد لديك <b>{toEasternArabic(examReviewStats.unanswered)}</b> أسئلة لم تقم بالإجابة عليها بعد. يمكنك تسليم الاختبار الآن أو مراجعتها أولاً.
+                  </span>
+                </div>
+              )}
 
-            <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl p-4 my-2 w-full">
-              <p className="text-base sm:text-lg font-black text-gray-800 leading-relaxed text-center">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setPreSubmitReviewModalOpen(false)}
+                  className="w-full sm:w-auto bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 font-black text-xs sm:text-sm py-2.5 sm:py-3 px-5 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <i className="fas fa-arrow-right"></i>
+                  <span>العودة للاختبار وإكمال الحل</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreSubmitReviewModalOpen(false);
+                    finishQuizInternal();
+                  }}
+                  className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm py-2.5 sm:py-3 px-6 rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <i className="fas fa-paper-plane"></i>
+                  <span>إنهاء وتسليم الامتحان نهائياً 🚀</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {essaySubmissionModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[99999] flex items-center justify-center p-4 animate-fade-in" dir="rtl">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center border-t-8 border-primary flex flex-col items-center">
+            <div className="w-16 h-16 rounded-2xl bg-primary/10 dark:bg-primary/20 text-primary flex items-center justify-center text-3xl mb-3 shadow-inner">
+              {essaySubmissionModal.isGrading ? (
+                <i className="fas fa-spinner fa-spin text-primary"></i>
+              ) : (
+                <i className="fas fa-check-circle text-emerald-600 dark:text-emerald-400"></i>
+              )}
+            </div>
+
+            <h3 className="text-xl font-black text-primary dark:text-amber-400 mb-0.5">موسوعة الكنز التعليمي</h3>
+            <span className="text-xs font-bold text-gray-500 dark:text-gray-400 mb-3">{essaySubmissionModal.quizTitle}</span>
+
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-slate-800 dark:to-slate-800/60 border-2 border-amber-200 dark:border-amber-700/50 rounded-2xl p-4 my-2 w-full text-center">
+              <p className="text-base sm:text-lg font-black text-slate-800 dark:text-slate-100 leading-relaxed">
                 {essaySubmissionModal.message}
               </p>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-200 dark:border-slate-700/60 mt-2 text-xs font-bold text-slate-600 dark:text-slate-300 text-center">
+              🔒 <span className="text-primary font-black">تأكيد رسمي:</span> تم تسجيل واعتماد محاولتك الرسمية الأولى لمرة واحدة فقط، ولن يتم إرسال أي محاولات أخرى للمعلم.
             </div>
 
             {!essaySubmissionModal.isGrading && (
@@ -13012,7 +13713,7 @@ function initAllSheetsMenu() {
                   setActiveLesson(null);
                   setScreen('index');
                 }}
-                className="mt-5 w-full bg-primary hover:bg-primary-dark text-white font-black py-3 px-6 rounded-xl shadow-md active:scale-95 transition-all text-sm"
+                className="mt-5 w-full bg-primary hover:bg-primary-dark text-white font-black py-3 px-6 rounded-xl shadow-md active:scale-95 transition-all text-sm cursor-pointer"
               >
                 العودة لقائمة الاختبارات 🏠
               </button>
@@ -13767,6 +14468,7 @@ function initAllSheetsMenu() {
         onClose={handleCloseApprovedEssayModal}
         submission={approvedSubForModal}
         isDarkMode={isDarkMode}
+        data={data}
       />
 
       <StudentEssayListModal
@@ -13790,6 +14492,10 @@ function initAllSheetsMenu() {
         isDarkMode={isDarkMode}
         onDeleteMistake={handleDeleteNotebookMistake}
         onClearNotebook={handleClearPermanentNotebook}
+        studentName={studentName || (studentData as any)?.name || 'طالب موسوعة الكنز'}
+        studentPhone={inputPhone || localStorage.getItem('loggedInPhone') || (studentData as any)?.phone || ''}
+        subjectName={subjectName || 'التاريخ'}
+        gradeName={gradeName || '2 بكالوريا'}
       />
 
       {/* نوافذ الأدعية الإيمانية (البدء والختام) */}

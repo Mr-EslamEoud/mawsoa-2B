@@ -149,14 +149,19 @@ export const FaithFloatingToast: React.FC<FaithFloatingToastProps> = ({
         <div className="absolute -bottom-10 -left-10 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
 
         {/* رأس البطاقة */}
-        <div className="px-5 pt-4 pb-2 flex items-center justify-between border-b border-emerald-500/15">
+        <div className="px-5 pt-3.5 pb-2.5 flex items-center justify-between border-b border-emerald-500/15">
           <div className="flex items-center gap-2 min-w-0">
-            <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs shadow-inner ${theme.badgeBg}`}>
-              <i className={`fas ${theme.icon}`}></i>
+            <span className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center text-xs shadow-inner">
+              <i className="fas fa-seedling text-emerald-600 dark:text-emerald-400"></i>
             </span>
-            <span className={`text-xs font-black px-2.5 py-0.5 rounded-full border shadow-2xs truncate ${theme.badgeBg}`}>
-              {currentSupplication.categoryLabel}
-            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-black text-emerald-900 dark:text-emerald-200">
+                نفحة إيمانية
+              </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border shadow-2xs truncate ${theme.badgeBg}`}>
+                {currentSupplication.categoryLabel}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -198,16 +203,16 @@ export const FaithFloatingToast: React.FC<FaithFloatingToastProps> = ({
         </div>
 
         {/* شريط الإجراء السفلي */}
-        <div className="px-5 pb-3.5 pt-1 flex items-center justify-between text-[11px] text-gray-500 font-bold border-t border-emerald-500/10">
+        <div className="px-5 pb-3.5 pt-2 flex items-center justify-between text-[11px] text-gray-500 font-bold border-t border-emerald-500/10">
           <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
-            <i className="fas fa-seedling text-emerald-500"></i>
-            <span>نفحة إيمانية كل 5 دقائق</span>
+            <i className="fas fa-heart text-emerald-500"></i>
+            <span>ذكر وتذكير</span>
           </div>
 
           <button
             type="button"
             onClick={handleClose}
-            className="px-3.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black rounded-xl shadow-md shadow-emerald-600/30 transition-all cursor-pointer flex items-center gap-1.5"
+            className="px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black rounded-xl shadow-md shadow-emerald-600/30 transition-all cursor-pointer flex items-center gap-1.5"
           >
             <span>آمين 🤲</span>
           </button>

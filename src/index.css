@@ -7,6 +7,17 @@
   --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
 }
 
+:root {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html, body {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   font-family: 'Cairo', sans-serif;
   margin: 0;

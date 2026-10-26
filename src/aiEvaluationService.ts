@@ -75,6 +75,16 @@ export const checkGeminiKeyHealth = async (key?: string): Promise<GeminiKeyHealt
     return 'missing';
   }
 
+  // منع الفحص المتكرر المكثف إذا تم الفحص خلال الدقيقة الماضية لتجنب استهلاك الكوتا
+  try {
+    const lastCheck = sessionStorage.getItem('gemini_last_health_check');
+    const now = Date.now();
+    if (lastCheck && now - Number(lastCheck) < 60000 && !key) {
+      return getGeminiKeyHealth();
+    }
+    sessionStorage.setItem('gemini_last_health_check', String(now));
+  } catch (e) {}
+
   try {
     // 1. استعلام النماذج المصرح بها لهذا المفتاح
     const listRes = await fetch(
@@ -135,6 +145,7 @@ export const checkGeminiKeyHealth = async (key?: string): Promise<GeminiKeyHealt
         const errMsg = genData.error?.message || '';
         if (genRes.status === 429 || errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('rate')) {
           isQuota = true;
+          break; // الكوتا مستنفذة للمفتاح كاملاً، التوقف الفوري لتجنب تكرار أخطاء 429
         }
       } catch (e) {
         // try next model
@@ -421,8 +432,8 @@ export const evaluateEssayAnswer = async (
   // فحص أولي بالمحلل المحلي
   const preEval = evaluateHeuristically(cleanStudent, modelAnswer, question.concept, maxScore, detectedType, dialectPolicy);
 
-  // إذا لم يتوفر مفتاح API، نعتمد نتيجة المحرك المحلي فوراً
-  if (!apiKey) {
+  // إذا لم يتوفر مفتاح API أو كانت الكوتا مستنفذة، نعتمد نتيجة المحرك المحلي فوراً وبدون أي تأخير
+  if (!apiKey || getGeminiKeyHealth() === 'quota_exhausted') {
     return preEval;
   }
 
@@ -522,8 +533,12 @@ export const evaluateEssayAnswer = async (
         } else {
           if (response.status === 429) {
             setGeminiKeyHealth('quota_exhausted');
+            lastError = new Error(`Quota exhausted (429)`);
+            break; // التوقف الفوري لتجنب تكرار أخطاء 429 على باقي النماذج
           } else if (response.status === 400 || response.status === 403) {
             setGeminiKeyHealth('invalid');
+            lastError = new Error(`Invalid key (${response.status})`);
+            break;
           }
           lastError = new Error(`Model ${model} returned ${response.status}`);
         }
@@ -562,6 +577,7 @@ export interface EssayDiffComparison {
   styleNote: string;
   suggestedScore: number;
   verdictSummary: string;
+  studentFeedback: string;
   provider: 'gemini' | 'heuristic';
 }
 
@@ -586,13 +602,14 @@ export const compareStudentWithModelAnswer = async (
       styleNote: 'لا توجد إجابة مسجلة للطالب (انتهى الوقت أو تركت فارغة).',
       suggestedScore: 0,
       verdictSummary: `الطالب ترك السؤال فارغاً دون أي محاولة، والدرجة المقترحة: 0 من ${maxScore}.`,
+      studentFeedback: 'لم تقم بكتابة إجابة لهذا السؤال، يرجى مذاكرة الدرس وحل تدريباته لاكتساب مهارة الحل المقالي.',
       provider: 'heuristic',
     };
   }
 
   const apiKey = getGeminiApiKey();
 
-  if (apiKey) {
+  if (apiKey && getGeminiKeyHealth() !== 'quota_exhausted' && getGeminiKeyHealth() !== 'invalid') {
     try {
       const prompt = `
 أنت مصحح ومراجع امتحانات تاريخ ثانوية عامة خبير. مهمتك إجراء مقارنة تفصيلية وتحليل الفروق (AI Diff Analysis) بين "إجابة الطالب" و"نموذج الإجابة المعتمد" لمساعدة المعلم في اتخاذ القرار العادل بدقة وسرعة:
@@ -613,6 +630,7 @@ ${modelAnswer}
 3. "styleNote": تحليل لغة وصياغة الطالب (هل صياغته فصحى أم عامية؟ وهل استخدم المصطلحات التاريخية المطلوبة؟).
 4. "suggestedScore": اقتراح درجة عادلة ودقيقة بالأرقام بين 0 و ${maxScore} (يقبل أنصاف الدرجات).
 5. "verdictSummary": خلاصة توجيهية موجزة ومباشرة للمعلم في سطرين توضح قرارك والسبب.
+6. "studentFeedback": عبارة تقييم وتوجيه تربوي رقيقة ومحفزة ومباشرة من المعلم إلى الطالب بصيغة المخاطب (مثال: "ممتاز يا بطل! إجابة نموذجية ومكتملة..." أو "أحسنت، إجابة جيدة ولكن تنقصك النقاط التالية لاكتمال إجابتك...") بحيث تكون مرنة ومخصصة للمقال المكتوب تحديداً وتذكر ما ينقصه بدقة.
 
 أجب بصيغة JSON حصراً بهذا النسق وبدون أي markdown خارج الـ JSON:
 {
@@ -620,7 +638,8 @@ ${modelAnswer}
   "missingPoints": ["عنصر مفقود 1"],
   "styleNote": "تقييم الصياغة واللهجة",
   "suggestedScore": 1.5,
-  "verdictSummary": "خلاصة المراجعة السريعة للمعلم"
+  "verdictSummary": "خلاصة المراجعة السريعة للمعلم",
+  "studentFeedback": "توجيه المعلم المباشر والمخصص للطالب موضحاً التقييم والنواقص بدقة"
 }
 `;
 
@@ -659,8 +678,10 @@ ${modelAnswer}
           } else {
             if (response.status === 429) {
               setGeminiKeyHealth('quota_exhausted');
+              break;
             } else if (response.status === 400 || response.status === 403) {
               setGeminiKeyHealth('invalid');
+              break;
             }
           }
         } catch (e) {}
@@ -668,12 +689,29 @@ ${modelAnswer}
 
       if (rawText) {
         const parsed = JSON.parse(rawText);
+        const suggested = Math.max(0, Math.min(maxScore, Number(parsed.suggestedScore) || 0));
+        const matched = Array.isArray(parsed.matchedPoints) ? parsed.matchedPoints : [];
+        const missing = Array.isArray(parsed.missingPoints) ? parsed.missingPoints : [];
+
+        // إعداد توجيه تربوي مرن ومباشر للطالب
+        let studentFeedback = parsed.studentFeedback;
+        if (!studentFeedback) {
+          if (suggested >= maxScore * 0.9) {
+            studentFeedback = 'إجابة نموذجية ومكتملة العناصر، أحسنت وبارك الله فيك يا بطل! 🌟';
+          } else if (missing.length > 0) {
+            studentFeedback = `إجابة جيدة ومجهود طيب، ولكن ينقصك لاكتمال إجابتك النموذجية ذكر: (${missing.slice(0, 2).join('، ')}). ركز عليها يا بطل! 💡`;
+          } else {
+            studentFeedback = 'إجابة مقبولة، يرجى مراجعة نموذج الإجابة المعتمد لمزيد من الدقة والتفصيل.';
+          }
+        }
+
         return {
-          matchedPoints: Array.isArray(parsed.matchedPoints) ? parsed.matchedPoints : [],
-          missingPoints: Array.isArray(parsed.missingPoints) ? parsed.missingPoints : [],
+          matchedPoints: matched,
+          missingPoints: missing,
           styleNote: parsed.styleNote || 'تمت المراجعة اللغوية بنجاح.',
-          suggestedScore: Math.max(0, Math.min(maxScore, Number(parsed.suggestedScore) || 0)),
+          suggestedScore: suggested,
           verdictSummary: parsed.verdictSummary || 'تم تحليل الفروق وتطابق الإجابة بنجاح.',
+          studentFeedback,
           provider: 'gemini',
         };
       }
@@ -694,6 +732,13 @@ ${modelAnswer}
   const matchedPoints: string[] = [];
   const missingPoints: string[] = [];
 
+  const safeExcerpt = (textStr: string, limit = 75): string => {
+    const clean = textStr.replace(/\*\*/g, '').replace(/[\*_#]/g, '').trim();
+    if (clean.length <= limit) return clean;
+    const cutPos = clean.lastIndexOf(' ', limit);
+    return (cutPos > 35 ? clean.slice(0, cutPos) : clean.slice(0, limit)) + '...';
+  };
+
   modelLines.forEach(line => {
     const lineKeywords = line
       .toLowerCase()
@@ -704,10 +749,11 @@ ${modelAnswer}
     const matchedKw = lineKeywords.filter(kw => cleanStudentLower.includes(kw));
     const ratio = lineKeywords.length > 0 ? (matchedKw.length / lineKeywords.length) : 0;
 
+    const excerpt = safeExcerpt(line);
     if (ratio >= 0.25 || (matchedKw.length >= 2 && lineKeywords.length >= 3)) {
-      matchedPoints.push(`استوفى فكرة: "${line.slice(0, 70)}${line.length > 70 ? '...' : ''}"`);
+      matchedPoints.push(`استوفى فكرة: "${excerpt}"`);
     } else {
-      missingPoints.push(`لم يشر إلى: "${line.slice(0, 70)}${line.length > 70 ? '...' : ''}"`);
+      missingPoints.push(`لم يشر إلى: "${excerpt}"`);
     }
   });
 
@@ -727,12 +773,33 @@ ${modelAnswer}
     ? `أورد الطالب جانباً من الإجابة وأغفل عناصر أساسية من النموذج، الدرجة المقترحة: ${suggestedScore} من ${maxScore}.`
     : `الإجابة ضعيفة وتفتقر إلى معظم الشواهد والمفاهيم الواردة بالنموذج (${suggestedScore} من ${maxScore}).`;
 
+  // إعداد توجيه تربوي مباشر ومرن ومخصص للطالب موضحاً النواقص المستخرجة من إجابته الفعلية
+  let studentFeedback = '';
+  if (matchRatio >= 0.85 || suggestedScore >= maxScore * 0.9) {
+    studentFeedback = 'إجابة نموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
+  } else if (matchRatio >= 0.4) {
+    const missingClean = missingPoints
+      .slice(0, 2)
+      .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, ''))
+      .join('، ');
+    studentFeedback = `إجابة جيدة ومجهود طيب، ولكن ينقصك لاكتمال إجابتك النموذجية توضيح: (${missingClean}). ركز على هذه النقاط يا بطل! 💡`;
+  } else if (matchRatio > 0) {
+    const missingClean = missingPoints
+      .slice(0, 2)
+      .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, ''))
+      .join('، ');
+    studentFeedback = `إجابتك ناقصة وتحتاج إلى تدقيق. يرجى مراجعة الدرس ونموذج الإجابة، حيث أغفلت ذكر: (${missingClean}) ⚠️`;
+  } else {
+    studentFeedback = 'إجابتك بعيدة عن المطلوب ولم تستوفِ مفاهيم السؤال، يرجى مراجعة شرح الدرس ونموذج الإجابة بدقة ⚠️';
+  }
+
   return {
     matchedPoints: matchedPoints.length > 0 ? matchedPoints : ['لم يتم العثور على تطابق مباشر مع مفاهيم نموذج الإجابة.'],
     missingPoints: missingPoints.length > 0 ? missingPoints : ['أورد الطالب جميع النقاط الأساسية.'],
     styleNote,
     suggestedScore,
     verdictSummary,
+    studentFeedback,
     provider: 'heuristic',
   };
 };

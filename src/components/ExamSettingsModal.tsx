@@ -16,6 +16,7 @@ interface ExamSettingsModalProps {
   onTogglePublish: (lessonId: string, shouldPublish: boolean) => void;
   onClose: () => void;
   onPreviewExam?: (lesson: Lesson, config: ExamConfig) => void;
+  onSaveConfig?: (config: ExamConfig) => void;
   isDarkMode?: boolean;
 }
 
@@ -26,6 +27,7 @@ export const ExamSettingsModal: React.FC<ExamSettingsModalProps> = ({
   onTogglePublish,
   onClose,
   onPreviewExam,
+  onSaveConfig,
   isDarkMode = false,
 }) => {
   const [config, setConfig] = useState<ExamConfig>(() => getExamConfig(lesson.id));
@@ -51,6 +53,11 @@ export const ExamSettingsModal: React.FC<ExamSettingsModalProps> = ({
 
   const handleSave = () => {
     saveExamConfig(config);
+    if (onSaveConfig) {
+      try {
+        onSaveConfig(config);
+      } catch (e) {}
+    }
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 2000);
   };
@@ -65,6 +72,11 @@ export const ExamSettingsModal: React.FC<ExamSettingsModalProps> = ({
 
   const handlePublishToggle = () => {
     saveExamConfig(config);
+    if (onSaveConfig) {
+      try {
+        onSaveConfig(config);
+      } catch (e) {}
+    }
     onTogglePublish(lesson.id, !isPublished);
   };
 

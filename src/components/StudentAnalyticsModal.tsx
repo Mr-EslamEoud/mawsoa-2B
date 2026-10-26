@@ -116,32 +116,59 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
 
   const isHonorRoll = missingHonorLessons.length === 0 && solvedLessonsCount > 0;
 
-  // نسخ تقرير الأداء لإرساله لولي الأمر عبر واتساب
-  const handleCopyParentReport = () => {
+  // توليد نص تقرير المتابعة الأكاديمي الشامل لولي الأمر عبر واتساب
+  const getParentReportText = (): string => {
     const dateStr = new Date().toLocaleDateString('ar-EG');
-    let text = `📊 تقرير متابعة الطالب الأكاديمي\n`;
-    text += `👤 الطالب: ${student.name}\n`;
-    text += `📱 رقم الهاتف: ${student.phone}\n`;
-    text += `🏫 فئة الاشتراك: ${isStudentOnline ? 'أونلاين 🌐' : 'سنتر 🏫'}\n`;
-    text += `📅 تاريخ إصدار التقرير: ${dateStr}\n`;
-    text += `------------------------------------\n`;
-    text += `🎯 الاختبارات المنجزة: ${toEasternArabic(solvedLessonsCount)} من إجمالي ${toEasternArabic(totalLessonsCount)} درس (${toEasternArabic(Math.round((solvedLessonsCount / (totalLessonsCount || 1)) * 100))}٪)\n`;
-    text += `📈 المتوسط العام لدرجات الطالب: ${toEasternArabic(avgScore)}٪\n`;
-    text += `🏆 أعلى درجة محققة: ${toEasternArabic(maxScore)}٪\n`;
-    text += `📉 أدنى درجة محققة: ${toEasternArabic(minScore)}٪\n`;
-    text += `------------------------------------\n`;
-    text += `📚 ملخص الإنجاز حسب الوحدات:\n`;
+    let text = `📊 *تقرير متابعة الطالب الأكاديمي*\n`;
+    text += `👤 *الطالب:* ${student.name}\n`;
+    text += `📱 *رقم الهاتف:* ${String(student.phone || '')}\n`;
+    text += `🏫 *فئة الاشتراك:* ${isStudentOnline ? 'أونلاين 🌐' : 'سنتر 🏫'}\n`;
+    text += `📅 *تاريخ إصدار التقرير:* ${dateStr}\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `🎯 *الاختبارات المنجزة:* ${toEasternArabic(solvedLessonsCount)} من إجمالي ${toEasternArabic(totalLessonsCount)} درس (${toEasternArabic(Math.round((solvedLessonsCount / (totalLessonsCount || 1)) * 100))}٪)\n`;
+    text += `📈 *المتوسط العام للدرجات:* ${toEasternArabic(avgScore)}٪\n`;
+    text += `🏆 *أعلى درجة محققة:* ${toEasternArabic(maxScore)}٪\n`;
+    text += `📉 *أدنى درجة محققة:* ${toEasternArabic(minScore)}٪\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `📚 *ملخص الإنجاز حسب الوحدات:*\n`;
 
     units.forEach(u => {
       const uSolved = (u.lessons || []).filter(l => lessonFirstScoreMap[l.title] !== undefined);
       const uScores = uSolved.map(l => lessonFirstScoreMap[l.title]);
       const uAvg = uScores.length > 0 ? Math.round(uScores.reduce((a, b) => a + b, 0) / uScores.length) : 0;
-      text += `• ${u.title}: أنجز ${toEasternArabic(uSolved.length)}/${toEasternArabic(u.lessons.length)} درس (بمتوسط ${toEasternArabic(uAvg)}٪)\n`;
+      text += `• *${u.title}:* أنجز ${toEasternArabic(uSolved.length)}/${toEasternArabic(u.lessons.length)} درس (بمتوسط ${toEasternArabic(uAvg)}٪)\n`;
     });
 
-    text += `------------------------------------\n`;
-    text += `🌟 موسوعة الكنز التعليمية - أ/ إسلام سعود 🌟`;
+    text += `━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `💡 *التوجيه التربوي من أ/ إسلام سعود:*\n`;
+    text += avgScore >= 85
+      ? `ما شاء الله تبارك الله! مستوى متميز ودرجات مشرفة، نوصي بمواصلة التدريب للحفاظ على صدارة لوحة الشرف.`
+      : avgScore >= 65
+      ? `أداء طيب وجهد مشكور، ونوصي بمراجعة بنك الأخطاء وتفسيرات الإجابات لضمان التقفيل التام.`
+      : avgScore > 0
+      ? `يحتاج الطالب إلى مزيد من التركيز والمراجعة المستمرة والاستفادة من إعادة الاختبار وبنك الأخطاء لرفع مستواه.`
+      : `لم يقم الطالب بالاختبارات بعد. يُرجى حثه على الالتزام والدخول لاختبارات المنصة لمتابعة تقدمه.`;
+    text += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `🌟 *موسوعة الكنز التعليمية - أ/ إسلام سعود* 🌟`;
+    return text;
+  };
 
+  // رابط واتساب المباشر متضمناً نص التقرير المعبأ مسبقاً
+  const getWhatsAppReportUrl = (): string => {
+    const rawPhone = student?.phone != null ? String(student.phone).trim() : '';
+    if (!rawPhone) return '#';
+    const cleanDigits = rawPhone.replace(/[^\d]/g, '');
+    if (!cleanDigits) return '#';
+    const intlPhone = cleanDigits.startsWith('20')
+      ? cleanDigits
+      : '20' + cleanDigits.replace(/^0+/, '');
+    const text = encodeURIComponent(getParentReportText());
+    return `https://wa.me/${intlPhone}?text=${text}`;
+  };
+
+  // نسخ تقرير الأداء لإرساله لولي الأمر عبر واتساب
+  const handleCopyParentReport = () => {
+    const text = getParentReportText();
     navigator.clipboard.writeText(text);
     setCopiedReport(true);
     setTimeout(() => setCopiedReport(false), 3000);
@@ -270,7 +297,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                 <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 font-bold mt-1 flex-wrap">
                   <span className="flex items-center gap-1">
                     <i className="fas fa-phone text-gray-400"></i>
-                    <span dir="ltr" className="font-mono">{student.phone}</span>
+                    <span dir="ltr" className="font-mono">{String(student.phone || '')}</span>
                   </span>
                   {studentMeta?.code && (
                     <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-md font-mono text-[11px]">
@@ -288,24 +315,24 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
 
             {/* الأزرار العلوية السريعة */}
             <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
-              {/* زر واتساب السريع */}
-              {student.phone && (
+              {/* زر واتساب السريع متضمناً نص التقرير جاهزاً */}
+              {student?.phone != null && String(student.phone).trim() !== '' && (
                 <a
-                  href={`https://wa.me/20${formatPhoneStr(student.phone).replace(/^0+/, '')}`}
+                  href={getWhatsAppReportUrl()}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-                  title="مراسلة الطالب أو ولي الأمر عبر واتساب"
+                  title="إرسال تقرير الطالب لولي الأمر عبر واتساب مع نص التقرير معبأ تلقائياً"
                 >
                   <i className="fab fa-whatsapp text-sm"></i>
-                  <span className="hidden sm:inline">واتساب</span>
+                  <span className="hidden sm:inline">إرسال بالواتساب</span>
                 </a>
               )}
 
               {/* زر فك الجهاز */}
               <button
                 type="button"
-                onClick={() => onResetDevice(student.phone, student.name)}
+                onClick={() => onResetDevice(String(student.phone || ''), student.name)}
                 className="px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-bold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 title="السماح للطالب بالدخول من جهاز جديد"
               >
@@ -317,7 +344,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               {isBlocked ? (
                 <button
                   type="button"
-                  onClick={() => onUnblockStudent(student.phone, student.name)}
+                  onClick={() => onUnblockStudent(String(student.phone || ''), student.name)}
                   className="px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 >
                   <i className="fas fa-unlock"></i>
@@ -326,7 +353,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={() => onBlockStudent(student.phone, student.name)}
+                  onClick={() => onBlockStudent(String(student.phone || ''), student.name)}
                   className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 >
                   <i className="fas fa-ban"></i>
@@ -385,6 +412,20 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                   <i className="fas fa-layer-group"></i>
                   <span>📑 التقرير الشامل (صورة)</span>
                 </button>
+              )}
+
+              {/* زر إرسال التقرير مباشرة إلى واتساب */}
+              {student?.phone != null && String(student.phone).trim() !== '' && (
+                <a
+                  href={getWhatsAppReportUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95"
+                  title="فتح محادثة واتساب مع الطالب أو ولي الأمر مع تقرير الدرجات معبأ تلقائياً"
+                >
+                  <i className="fab fa-whatsapp"></i>
+                  <span>إرسال واتساب</span>
+                </a>
               )}
 
               {/* زر نسخ التقرير النصي للواتساب */}
@@ -705,7 +746,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          onGrantNewAttempt(student.phone, student.name, lesson.title);
+                                          onGrantNewAttempt(String(student.phone || ''), student.name, lesson.title);
                                         }}
                                         className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-300 dark:border-amber-700 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                                         title="منح الطالب فرصة رسمية جديدة لهذا الدرس"
@@ -798,7 +839,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onGrantNewAttempt(student.phone, student.name, test.quiz);
+                              onGrantNewAttempt(String(student.phone || ''), student.name, test.quiz);
                             }}
                             className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-300 dark:border-amber-700 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                             title="منح الطالب فرصة رسمية جديدة لهذا الاختبار"
