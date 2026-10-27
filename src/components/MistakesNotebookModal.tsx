@@ -1064,7 +1064,7 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
   return (
     <div 
       className={`fixed inset-0 z-[100] flex ${
-        isFullScreen ? 'p-0 w-screen h-screen' : 'items-center justify-center p-2 sm:p-4'
+        isFullScreen ? 'p-0 w-screen h-screen' : 'items-center justify-center p-0 sm:p-4'
       } bg-slate-950/80 backdrop-blur-md animate-fade-in`} 
       dir="rtl"
     >
@@ -1072,7 +1072,7 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
         className={`w-full flex flex-col overflow-hidden relative shadow-2xl transition-all ${
           isFullScreen 
             ? 'h-full max-w-none max-h-none rounded-none border-0' 
-            : 'max-w-6xl h-[92vh] max-h-[880px] rounded-3xl border'
+            : 'max-w-6xl h-full sm:h-[92vh] sm:max-h-[880px] rounded-none sm:rounded-3xl border-0 sm:border'
         } ${
           isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-purple-200 text-slate-900'
         }`}
@@ -1107,40 +1107,41 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
         />
 
         {/* ===================== رأس النافذة ===================== */}
-        <div className="p-4 sm:p-5 border-b border-purple-100 dark:border-slate-800 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-white dark:from-slate-900 dark:via-purple-950/30 dark:to-slate-900 shrink-0 relative z-10">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 sm:w-13 sm:h-13 rounded-2xl bg-purple-600 text-white flex items-center justify-center text-xl sm:text-2xl shadow-lg shadow-purple-600/30 shrink-0">
+        <div className="p-3 sm:p-5 border-b border-purple-100 dark:border-slate-800 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-white dark:from-slate-900 dark:via-purple-950/30 dark:to-slate-900 shrink-0 relative z-10">
+          <div className="flex items-center justify-between gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-purple-600 text-white flex items-center justify-center text-sm sm:text-2xl shadow-md shadow-purple-600/30 shrink-0">
                 <i className="fas fa-book-bookmark"></i>
               </div>
-              <div>
-                <h2 className="text-lg sm:text-2xl font-black text-purple-950 dark:text-purple-100 flex items-center gap-2">
-                  <span>كشكول أهم الأخطاء والنموذج المعتمد</span>
-                  <span className="text-xl">📚</span>
+              <div className="min-w-0">
+                <h2 className="text-sm sm:text-2xl font-black text-purple-950 dark:text-purple-100 flex items-center gap-1.5 truncate">
+                  <span className="truncate">كشكول الأخطاء والنموذج المعتمد</span>
+                  <span className="text-base sm:text-xl">📚</span>
                 </h2>
-                <p className="text-xs sm:text-sm font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                <p className="hidden sm:block text-xs sm:text-sm font-bold text-slate-500 dark:text-slate-400 mt-0.5 truncate">
                   مرجعك الدائم للمراجعة الشاملة لجميع الأسئلة مع نماذج الإجابة وتوجيهات أ/ إسلام سعود
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {/* زر تنزيل PDF عالي الجودة مع العلامة المائية */}
               <button
                 onClick={handleDownloadPdf}
                 disabled={isGeneratingPdf || filteredMistakes.length === 0}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-md shadow-emerald-600/25 transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-black text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-md shadow-emerald-600/25 transition-all cursor-pointer active:scale-95 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 title="تنزيل كشكول الأخطاء المعروض كملف PDF مع العلامة المائية الرسمية"
               >
                 {isGeneratingPdf ? (
                   <>
                     <i className="fas fa-spinner fa-spin text-xs"></i>
-                    <span>جاري التجهيز...</span>
+                    <span className="hidden sm:inline">جاري التجهيز...</span>
                   </>
                 ) : (
                   <>
                     <i className="fas fa-file-pdf text-xs sm:text-sm"></i>
-                    <span>تنزيل PDF ({toEasternArabic(filteredMistakes.length)}) 📥</span>
+                    <span className="hidden sm:inline">تنزيل PDF ({toEasternArabic(filteredMistakes.length)}) 📥</span>
+                    <span className="sm:hidden font-black">PDF ({toEasternArabic(filteredMistakes.length)})</span>
                   </>
                 )}
               </button>
@@ -1148,18 +1149,18 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
               {onClearNotebook && stats.total > 0 && (
                 <button
                   onClick={onClearNotebook}
-                  className="px-3 py-1.5 rounded-xl text-xs font-black text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 dark:border-rose-900/60 dark:bg-rose-950/30 transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                  className="p-1.5 sm:px-3 sm:py-1.5 rounded-xl text-xs font-black text-rose-600 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 dark:border-rose-900/60 dark:bg-rose-950/30 transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1"
                   title="مسح الكشكول والبدء من جديد"
                 >
-                  <i className="fas fa-trash-alt text-[11px]"></i>
-                  <span className="hidden sm:inline">تفريغ الكشكول</span>
+                  <i className="fas fa-trash-alt text-xs"></i>
+                  <span className="hidden sm:inline">تفريغ</span>
                 </button>
               )}
 
               {/* زر تكبير / تصغير ملء الشاشة */}
               <button
                 onClick={() => setIsFullScreen(prev => !prev)}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-slate-100 hover:bg-purple-100 dark:bg-slate-800 dark:hover:bg-purple-950/50 text-slate-600 dark:text-slate-300 hover:text-purple-600 transition-colors shadow-xs cursor-pointer"
+                className="hidden sm:flex w-9 h-9 sm:w-10 sm:h-10 rounded-full items-center justify-center bg-slate-100 hover:bg-purple-100 dark:bg-slate-800 dark:hover:bg-purple-950/50 text-slate-600 dark:text-slate-300 hover:text-purple-600 transition-colors shadow-xs cursor-pointer"
                 title={isFullScreen ? "تصغير النافذة" : "تكبير ملء الشاشة"}
               >
                 <i className={`fas ${isFullScreen ? 'fa-compress' : 'fa-expand'} text-sm sm:text-base`}></i>
@@ -1168,48 +1169,48 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
               {/* زر إغلاق النافذة */}
               <button
                 onClick={onClose}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/50 text-slate-500 hover:text-rose-600 transition-colors shadow-sm cursor-pointer"
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/50 text-slate-500 hover:text-rose-600 transition-colors shadow-sm cursor-pointer shrink-0"
                 title="إغلاق"
               >
-                <i className="fas fa-times text-base sm:text-lg"></i>
+                <i className="fas fa-times text-sm sm:text-lg"></i>
               </button>
             </div>
           </div>
 
           {/* شارات الإحصائيات العلوية */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3 pt-3 border-t border-purple-100/70 dark:border-slate-800/80">
-            <span className="px-3 py-1 rounded-xl bg-purple-100/90 dark:bg-purple-950/70 text-purple-900 dark:text-purple-200 text-xs font-black flex items-center gap-1.5">
-              <i className="fas fa-layer-group text-purple-600"></i>
-              <span>إجمالي الأخطاء المحفوظة: {toEasternArabic(stats.total)}</span>
+          <div className="flex items-center gap-1.5 sm:gap-3 mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-purple-100/70 dark:border-slate-800/80 overflow-x-auto custom-scrollbar flex-nowrap pb-0.5">
+            <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg sm:rounded-xl bg-purple-100/90 dark:bg-purple-950/70 text-purple-900 dark:text-purple-200 text-[10px] sm:text-xs font-black flex items-center gap-1 shrink-0 whitespace-nowrap">
+              <i className="fas fa-layer-group text-purple-600 text-[10px]"></i>
+              <span>محفوظ: {toEasternArabic(stats.total)}</span>
             </span>
 
-            <span className="px-3 py-1 rounded-xl bg-emerald-100/90 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200 text-xs font-black flex items-center gap-1.5">
-              <i className="fas fa-check-circle text-emerald-600"></i>
-              <span>تم إتقانه: {toEasternArabic(stats.mastered)}</span>
+            <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg sm:rounded-xl bg-emerald-100/90 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-200 text-[10px] sm:text-xs font-black flex items-center gap-1 shrink-0 whitespace-nowrap">
+              <i className="fas fa-check-circle text-emerald-600 text-[10px]"></i>
+              <span>متقن: {toEasternArabic(stats.mastered)}</span>
             </span>
 
-            <span className="px-3 py-1 rounded-xl bg-indigo-100/90 dark:bg-indigo-950/70 text-indigo-900 dark:text-indigo-200 text-xs font-black flex items-center gap-1.5">
-              <i className="fas fa-feather-alt text-indigo-600"></i>
+            <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg sm:rounded-xl bg-indigo-100/90 dark:bg-indigo-950/70 text-indigo-900 dark:text-indigo-200 text-[10px] sm:text-xs font-black flex items-center gap-1 shrink-0 whitespace-nowrap">
+              <i className="fas fa-feather-alt text-indigo-600 text-[10px]"></i>
               <span>مقالي: {toEasternArabic(stats.essays)}</span>
             </span>
 
-            <span className="px-3 py-1 rounded-xl bg-blue-100/90 dark:bg-blue-950/70 text-blue-900 dark:text-blue-200 text-xs font-black flex items-center gap-1.5">
-              <i className="fas fa-list-check text-blue-600"></i>
-              <span>اختياري / صح وخطأ: {toEasternArabic(stats.mcqs)}</span>
+            <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg sm:rounded-xl bg-blue-100/90 dark:bg-blue-950/70 text-blue-900 dark:text-blue-200 text-[10px] sm:text-xs font-black flex items-center gap-1 shrink-0 whitespace-nowrap">
+              <i className="fas fa-list-check text-blue-600 text-[10px]"></i>
+              <span>اختياري: {toEasternArabic(stats.mcqs)}</span>
             </span>
           </div>
         </div>
 
         {/* ===================== شريط التبويبات والفلترة المنظمة ===================== */}
-        <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-3 shrink-0">
+        <div className="p-2 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-2 sm:space-y-3 shrink-0">
           {/* 1. تبويبات الوحدات الدراسية (مبوّبة) */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 custom-scrollbar whitespace-nowrap">
             <button
               onClick={() => {
                 setSelectedUnitId('all');
                 setSelectedLessonId('all');
               }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer ${
+              className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all shrink-0 cursor-pointer ${
                 selectedUnitId === 'all'
                   ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
@@ -1225,7 +1226,7 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
                   setSelectedUnitId(unit.id);
                   setSelectedLessonId('all');
                 }}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer ${
+                className={`px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all shrink-0 cursor-pointer ${
                   selectedUnitId === unit.id
                     ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
@@ -1238,13 +1239,13 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
 
           {/* 2. شريط الدروس المنسدلة التابعة للوحدة المحددة */}
           {selectedUnitId !== 'all' && availableLessons.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 custom-scrollbar bg-purple-50/50 dark:bg-purple-950/20 p-2 rounded-xl border border-purple-100 dark:border-purple-900/40">
-              <span className="text-[11px] font-black text-purple-800 dark:text-purple-300 shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 pt-0.5 custom-scrollbar bg-purple-50/50 dark:bg-purple-950/20 p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-purple-100 dark:border-purple-900/40 whitespace-nowrap">
+              <span className="text-[10px] sm:text-[11px] font-black text-purple-800 dark:text-purple-300 shrink-0">
                 دروس الوحدة:
               </span>
               <button
                 onClick={() => setSelectedLessonId('all')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+                className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
                   selectedLessonId === 'all'
                     ? 'bg-indigo-600 text-white'
                     : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
@@ -1256,7 +1257,7 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
                 <button
                   key={lesson.id}
                   onClick={() => setSelectedLessonId(lesson.id)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+                  className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
                     selectedLessonId === lesson.id
                       ? 'bg-indigo-600 text-white'
                       : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
@@ -1269,67 +1270,69 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
           )}
 
           {/* 3. شريط البحث والفلترة حسب النوع والإتقان */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+          <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2.5">
             {/* خانة البحث */}
-            <div className="relative flex-1 min-w-[180px]">
+            <div className="relative w-full sm:flex-1 min-w-[140px]">
               <i className="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
               <input
                 type="text"
-                placeholder="ابحث بنص السؤال أو المفهوم أو الكلمة..."
+                placeholder="ابحث بنص السؤال أو المفهوم..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pr-8 pl-3 py-1.5 text-xs font-bold rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none focus:border-purple-500 transition-colors"
+                className="w-full pr-8 pl-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-bold rounded-lg sm:rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none focus:border-purple-500 transition-colors"
               />
             </div>
 
-            {/* فلتر النوع */}
-            <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold shrink-0">
-              <button
-                onClick={() => setTypeFilter('all')}
-                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${typeFilter === 'all' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
-              >
-                الكل
-              </button>
-              <button
-                onClick={() => setTypeFilter('mcq')}
-                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${typeFilter === 'mcq' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
-              >
-                اختياري / صح وخطأ
-              </button>
-              <button
-                onClick={() => setTypeFilter('essay')}
-                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${typeFilter === 'essay' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
-              >
-                مقالي 🪶
-              </button>
-            </div>
+            <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto w-full sm:w-auto pb-0.5 custom-scrollbar">
+              {/* فلتر النوع */}
+              <div className="flex items-center gap-0.5 bg-white dark:bg-slate-800 p-0.5 sm:p-1 rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] sm:text-xs font-bold shrink-0">
+                <button
+                  onClick={() => setTypeFilter('all')}
+                  className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${typeFilter === 'all' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
+                >
+                  الكل
+                </button>
+                <button
+                  onClick={() => setTypeFilter('mcq')}
+                  className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${typeFilter === 'mcq' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
+                >
+                  اختياري
+                </button>
+                <button
+                  onClick={() => setTypeFilter('essay')}
+                  className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${typeFilter === 'essay' ? 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-300 font-black' : 'text-slate-500'}`}
+                >
+                  مقالي 🪶
+                </button>
+              </div>
 
-            {/* فلتر الإتقان */}
-            <div className="flex items-center gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold shrink-0">
-              <button
-                onClick={() => setShowMasteredOnly('all')}
-                className={`px-2 py-1 rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'all' ? 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-black' : 'text-slate-500'}`}
-              >
-                الجميع
-              </button>
-              <button
-                onClick={() => setShowMasteredOnly('unmastered')}
-                className={`px-2 py-1 rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'unmastered' ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 font-black' : 'text-slate-500'}`}
-              >
-                بانتظار الفهم ⏳
-              </button>
-              <button
-                onClick={() => setShowMasteredOnly('mastered')}
-                className={`px-2 py-1 rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'mastered' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300 font-black' : 'text-slate-500'}`}
-              >
-                تم الإتقان ✅
-              </button>
+              {/* فلتر الإتقان */}
+              <div className="flex items-center gap-0.5 bg-white dark:bg-slate-800 p-0.5 sm:p-1 rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] sm:text-xs font-bold shrink-0">
+                <button
+                  onClick={() => setShowMasteredOnly('all')}
+                  className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'all' ? 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-black' : 'text-slate-500'}`}
+                >
+                  الجميع
+                </button>
+                <button
+                  onClick={() => setShowMasteredOnly('unmastered')}
+                  className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'unmastered' ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 font-black' : 'text-slate-500'}`}
+                >
+                  بانتظار الفهم ⏳
+                </button>
+                <button
+                  onClick={() => setShowMasteredOnly('mastered')}
+                  className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-md sm:rounded-lg transition-colors cursor-pointer ${showMasteredOnly === 'mastered' ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300 font-black' : 'text-slate-500'}`}
+                >
+                  تم الإتقان ✅
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         {/* ===================== محتوى بطاقات الأسئلة المنظمة ===================== */}
-        <div className="p-3 sm:p-5 overflow-y-auto space-y-4 flex-1 relative z-10 custom-scrollbar">
+        <div className="p-2.5 sm:p-5 overflow-y-auto space-y-3 sm:space-y-4 flex-1 relative z-10 custom-scrollbar">
           {filteredMistakes.length === 0 ? (
             <div className="text-center py-16 px-4">
               <div className="w-16 h-16 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center text-3xl mx-auto mb-3 shadow-inner">
@@ -1526,36 +1529,37 @@ export const MistakesNotebookModal: React.FC<MistakesNotebookModalProps> = ({
         </div>
 
         {/* ===================== ذيل النافذة ===================== */}
-        <div className="p-3 sm:p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between gap-3 shrink-0 relative z-10">
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-            معروض: {toEasternArabic(filteredMistakes.length)} من أصل {toEasternArabic(stats.total)} سؤال
+        <div className="p-2 sm:p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between gap-2 shrink-0 relative z-10">
+          <span className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400">
+            معروض: {toEasternArabic(filteredMistakes.length)} من {toEasternArabic(stats.total)}
           </span>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={handleDownloadPdf}
               disabled={isGeneratingPdf || filteredMistakes.length === 0}
-              className="py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="py-1.5 px-2.5 sm:py-2 sm:px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               title="تنزيل كشكول الأخطاء كملف PDF مع العلامة المائية"
             >
               {isGeneratingPdf ? (
                 <>
                   <i className="fas fa-spinner fa-spin text-xs"></i>
-                  <span>جاري التجهيز...</span>
+                  <span className="hidden sm:inline">جاري التجهيز...</span>
                 </>
               ) : (
                 <>
                   <i className="fas fa-file-pdf text-xs"></i>
-                  <span>تحميل كشكول الأخطاء PDF 📥</span>
+                  <span className="hidden sm:inline">تحميل كشكول الأخطاء PDF 📥</span>
+                  <span className="sm:hidden font-bold">تحميل PDF 📥</span>
                 </>
               )}
             </button>
 
             <button
               onClick={onClose}
-              className="py-2 px-6 bg-purple-600 hover:bg-purple-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+              className="py-1.5 px-3 sm:py-2 sm:px-6 bg-purple-600 hover:bg-purple-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
             >
-              إغلاق الكشكول
+              إغلاق
             </button>
           </div>
         </div>

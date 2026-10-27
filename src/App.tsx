@@ -53,6 +53,7 @@ import { StudentEssayListModal } from './components/StudentEssayListModal';
 import { MistakesNotebookModal } from './components/MistakesNotebookModal';
 import { FaithPrayerModal } from './components/FaithPrayerModal';
 import { FaithFloatingToast } from './components/FaithFloatingToast';
+import { StudentRetakeNotificationModal } from './components/StudentRetakeNotificationModal';
 import { getGeminiApiKey, setGeminiApiKey, evaluateEssayAnswer } from './aiEvaluationService';
 import { 
   getExamConfig, 
@@ -68,9 +69,13 @@ import {
   markSubmissionNotificationSeen,
   getExamAvailability,
   formatScheduleDate,
-  isTestEligibleForLeaderboard
+  isTestEligibleForLeaderboard,
+  getStudentUnseenRetakeDirective,
+  markRetakeDirectiveSeen,
+  getActiveRetakeDirectiveForLesson,
+  removeRetakeDirective
 } from './examConfigUtils';
-import { StudentEssaySubmission, PermanentMistakeItem } from './types';
+import { StudentEssaySubmission, PermanentMistakeItem, StudentRetakeDirective } from './types';
 import { usePWA } from './usePWA';
 
 
@@ -439,6 +444,10 @@ export default function App() {
   const [showStudentEssayListModal, setShowStudentEssayListModal] = useState<boolean>(false);
   const [showMistakesNotebookModal, setShowMistakesNotebookModal] = useState<boolean>(false);
 
+  // حالة بطاقة توجيه إعادة الامتحان الموجهة من المعلم للطالب
+  const [retakeDirectiveForModal, setRetakeDirectiveForModal] = useState<StudentRetakeDirective | null>(null);
+  const [activeRetakeDirective, setActiveRetakeDirective] = useState<StudentRetakeDirective | null>(null);
+
   // إعدادات ظهور أزرار المنصة للطلاب (تحكم الإدارة)
   const [showMistakesNotebookSetting, setShowMistakesNotebookSetting] = useState<boolean>(() => {
     try {
@@ -567,10 +576,12 @@ export default function App() {
     }
   };
 
+  const [submissionsVersion, setSubmissionsVersion] = useState<number>(0);
+
   const currentStudentSubmissions = useMemo(() => {
     const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
     return getStudentSubmissions(phone);
-  }, [inputPhone, screen, studentData]);
+  }, [inputPhone, screen, studentData, submissionsVersion]);
 
   const handleCloseApprovedEssayModal = () => {
     if (approvedSubForModal) {
@@ -578,17 +589,6 @@ export default function App() {
     }
     setApprovedSubForModal(null);
   };
-
-  // فحص وجود نتائج مقالية معتمدة جديدة لإشعار الطالب فوراً
-  useEffect(() => {
-    const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
-    if (phone && screen !== 'quiz' && screen !== 'admin') {
-      const unseen = getUnseenApprovedSubmissions(phone);
-      if (unseen.length > 0 && !approvedSubForModal) {
-        setApprovedSubForModal(unseen[0]);
-      }
-    }
-  }, [screen, inputPhone, studentData]);
   
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [data, setData] = useState<Unit[]>(() => {
@@ -795,6 +795,7 @@ export default function App() {
   // Global Audio Player states
   const [globalAudio, setGlobalAudio] = useState<{ url: string; title: string } | null>(null);
   const [selectedPdfForView, setSelectedPdfForView] = useState<{ title: string; url: string } | null>(null);
+  const [pdfZoom, setPdfZoom] = useState<number>(100);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
 
   const handleDownloadWatermarkedPdf = async (url: string, title: string) => {
@@ -1122,6 +1123,284 @@ export default function App() {
     });
   };
 
+  // دالة تسجيل أخطاء الامتحان عند اكتماله رسمياً فقط لمنع أي تسريب أو غش أثناء الحل
+  const commitExamMistakesOnCompletion = (lesson: Lesson, answers: any[], isPracticeAttempt?: boolean) => {
+    if (!lesson || lesson.id === 'mistakes_bank' || !Array.isArray(lesson.questions)) return;
+    
+    // إذا كان الامتحان مضبوطاً على الوضع الهجين (اعتماد المعلم أولاً) نمنع إضافة أي أخطاء لبنك الأخطاء في المحاولة الرسمية الأولى حتى يعتمدها المعلم
+    const cfg = getExamConfig(lesson.id);
+    const isPractice = Boolean(isPracticeAttempt || isPracticeMode);
+    if (cfg && cfg.gradingMode === 'hybrid' && !isPractice) {
+      return;
+    }
+
+    const mistakes: { q: Question; selected: string }[] = [];
+    lesson.questions.forEach((q, idx) => {
+      const ans = answers[idx];
+      if (!ans || !ans.isCorrect) {
+        mistakes.push({
+          q,
+          selected: ans?.selected || ans?.studentAnswerText || 'لم يتم الإجابة'
+        });
+      }
+    });
+
+    if (mistakes.length > 0) {
+      mistakes.forEach(m => {
+        addMistakeToPermanentNotebook(
+          m.q,
+          m.selected,
+          m.selected,
+          lesson.id,
+          lesson.title
+        );
+      });
+
+      setMistakesBank(prev => {
+        const newBank = [...prev];
+        mistakes.forEach(m => {
+          const qHash = simpleHash(m.q.q);
+          if (!newBank.some(item => simpleHash(item.q) === qHash)) {
+            newBank.push(m.q);
+          }
+        });
+        try {
+          localStorage.setItem('mistakesBank', JSON.stringify(newBank));
+        } catch (e) {}
+        return newBank;
+      });
+    }
+  };
+
+  // دالة تسجيل أخطاء الاختبارات المقالية أو المعتمدة فقط بعد اعتماد النتيجة رسمياً من المعلم
+  const commitApprovedSubmissionMistakes = (sub: StudentEssaySubmission) => {
+    if (!sub || !sub.isFullyApproved || !Array.isArray(sub.questions)) return;
+    if (sub.isMistakesBankReleased === false) return; // المعلم اختار حجب بنك الأخطاء لهذا الامتحان
+    
+    let targetLesson: Lesson | undefined;
+    if (Array.isArray(data)) {
+      for (const u of data) {
+        if (!u || !Array.isArray(u.lessons)) continue;
+        for (const l of u.lessons) {
+          if (l.id === sub.lessonId || l.title?.trim() === sub.quizTitle?.trim()) {
+            targetLesson = l;
+            break;
+          }
+        }
+        if (targetLesson) break;
+      }
+    }
+
+    const mistakes: { q: Question; selected: string }[] = [];
+    sub.questions.forEach(item => {
+      const isPassing = item.teacherScore !== undefined 
+        ? item.teacherScore >= Math.max(1, (item.maxScore || 2) * 0.6)
+        : false;
+
+      if (!isPassing) {
+        const origQ = targetLesson?.questions.find(q => simpleHash(q.q) === simpleHash(item.questionText) || q.q.trim() === item.questionText.trim());
+        const qToAdd: Question = origQ || {
+          q: item.questionText,
+          options: [],
+          correct: item.modelAnswer || '',
+          answer: item.modelAnswer || '',
+          reason: item.teacherFeedback || item.aiFeedback || '',
+          type: 'essay',
+          essayType: item.essayType
+        };
+
+        mistakes.push({
+          q: qToAdd,
+          selected: item.studentText || 'لم يتم الإجابة'
+        });
+      }
+    });
+
+    if (mistakes.length > 0) {
+      mistakes.forEach(m => {
+        addMistakeToPermanentNotebook(
+          m.q,
+          m.selected,
+          m.selected,
+          sub.lessonId,
+          sub.quizTitle
+        );
+      });
+
+      setMistakesBank(prev => {
+        const newBank = [...prev];
+        mistakes.forEach(m => {
+          const qHash = simpleHash(m.q.q);
+          if (!newBank.some(item => simpleHash(item.q) === qHash)) {
+            newBank.push(m.q);
+          }
+        });
+        try {
+          localStorage.setItem('mistakesBank', JSON.stringify(newBank));
+        } catch (e) {}
+        return newBank;
+      });
+    }
+  };
+
+  // فحص وجود نتائج امتحانات مقالية معتمدة جديدة لإشعار الطالب فوراً وتسجيل أخطائها المعتمدة في بنك الأخطاء
+  useEffect(() => {
+    const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+    if (phone && screen !== 'quiz' && screen !== 'admin') {
+      const unseen = getUnseenApprovedSubmissions(phone);
+      if (unseen.length > 0 && !approvedSubForModal) {
+        setApprovedSubForModal(unseen[0]);
+        unseen.forEach(s => commitApprovedSubmissionMistakes(s));
+      }
+    }
+  }, [screen, inputPhone, studentData, data]);
+
+  // فحص وجود توجيه إعادة امتحان موجه من المعلم لإشعار الطالب فوراً
+  useEffect(() => {
+    const phone = inputPhone || localStorage.getItem('loggedInPhone') || (studentData as any)?.phone || '';
+    if (phone && screen !== 'quiz' && screen !== 'admin') {
+      const unseenDir = getStudentUnseenRetakeDirective(phone);
+      if (unseenDir && !retakeDirectiveForModal) {
+        setRetakeDirectiveForModal(unseenDir);
+      }
+    }
+  }, [screen, inputPhone, studentData]);
+
+  const handleAcknowledgeRetakeDirective = (dir: StudentRetakeDirective) => {
+    markRetakeDirectiveSeen(dir.id);
+    setRetakeDirectiveForModal(null);
+    setActiveRetakeDirective(dir);
+
+    // البحث عن الدرس المستهدف وبدء امتحانه فوراً
+    let targetLesson: Lesson | null = null;
+    for (const u of data) {
+      const found = u.lessons.find(l => 
+        l.id === dir.lessonId || 
+        l.title.trim() === dir.lessonTitle.trim() || 
+        dir.lessonTitle.includes(l.title) || 
+        l.title.includes(dir.lessonTitle)
+      );
+      if (found) {
+        targetLesson = found;
+        break;
+      }
+    }
+
+    if (targetLesson) {
+      startLesson(targetLesson);
+    } else {
+      setScreen('home');
+      showAlert(`🌟 يمكنك الآن بدء امتحان: ${dir.lessonTitle}`);
+    }
+  };
+
+  // فلترة أسئلة بنك الأخطاء المسموح للطالب بالتدرب عليها:
+  // استبعاد أي سؤال ينتمي لاختبار قيد الحل أو قيد المراجعة ولم يتم اعتماده رسمياً من الإدارة أو تم حجب بنك أخطائه
+  const visibleMistakesBank = useMemo(() => {
+    if (!Array.isArray(mistakesBank) || mistakesBank.length === 0) return [];
+    const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+    const cleanPhone = formatPhoneStr(phone);
+    const submissions = getStudentSubmissions(cleanPhone);
+    const session = localStorage.getItem('savedSession');
+    let activeSessionLessonId: string | null = null;
+    if (session) {
+      try {
+        const parsed = JSON.parse(session);
+        activeSessionLessonId = parsed.lessonId || null;
+      } catch(e) {}
+    }
+
+    return mistakesBank.filter(q => {
+      if (!q || !q.q) return false;
+      const qHash = simpleHash(q.q);
+
+      // تحديد الدرس الذي ينتمي إليه هذا السؤال
+      let qLessonId: string | null = null;
+      let qLessonTitle: string | null = null;
+      if (Array.isArray(data)) {
+        for (const u of data) {
+          if (!u || !Array.isArray(u.lessons)) continue;
+          for (const l of u.lessons) {
+            if (l.questions && l.questions.some(item => simpleHash(item.q) === qHash || item.q === q.q)) {
+              qLessonId = l.id;
+              qLessonTitle = l.title;
+              break;
+            }
+          }
+          if (qLessonId) break;
+        }
+      }
+
+      // إذا لم ينتمِ لأي درس في البيانات، يتم الإبقاء عليه
+      if (!qLessonId) return true;
+
+      // 1. إذا كان الامتحان قيد الحل حالياً في savedSession، يُحجب فوراً
+      if (activeSessionLessonId && activeSessionLessonId === qLessonId) {
+        return false;
+      }
+
+      // 2. فحص تسليمات هذا الامتحان لدى الطالب
+      const matchedSub = submissions.find(s => 
+        (s.lessonId === qLessonId || s.quizTitle?.trim() === qLessonTitle?.trim())
+      );
+
+      // إذا وُجد تسليم ولكنه لم يُعتمد بعد من المعلم/الإدارة، يُحجب السؤال فوراً
+      if (matchedSub && !matchedSub.isFullyApproved) {
+        return false;
+      }
+
+      // إذا تم الاعتماد ولكن المعلم اختار حجب بنك الأخطاء لهذا الامتحان
+      if (matchedSub && matchedSub.isFullyApproved && matchedSub.isMistakesBankReleased === false) {
+        return false;
+      }
+
+      // 3. فحص إعدادات الامتحان: إذا كان الامتحان هجيناً (gradingMode === 'hybrid') ولم يُعتمد تسليمه بعد
+      const cfg = getExamConfig(qLessonId);
+      if (cfg && cfg.gradingMode === 'hybrid') {
+        if (!matchedSub || !matchedSub.isFullyApproved) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [mistakesBank, data, inputPhone, studentData]);
+
+  // فلترة أسئلة كشكول الأخطاء لاستبعاد الأسئلة التي تنتمي لاختبارات قيد الحل أو لم تُعتمد بعد
+  const visibleNotebookMistakes = useMemo(() => {
+    if (!Array.isArray(permanentNotebookMistakes) || permanentNotebookMistakes.length === 0) return [];
+    const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+    const cleanPhone = formatPhoneStr(phone);
+    const submissions = getStudentSubmissions(cleanPhone);
+    const session = localStorage.getItem('savedSession');
+    let activeSessionLessonId: string | null = null;
+    if (session) {
+      try {
+        const parsed = JSON.parse(session);
+        activeSessionLessonId = parsed.lessonId || null;
+      } catch(e) {}
+    }
+
+    return permanentNotebookMistakes.filter(item => {
+      if (!item || !item.question || !item.question.q) return false;
+      const lId = item.lessonId;
+      if (!lId || lId === 'general_lesson') return true;
+
+      if (activeSessionLessonId && activeSessionLessonId === lId) {
+        return false;
+      }
+
+      const matchedSub = submissions.find(s => s.lessonId === lId || s.quizTitle?.trim() === item.lessonTitle?.trim());
+      if (matchedSub && !matchedSub.isFullyApproved) {
+        return false;
+      }
+      if (matchedSub && matchedSub.isFullyApproved && matchedSub.isMistakesBankReleased === false) {
+        return false;
+      }
+      return true;
+    });
+  }, [permanentNotebookMistakes, data, inputPhone, studentData]);
+
   // مزامنة الأسئلة السابقة من بنك الأخطاء إلى الكشكول الدائم تلقائياً لضمان عدم ضياع أي خطأ
   useEffect(() => {
     if (Array.isArray(mistakesBank) && mistakesBank.length > 0 && Array.isArray(data) && data.length > 0) {
@@ -1276,17 +1555,6 @@ export default function App() {
             };
             setUserAnswers(newAns);
             setSkippedQuestions(prev => prev.filter(idx => idx !== currentQIndex));
-
-            // إضافة السؤال إلى بنك الأخطاء
-            setMistakesBank(prev => {
-              const qHash = simpleHash(currentQ.q);
-              if (!prev.some(item => simpleHash(item.q) === qHash)) {
-                const updated = [...prev, currentQ];
-                localStorage.setItem('mistakesBank', JSON.stringify(updated));
-                return updated;
-              }
-              return prev;
-            });
 
             setFeedbackToast({ isCorrect: false, message: '⏰ انتهى الوقت المخصص لهذا السؤال!' });
             setTimeout(() => {
@@ -1835,11 +2103,30 @@ export default function App() {
               myResults.forEach(r => {
                 if (isAmbiguousOldQuiz(r.quiz)) return;
                 
-                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير')) {
+                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير') || r.quiz.includes('فرصة جديدة')) {
                   if (r.quiz.includes('تصفير الوحدة')) {
                     const unitTitleToReset = r.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                     const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
                     if (unitToReset) unitToReset.lessons.forEach(l => { delete restoredScores[l.id]; completedIds.delete(l.id); });
+                  } else if (r.quiz.includes('فرصة جديدة') || r.quiz.includes('تصفير:') || r.quiz.includes('تصفير 🗑️:')) {
+                    const cleanQuizTitle = r.quiz
+                      .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                      .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                      .trim();
+                    let targetLessonId = '';
+                    for (const u of builtData) {
+                      const l = u.lessons.find(ls => 
+                        ls.title.trim() === cleanQuizTitle || 
+                        cleanQuizTitle.includes(ls.title.trim()) || 
+                        ls.title.trim().includes(cleanQuizTitle) ||
+                        normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                      );
+                      if (l) { targetLessonId = l.id; break; }
+                    }
+                    if (targetLessonId) {
+                      delete restoredScores[targetLessonId];
+                      completedIds.delete(targetLessonId);
+                    }
                   } else {
                     for(const key in restoredScores) delete restoredScores[key];
                     completedIds.clear();
@@ -2005,11 +2292,30 @@ export default function App() {
               myResults.forEach(r => {
                 if (isAmbiguousOldQuiz(r.quiz)) return;
                 
-                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير')) {
+                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير') || r.quiz.includes('فرصة جديدة')) {
                   if (r.quiz.includes('تصفير الوحدة')) {
                     const unitTitleToReset = r.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                     const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
                     if (unitToReset) unitToReset.lessons.forEach(l => { delete restoredScores[l.id]; completedIds.delete(l.id); });
+                  } else if (r.quiz.includes('فرصة جديدة') || r.quiz.includes('تصفير:') || r.quiz.includes('تصفير 🗑️:')) {
+                    const cleanQuizTitle = r.quiz
+                      .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                      .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                      .trim();
+                    let targetLessonId = '';
+                    for (const u of builtData) {
+                      const l = u.lessons.find(ls => 
+                        ls.title.trim() === cleanQuizTitle || 
+                        cleanQuizTitle.includes(ls.title.trim()) || 
+                        ls.title.trim().includes(cleanQuizTitle) ||
+                        normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                      );
+                      if (l) { targetLessonId = l.id; break; }
+                    }
+                    if (targetLessonId) {
+                      delete restoredScores[targetLessonId];
+                      completedIds.delete(targetLessonId);
+                    }
                   } else {
                     for(const key in restoredScores) delete restoredScores[key];
                     completedIds.clear();
@@ -2099,13 +2405,16 @@ export default function App() {
         const builtData = buildCourseData(qData.data as FlatQuestionRow[]);
         
         // --- مزامنة ومطابقة النتائج مع جوجل شيتس لحل مشكلة اختلاف رقم المنجز ---
-        if (studentName && inputPhone) {
+        const effPhone = formatPhoneStr(inputPhone || localStorage.getItem('loggedInPhone') || (studentData as any)?.phone || '');
+        const effName = (studentName || (studentData as any)?.name || localStorage.getItem('loggedInUser') || '').trim();
+
+        if (effPhone) {
           try {
             const res = await fetch(`${API_URL}?action=getResults&apiKey=${SECRET_API_KEY}&t=${noCache}`);
             const resData = await res.json();
             if (resData.status === 'success') {
               const chronologicalData = [...resData.data].reverse() as TestResult[];
-              const formattedPhone = formatPhoneStr(inputPhone);
+              const formattedPhone = effPhone;
               
               let currentStudentsList = studentsList;
               if (sData && sData.status === 'success' && sData.data) {
@@ -2127,7 +2436,7 @@ export default function App() {
                     correctName = stArr[0].name;
                   }
                 }
-                return correctName.trim() === studentName.trim();
+                return effName ? correctName.trim() === effName : true;
               });
 
               const restoredScores: Record<string, number> = {};
@@ -2137,7 +2446,7 @@ export default function App() {
               myResults.forEach(r => {
                 if (isAmbiguousOldQuiz(r.quiz)) return;
                 
-                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير')) {
+                if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير') || r.quiz.includes('فرصة جديدة')) {
                   if (r.quiz.includes('تصفير الوحدة')) {
                     const unitTitleToReset = r.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                     const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
@@ -2146,6 +2455,53 @@ export default function App() {
                         delete restoredScores[l.id];
                         completedIds.delete(l.id);
                       });
+                    }
+                  } else if (r.quiz.includes('فرصة جديدة') || r.quiz.includes('تصفير:') || r.quiz.includes('تصفير 🗑️:')) {
+                    const cleanQuizTitle = r.quiz
+                      .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                      .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                      .trim();
+                    
+                    let targetLessonId = '';
+                    for (const u of builtData) {
+                      const l = u.lessons.find(ls => 
+                        ls.title.trim() === cleanQuizTitle || 
+                        cleanQuizTitle.includes(ls.title.trim()) || 
+                        ls.title.trim().includes(cleanQuizTitle) ||
+                        normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                      );
+                      if (l) { targetLessonId = l.id; break; }
+                    }
+                    if (targetLessonId) {
+                      delete restoredScores[targetLessonId];
+                      completedIds.delete(targetLessonId);
+                    }
+
+                    // تفعيل بطاقة توجيه الإعادة للطالب إذا كانت من المعلم
+                    if (r.quiz.includes('فرصة جديدة')) {
+                      const isEssayOnly = r.quiz.includes('مقالي') || String(r.score).includes('مقالي');
+                      const retakeType = isEssayOnly ? 'essay_only' : 'full';
+                      const matchedLesson = builtData.flatMap(u => u.lessons).find(l => 
+                        l.id === targetLessonId || l.title.trim() === cleanQuizTitle || cleanQuizTitle.includes(l.title.trim())
+                      );
+                      const lessonTitle = matchedLesson ? matchedLesson.title : cleanQuizTitle;
+                      const lessonId = matchedLesson ? matchedLesson.id : cleanQuizTitle;
+
+                      const existingDirective = getActiveRetakeDirectiveForLesson(formattedPhone, lessonId);
+                      if (!existingDirective) {
+                        const directive: StudentRetakeDirective = {
+                          id: `retake_cloud_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                          studentPhone: formattedPhone,
+                          studentName: effName || 'طالبنا المتميز',
+                          lessonId: lessonId,
+                          lessonTitle: lessonTitle,
+                          retakeType: retakeType,
+                          date: r.date || new Date().toLocaleDateString('ar-EG'),
+                          seen: false,
+                        };
+                        saveRetakeDirective(directive);
+                        setRetakeDirectiveForModal(directive);
+                      }
                     }
                   } else {
                     for (const key in restoredScores) delete restoredScores[key];
@@ -2175,7 +2531,7 @@ export default function App() {
               offlineResults.forEach((offlineRes: any) => {
                   if (isAmbiguousOldQuiz(offlineRes.quiz)) return;
                   
-                  if (offlineRes.quiz.includes('تصفير') || String(offlineRes.score).includes('تصفير')) {
+                  if (offlineRes.quiz.includes('تصفير') || String(offlineRes.score).includes('تصفير') || offlineRes.quiz.includes('فرصة جديدة')) {
                     if (offlineRes.quiz.includes('تصفير الوحدة')) {
                       const unitTitleToReset = offlineRes.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                       const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
@@ -2184,6 +2540,25 @@ export default function App() {
                           delete restoredScores[l.id];
                           completedIds.delete(l.id);
                         });
+                      }
+                    } else if (offlineRes.quiz.includes('فرصة جديدة') || offlineRes.quiz.includes('تصفير:') || offlineRes.quiz.includes('تصفير 🗑️:')) {
+                      const cleanQuizTitle = offlineRes.quiz
+                        .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                        .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                        .trim();
+                      let targetLessonId = '';
+                      for (const u of builtData) {
+                        const l = u.lessons.find(ls => 
+                          ls.title.trim() === cleanQuizTitle || 
+                          cleanQuizTitle.includes(ls.title.trim()) || 
+                          ls.title.trim().includes(cleanQuizTitle) ||
+                          normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                        );
+                        if (l) { targetLessonId = l.id; break; }
+                      }
+                      if (targetLessonId) {
+                        delete restoredScores[targetLessonId];
+                        completedIds.delete(targetLessonId);
                       }
                     } else {
                       for (const key in restoredScores) delete restoredScores[key];
@@ -2381,6 +2756,7 @@ export default function App() {
             }
           }
         }
+        setSubmissionsVersion(v => v + 1);
         showAlert('تم تحديث المحتوى والإشعارات بنجاح! 🚀');
       } else {
         showAlert("فشل التحديث من السيرفر.");
@@ -2519,12 +2895,26 @@ export default function App() {
                     if (isAmbiguousOldQuiz(r.quiz)) return;
                     if (fullResetHit) return;
                     
-                    if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير')) {
+                    if (r.quiz.includes('تصفير') || String(r.score).includes('تصفير') || r.quiz.includes('فرصة جديدة')) {
                       if (r.quiz.includes('تصفير الوحدة')) {
                         const unitTitleToReset = r.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                         const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
                         if (unitToReset) {
                           unitToReset.lessons.forEach(l => resetLessonIds.add(l.id));
+                        }
+                      } else if (r.quiz.includes('فرصة جديدة') || r.quiz.includes('تصفير:') || r.quiz.includes('تصفير 🗑️:')) {
+                        const cleanQuizTitle = r.quiz
+                          .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                          .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                          .trim();
+                        for (const u of builtData) {
+                          const l = u.lessons.find(ls => 
+                            ls.title.trim() === cleanQuizTitle || 
+                            cleanQuizTitle.includes(ls.title.trim()) || 
+                            ls.title.trim().includes(cleanQuizTitle) ||
+                            normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                          );
+                          if (l) { resetLessonIds.add(l.id); break; }
                         }
                       } else {
                         fullResetHit = true;
@@ -2559,12 +2949,26 @@ export default function App() {
                       if (isAmbiguousOldQuiz(offlineRes.quiz)) return;
                       if (fullResetHit) return;
                       
-                      if (offlineRes.quiz.includes('تصفير') || String(offlineRes.score).includes('تصفير')) {
+                      if (offlineRes.quiz.includes('تصفير') || String(offlineRes.score).includes('تصفير') || offlineRes.quiz.includes('فرصة جديدة')) {
                         if (offlineRes.quiz.includes('تصفير الوحدة')) {
                           const unitTitleToReset = offlineRes.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
                           const unitToReset = builtData.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
                           if (unitToReset) {
                             unitToReset.lessons.forEach(l => resetLessonIds.add(l.id));
+                          }
+                        } else if (offlineRes.quiz.includes('فرصة جديدة') || offlineRes.quiz.includes('تصفير:') || offlineRes.quiz.includes('تصفير 🗑️:')) {
+                          const cleanQuizTitle = offlineRes.quiz
+                            .replace(/فرصة جديدة\s*\([^\)]+\)\s*[\w\W]*?:\s*/, '')
+                            .replace(/تصفير\s*[\w\W]*?:\s*/, '')
+                            .trim();
+                          for (const u of builtData) {
+                            const l = u.lessons.find(ls => 
+                              ls.title.trim() === cleanQuizTitle || 
+                              cleanQuizTitle.includes(ls.title.trim()) || 
+                              ls.title.trim().includes(cleanQuizTitle) ||
+                              normalizeLessonName(ls.title) === normalizeLessonName(cleanQuizTitle)
+                            );
+                            if (l) { resetLessonIds.add(l.id); break; }
                           }
                         } else {
                           fullResetHit = true;
@@ -3571,8 +3975,9 @@ export default function App() {
 
   const fetchAdminData = async () => {
     setIsLoading(true);
+    const noCache = Date.now();
     try {
-      const res = await fetch(`${API_URL}?action=getResults&apiKey=${SECRET_API_KEY}`); 
+      const res = await fetch(`${API_URL}?action=getResults&apiKey=${SECRET_API_KEY}&t=${noCache}`); 
       const resData = await res.json();
       if(resData.status === 'success') {
         const grouped: Record<string, { phone: string; tests: TestResult[] }> = {};
@@ -3613,7 +4018,7 @@ export default function App() {
           });
         setAdminResults(sortedArray);
       }
-      const reqRes = await fetch(`${API_URL}?action=getPendingRequests&apiKey=${SECRET_API_KEY}`); 
+      const reqRes = await fetch(`${API_URL}?action=getPendingRequests&apiKey=${SECRET_API_KEY}&t=${noCache}`); 
       const reqData = await reqRes.json();
       if(reqData.status === 'success') {
         setAdminPendingReqs(reqData.data as PendingRequest[]);
@@ -3621,7 +4026,7 @@ export default function App() {
 
       // جلب مشتركي الأونلاين النشطين
       try {
-        const onlRes = await fetch(`${API_URL}?action=getOnlineStudents&apiKey=${SECRET_API_KEY}`);
+        const onlRes = await fetch(`${API_URL}?action=getOnlineStudents&apiKey=${SECRET_API_KEY}&t=${noCache}`);
         const onlData = await onlRes.json();
         if (onlData.status === 'success' && Array.isArray(onlData.data)) {
           setAdminOnlineStudents(onlData.data as OnlineStudent[]);
@@ -3630,7 +4035,7 @@ export default function App() {
 
       // جلب أرشيف طلاب الأونلاين
       try {
-        const archRes = await fetch(`${API_URL}?action=getArchivedOnlineStudents&apiKey=${SECRET_API_KEY}`);
+        const archRes = await fetch(`${API_URL}?action=getArchivedOnlineStudents&apiKey=${SECRET_API_KEY}&t=${noCache}`);
         const archData = await archRes.json();
         if (archData.status === 'success' && Array.isArray(archData.data)) {
           setAdminArchivedOnlineStudents(archData.data as OnlineStudent[]);
@@ -3638,16 +4043,33 @@ export default function App() {
       } catch(e) {}
 
       try {
-        const stdRes = await fetch(`${API_URL}?action=getAllStudents&apiKey=${SECRET_API_KEY}`);
+        const stdRes = await fetch(`${API_URL}?action=getAllStudents&apiKey=${SECRET_API_KEY}&t=${noCache}`);
         const stdData = await stdRes.json();
         if(stdData.status === 'success' && stdData.data) {
           setStudentsList(stdData.data);
+          if (stdData.examConfigs) {
+            try {
+              syncExamConfigsFromCloud(stdData.examConfigs);
+            } catch(e) {}
+          }
+        }
+      } catch(e) {}
+
+      // جلب وتحديث المنهج والأسئلة ونماذج الإجابة
+      try {
+        const qRes = await fetch(`${API_URL}?action=getQuestions&apiKey=${SECRET_API_KEY}&t=${noCache}`);
+        const qData = await qRes.json();
+        if (qData.status === 'success' && qData.data) {
+          const builtData = buildCourseData(qData.data as FlatQuestionRow[]);
+          setData(builtData);
+          localStorage.setItem('cachedQuestionsData', JSON.stringify(qData.data));
+          if (qData.maps) setMapsList(qData.maps as InteractiveMap[]);
         }
       } catch(e) {}
 
       // جلب تسليمات المقالي من السحابة لتحديث شارة الإشعارات ولوحة المعلم
       try {
-        const essayRes = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}`);
+        const essayRes = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}&t=${noCache}`);
         const essayData = await essayRes.json();
         if (essayData && essayData.status === 'success' && Array.isArray(essayData.data)) {
           const groupedMap = new Map<string, any>();
@@ -3710,8 +4132,11 @@ export default function App() {
           localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(Array.from(mergedMap.values())));
         }
       } catch(e) {}
+      setSubmissionsVersion(v => v + 1);
+      showAlert('✅ تم تحديث بيانات الإدارة والنتائج والاشتراكات بنجاح! 🚀');
     } catch(e) { 
       console.warn('fetchAdminData connection error:', e);
+      showAlert('⚠️ تعذر إتمام التحديث من السيرفر، يرجى التحقق من اتصال الإنترنت.');
     }
     setIsLoading(false);
   };
@@ -7049,7 +7474,12 @@ function initAllSheetsMenu() {
         formatPhoneStr(s.studentPhone) === cleanPhone
       );
       const hasPriorScore = lessonScores[activeLesson.id] !== undefined;
-      const isAlreadySubmitted = Boolean(isPracticeMode || completedList.includes(activeLesson.id) || hasPriorEssaySub || hasPriorScore);
+      const isDirectiveRetake = Boolean(activeRetakeDirective && (
+        activeRetakeDirective.lessonId === activeLesson.id || 
+        activeRetakeDirective.lessonTitle === activeLesson.title ||
+        activeLesson.title.includes(activeRetakeDirective.lessonTitle)
+      ));
+      const isAlreadySubmitted = !isDirectiveRetake && Boolean(isPracticeMode || completedList.includes(activeLesson.id) || hasPriorEssaySub || hasPriorScore);
 
       // إذا كانت هذه هي المحاولة الرسمية الأولى، نسجل إتمام الاختبار فوراً في القائمة المكتملة ونمسح الجلسة المعلقة
       if (!isAlreadySubmitted) {
@@ -7068,9 +7498,9 @@ function initAllSheetsMenu() {
       if (activeLesson.id === 'mistakes_bank') {
         examConfig.gradingMode = 'instant_ai';
       }
-      const isInstantGrading = !hasEssayQuestions || examConfig.gradingMode === 'instant_ai';
+      const isInstantGrading = activeLesson.id === 'mistakes_bank' || (examConfig.gradingMode !== 'hybrid' && (!hasEssayQuestions || examConfig.gradingMode === 'instant_ai'));
 
-      if (newMistakesToAdd.length > 0 && isInstantGrading) {
+      if (newMistakesToAdd.length > 0 && isInstantGrading && activeLesson.id !== 'mistakes_bank') {
         setUserAnswers(finalAnswers);
         newMistakesToAdd.forEach(q => {
           addMistakeToPermanentNotebook(
@@ -7094,7 +7524,7 @@ function initAllSheetsMenu() {
         });
       }
 
-      if (hasEssayQuestions) {
+      if (hasEssayQuestions || examConfig.gradingMode === 'hybrid') {
         if (examConfig.gradingMode === 'instant_ai') {
           setEssaySubmissionModal({
             isOpen: true,
@@ -7161,13 +7591,23 @@ function initAllSheetsMenu() {
               }
             }
 
+            const isEssayOnlyRetake = activeRetakeDirective?.retakeType === 'essay_only';
+            const preservedScore = isEssayOnlyRetake ? (activeRetakeDirective.preservedMcqScore || 0) : 0;
+            const effectiveEarned = earnedScore + preservedScore;
             const structure = calculateExamStructure(activeLesson.questions, examConfig);
-            const calculatedPerc = Math.round((earnedScore / Math.max(1, structure.examTotalScore)) * 100);
+            const effectiveMax = (isEssayOnlyRetake && activeRetakeDirective.maxPossibleScore) 
+              ? activeRetakeDirective.maxPossibleScore 
+              : structure.examTotalScore;
+            const calculatedPerc = Math.round((effectiveEarned / Math.max(1, effectiveMax)) * 100);
 
             setUserAnswers(finalAnswers);
 
-            // الإرسال السحابي وحفظ الدرجة الرسمية يتم فقط للمحاولة الأولى غير التدريبية
+            // الإرسال السحابي وحفظ الدرجة الرسمية يتم فقط للمحاولة الأولى غير التدريبية أو الإعادة المعتمدة
             if (!isAlreadySubmitted) {
+              const finalQuestionsToStore = isEssayOnlyRetake && activeRetakeDirective.preservedMcqAnswers && activeRetakeDirective.preservedMcqAnswers.length > 0
+                ? [...activeRetakeDirective.preservedMcqAnswers, ...essayItemsForStorage]
+                : essayItemsForStorage;
+
               const instantSub: StudentEssaySubmission = {
                 id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
                 studentName: studentName || 'طالب',
@@ -7175,10 +7615,10 @@ function initAllSheetsMenu() {
                 quizTitle: activeLesson.title,
                 lessonId: activeLesson.id,
                 submissionDate: new Date().toLocaleDateString('ar-EG'),
-                questions: essayItemsForStorage,
+                questions: finalQuestionsToStore,
                 isFullyApproved: true,
-                finalScore: earnedScore,
-                maxPossibleScore: structure.examTotalScore
+                finalScore: effectiveEarned,
+                maxPossibleScore: effectiveMax
               };
               savePendingEssaySubmission(instantSub);
               syncEssaySubmissionToCloud(instantSub);
@@ -7186,15 +7626,20 @@ function initAllSheetsMenu() {
               if (activeLesson.id !== 'mistakes_bank') {
                 saveResultToDB({ quizName: activeLesson.title, score: `${calculatedPerc}%` });
                 setLessonScores(prev => {
-                  if (prev[activeLesson.id] === undefined) {
-                    const newScores = { ...prev, [activeLesson.id]: Math.round(earnedScore) };
-                    localStorage.setItem('lessonScores', JSON.stringify(newScores));
-                    return newScores;
-                  }
-                  return prev;
+                  const newScores = { ...prev, [activeLesson.id]: Math.round(effectiveEarned) };
+                  localStorage.setItem('lessonScores', JSON.stringify(newScores));
+                  return newScores;
                 });
               }
+
+              if (activeRetakeDirective) {
+                removeRetakeDirective(activeRetakeDirective.id);
+                setActiveRetakeDirective(null);
+              }
             }
+
+            // تسجيل أخطاء الامتحان رسمياً بعد انتهاء التقييم
+            commitExamMistakesOnCompletion(activeLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
 
             setIsScreenObfuscated(false);
             setTabSwitchStrikes(0);
@@ -7211,7 +7656,11 @@ function initAllSheetsMenu() {
         } else {
           // الوضع الهجين (اعتماد المعلم أولاً)
           if (isAlreadySubmitted) {
-            // الطالب سبق له تسليم هذا الاختبار رسمياً، وهذه محاولة تدريبية فقط
+            // الطالب سبق له تسليم هذا الاختبار رسمياً، وهذه محاولة تدريبية حرة
+            // عرض النتيجة الفورية للتدريب ليرى درجاته وأخطاءه وفقرات الدرس التي يحتاج لمراجعتها
+            setUserAnswers(finalAnswers);
+            setIsPracticeMode(true);
+            commitExamMistakesOnCompletion(activeLesson, finalAnswers, true);
             setIsScreenObfuscated(false);
             setTabSwitchStrikes(0);
             tabSwitchStrikesRef.current = 0;
@@ -7220,12 +7669,8 @@ function initAllSheetsMenu() {
             setOfflineGateStatus('none');
             setExamTimeLeft(null);
             examEndTimeRef.current = null;
-            setEssaySubmissionModal({
-              isOpen: true,
-              isGrading: false,
-              message: "✨ تم إنهاء جلسة التدريب بنجاح! نؤكد لك أنه تم حفظ واعتماد محاولتك الرسمية الأولى لدى المعلم أ/ إسلام سعود، ولن يتم إرسال أي محاولات تدريبية أخرى حفاظاً على درجتك الرسمية.",
-              quizTitle: activeLesson.title
-            });
+            setEssaySubmissionModal(null);
+            setScreen('result');
             return;
           }
 
@@ -7248,6 +7693,8 @@ function initAllSheetsMenu() {
                 modelAnswer: q.answer || q.reason || '',
                 studentText,
                 maxScore: maxQScore,
+                paragraph: q.paragraph || q.concept || '',
+                concept: q.concept || '',
                 isApproved: false
               };
               essayItemsForStorage.push(item);
@@ -7269,6 +7716,8 @@ function initAllSheetsMenu() {
                 aiScore: qScore,
                 teacherFeedback: isCorrect ? 'إجابة صحيحة وموفقة.' : `إجابة خاطئة - الإجابة الصحيحة هي: ${q.correct || q.answer}`,
                 aiFeedback: isCorrect ? 'إجابة صحيحة وموفقة.' : `إجابة خاطئة - الإجابة الصحيحة هي: ${q.correct || q.answer}`,
+                paragraph: q.paragraph || q.concept || '',
+                concept: q.concept || '',
                 isApproved: true
               });
             }
@@ -7287,6 +7736,17 @@ function initAllSheetsMenu() {
                 } catch(e) {}
               }
             }
+            // في حال كانت إعادة للمقالي فقط مع حفظ درجات الاختياري
+            const isEssayOnlyRetake = activeRetakeDirective?.retakeType === 'essay_only';
+            const preservedScore = isEssayOnlyRetake ? (activeRetakeDirective.preservedMcqScore || 0) : 0;
+            const finalQuestionsToStore = isEssayOnlyRetake && activeRetakeDirective.preservedMcqAnswers && activeRetakeDirective.preservedMcqAnswers.length > 0
+              ? [...activeRetakeDirective.preservedMcqAnswers, ...allItemsForStorage]
+              : allItemsForStorage;
+
+            const effectiveTotalMax = (isEssayOnlyRetake && activeRetakeDirective.maxPossibleScore) 
+              ? activeRetakeDirective.maxPossibleScore 
+              : structure.examTotalScore;
+
             const evaluatedSub: StudentEssaySubmission = {
               id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
               studentName: studentName || 'طالب',
@@ -7294,16 +7754,21 @@ function initAllSheetsMenu() {
               quizTitle: activeLesson.title,
               lessonId: activeLesson.id,
               submissionDate: new Date().toLocaleDateString('ar-EG'),
-              questions: allItemsForStorage,
+              questions: finalQuestionsToStore,
               isFullyApproved: false,
-              finalScore: initialEarnedScore + essayEarned,
-              maxPossibleScore: structure.examTotalScore
+              finalScore: initialEarnedScore + preservedScore + essayEarned,
+              maxPossibleScore: effectiveTotalMax
             };
             savePendingEssaySubmission(evaluatedSub);
             syncEssaySubmissionToCloud({
               ...evaluatedSub,
               questions: essayItemsForStorage
             });
+
+            if (activeRetakeDirective) {
+              removeRetakeDirective(activeRetakeDirective.id);
+              setActiveRetakeDirective(null);
+            }
           })();
 
           setIsScreenObfuscated(false);
@@ -7362,14 +7827,15 @@ function initAllSheetsMenu() {
           saveResultToDB({ quizName: activeLesson.title, score: `${perc}%` });
           
           setLessonScores(prev => {
-            // تسجيل الدرجة من أول محاولة فقط بناءً على طلب المعلم وعدم احتساب الإعادات
-            if (prev[activeLesson.id] === undefined) {
-              const newScores = { ...prev, [activeLesson.id]: correct };
-              localStorage.setItem('lessonScores', JSON.stringify(newScores));
-              return newScores;
-            }
-            return prev;
+            const newScores = { ...prev, [activeLesson.id]: correct };
+            localStorage.setItem('lessonScores', JSON.stringify(newScores));
+            return newScores;
           });
+
+          if (activeRetakeDirective) {
+            removeRetakeDirective(activeRetakeDirective.id);
+            setActiveRetakeDirective(null);
+          }
 
           try {
             const completed = JSON.parse(localStorage.getItem('completedLessons') || '[]');
@@ -7380,6 +7846,8 @@ function initAllSheetsMenu() {
           } catch(e) {}
         }
       }
+      // تسجيل أخطاء الامتحان رسمياً بعد انتهاء جلسة الامتحان بالكامل لمنع تسريب أي أخطاء أثناء المحاولة
+      commitExamMistakesOnCompletion(activeLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
     }
     setIsScreenObfuscated(false);
     setTabSwitchStrikes(0);
@@ -7398,8 +7866,14 @@ function initAllSheetsMenu() {
       return;
     }
 
-    // فتح شاشة مراجعة الامتحان التفاعلية قبل الاعتماد النهائي
+    // فتح شاشة مراجعة الامتحان التفاعلية قبل الاعتماد النهائي (للامتحانات العادية فقط)
     if (!force && activeLesson) {
+      if (activeLesson.id === 'mistakes_bank') {
+        setPreSubmitReviewModalOpen(false);
+        setUnansweredWarningModal(null);
+        finishQuizInternal();
+        return;
+      }
       setPreSubmitReviewModalOpen(true);
       return;
     }
@@ -7442,11 +7916,32 @@ function initAllSheetsMenu() {
 
     const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
     const cleanPhone = formatPhoneStr(phone);
+
+    // التحقق من وجود توجيه إعادة معتمد من المعلم (سواء كامل أو مقالي فقط)
+    const retakeDir = getActiveRetakeDirectiveForLesson(cleanPhone, lesson.id) || 
+                      getActiveRetakeDirectiveForLesson(cleanPhone, lesson.title) ||
+                      (activeRetakeDirective && (activeRetakeDirective.lessonId === lesson.id || activeRetakeDirective.lessonTitle === lesson.title || lesson.title.includes(activeRetakeDirective.lessonTitle)) ? activeRetakeDirective : null);
+
     const submissions = getStudentSubmissions(cleanPhone);
-    const pendingSub = submissions.find(s => (s.lessonId === lesson.id || s.quizTitle?.trim() === lesson.title?.trim()) && !s.isFullyApproved);
+    const pendingSub = !retakeDir && submissions.find(s => (s.lessonId === lesson.id || s.quizTitle?.trim() === lesson.title?.trim()) && !s.isFullyApproved);
     if (pendingSub) {
       showAlert('⏳ هذا الاختبار قيد المراجعة والاعتماد حالياً من المعلم أ/ إسلام سعود، ستتمكن من مراجعته والتدريب عليه فور اعتماد النتيجة.');
       return;
+    }
+
+    if (retakeDir) {
+      setActiveRetakeDirective(retakeDir);
+      localStorage.removeItem('savedSession');
+      setLessonScores(prev => {
+        const copy = { ...prev };
+        delete copy[lesson.id];
+        localStorage.setItem('lessonScores', JSON.stringify(copy));
+        return copy;
+      });
+      try {
+        const comp = JSON.parse(localStorage.getItem('completedLessons') || '[]').filter((id: string) => id !== lesson.id);
+        localStorage.setItem('completedLessons', JSON.stringify(comp));
+      } catch (e) {}
     }
 
     const isCompletedLocal = (() => {
@@ -7457,7 +7952,7 @@ function initAllSheetsMenu() {
         return false;
       }
     })();
-    const isAlreadyDone = lessonScores[lesson.id] !== undefined || isCompletedLocal;
+    const isAlreadyDone = !retakeDir && (lessonScores[lesson.id] !== undefined || isCompletedLocal);
     setIsPracticeMode(isAlreadyDone);
     setIsReviewMode(false);
 
@@ -7514,7 +8009,21 @@ function initAllSheetsMenu() {
       }
     }
     if (!restored) { 
-      const shuffledQuestions = shuffleArray(lesson.questions).map(q => {
+      let targetQuestions = lesson.questions;
+      if (retakeDir && retakeDir.retakeType === 'essay_only') {
+        const rawEssayQs = lesson.questions.filter(q => q.type === 'essay');
+        const essayQs = rawEssayQs.length > 0 
+          ? rawEssayQs 
+          : lesson.questions.filter(q => {
+              const d = detectEssayType(q.q);
+              return d.type !== 'mcq' && d.type !== 'tf';
+            });
+        if (essayQs.length > 0) {
+          targetQuestions = essayQs;
+        }
+      }
+
+      const shuffledQuestions = (retakeDir?.retakeType === 'essay_only' ? targetQuestions : shuffleArray(targetQuestions)).map(q => {
         if (q.type === 'mcq' && q.options && q.options.length > 0) {
           return { ...q, options: shuffleOptions(q.options) };
         }
@@ -8085,10 +8594,10 @@ function initAllSheetsMenu() {
               </button>
             </div>
 
-            {mistakesBank.length > 0 && (
+            {visibleMistakesBank.length > 0 && (
               <button 
                 onClick={() => {
-                  const shuffledMistakes = shuffleArray(mistakesBank).map(q => {
+                  const shuffledMistakes = shuffleArray(visibleMistakesBank).map(q => {
                     if (q.type === 'mcq' && q.options && q.options.length > 0) {
                       return { ...q, options: shuffleOptions(q.options) };
                     }
@@ -8121,7 +8630,7 @@ function initAllSheetsMenu() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="bg-rose-600 text-white text-xs font-black px-2 py-0.5 rounded-full shadow-sm">
-                    {toEasternArabic(mistakesBank.length)} {mistakesBank.length === 1 ? 'خطأ' : 'أخطاء'}
+                    {toEasternArabic(visibleMistakesBank.length)} {visibleMistakesBank.length === 1 ? 'خطأ' : 'أخطاء'}
                   </span>
                   <i className="fas fa-chevron-left text-rose-600 text-xs"></i>
                 </div>
@@ -8350,9 +8859,9 @@ function initAllSheetsMenu() {
                   >
                     <i className="fas fa-book-bookmark text-xl text-purple-600 dark:text-purple-400 shrink-0"></i>
                     <span className="text-sm sm:text-base font-black whitespace-nowrap">كشكول أهم الأخطاء والنموذج</span>
-                    {(permanentNotebookMistakes.length > 0 || mistakesBank.length > 0) && (
+                    {(visibleNotebookMistakes.length > 0 || visibleMistakesBank.length > 0) && (
                       <span className="bg-purple-600 text-white dark:bg-purple-500 text-[11px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-xs">
-                        {toEasternArabic(permanentNotebookMistakes.length || mistakesBank.length)}
+                        {toEasternArabic(visibleNotebookMistakes.length || visibleMistakesBank.length)}
                       </span>
                     )}
                   </button>
@@ -8554,8 +9063,13 @@ function initAllSheetsMenu() {
         return checkAnswerAccurately(opt, corr, optIdx, question?.options);
       };
 
+      const isMistakesBank = activeLesson?.id === 'mistakes_bank';
+
       const handleOptionClick = (option: string, optionIdx?: number) => {
-        if (isAnswered) return;
+        if (isReviewMode) return;
+        // في تدريب بنك الأخطاء، فور اختيار الإجابة يتم قفل السؤال لمنع التغيير وإظهار التغذية الراجعة فوراً
+        if (isMistakesBank && currentAnswer) return;
+        if (currentAnswer?.selected === 'انتهى الوقت المحدد للسؤال') return;
         const isCorrect = checkCorrectAnswer(option, question!.correct, optionIdx);
         const newAns = [...userAnswers]; 
         newAns[currentQIndex] = { 
@@ -8580,29 +9094,53 @@ function initAllSheetsMenu() {
           }, 1100);
         }
         
-        if (!isCorrect) {
-          addMistakeToPermanentNotebook(
-            question!,
-            option,
-            option,
-            activeLesson?.id,
-            activeLesson?.title
-          );
-        }
-
-        setMistakesBank(prev => {
-          const newBank = [...prev];
+        // نمط تدريب بنك الأخطاء: إظهار النتيجة اللحظية وحذف السؤال فور إتقانه
+        if (isMistakesBank) {
           const qHash = simpleHash(question!.q);
-          const existsIndex = newBank.findIndex(item => simpleHash(item.q) === qHash);
-          
-          if (!isCorrect && existsIndex === -1) {
-            newBank.push(question!); 
-          } else if (isCorrect && existsIndex !== -1) {
-            newBank.splice(existsIndex, 1); 
+          if (isCorrect) {
+            // 1. حذف السؤال فوراً من بنك الأخطاء النشط
+            setMistakesBank(prev => {
+              const updated = prev.filter(item => simpleHash(item.q) !== qHash);
+              try {
+                localStorage.setItem('mistakesBank', JSON.stringify(updated));
+              } catch (e) {}
+              return updated;
+            });
+
+            // 2. تسجيله كمتقن في كشكول الأخطاء الدائم
+            try {
+              const savedMastered = JSON.parse(localStorage.getItem('kanz_mastered_mistakes') || '[]');
+              if (!savedMastered.includes(qHash)) {
+                savedMastered.push(qHash);
+                localStorage.setItem('kanz_mastered_mistakes', JSON.stringify(savedMastered));
+              }
+            } catch (e) {}
+
+            setPermanentNotebookMistakes(prev => {
+              const updated = prev.map(p => {
+                if (simpleHash(p.question?.q || '') === qHash) {
+                  return { ...p, isMastered: true };
+                }
+                return p;
+              });
+              try {
+                localStorage.setItem(PERMANENT_NOTEBOOK_KEY, JSON.stringify(updated));
+              } catch (e) {}
+              return updated;
+            });
+
+            setFeedbackToast({ isCorrect: true, message: '🎉 ممتاز يا بطل! تم استيعاب السؤال وإتقانه وحذفه من بنك الأخطاء 🎯' });
+            setTimeout(() => {
+              setFeedbackToast(null);
+            }, 2500);
+          } else {
+            // الإبقاء على السؤال في بنك الأخطاء للتدرب عليه لاحقاً
+            setFeedbackToast({ isCorrect: false, message: '💡 ركز في التعليل النموذجي والمفهوم لتفادي الخطأ مستقبلاً' });
+            setTimeout(() => {
+              setFeedbackToast(null);
+            }, 2500);
           }
-          localStorage.setItem('mistakesBank', JSON.stringify(newBank));
-          return newBank;
-        });
+        }
       };
       
       const handleSaveEssayAnswer = (answerText: string) => {
@@ -8619,14 +9157,6 @@ function initAllSheetsMenu() {
         }; 
         setUserAnswers(newAns);
         setSkippedQuestions(prev => prev.filter(idx => idx !== currentQIndex));
-
-        addMistakeToPermanentNotebook(
-          question!,
-          text,
-          text,
-          activeLesson?.id,
-          activeLesson?.title
-        );
       };
       
       return (
@@ -8742,12 +9272,46 @@ function initAllSheetsMenu() {
           )}
 
           {/* Practice Mode Banner */}
-          {isPracticeMode && !isReviewMode && (
+          {activeLesson?.id === 'mistakes_bank' ? (
+            <div className="bg-gradient-to-r from-rose-600 to-pink-700 text-white px-3 sm:px-4 py-2 text-xs sm:text-sm font-black flex items-center justify-between shrink-0 shadow-md border-b border-rose-400 z-50">
+              <div className="flex items-center gap-2 truncate">
+                <i className="fas fa-bullseye text-amber-300 text-sm sm:text-base animate-pulse shrink-0"></i>
+                <span className="truncate">تدريب بنك الأخطاء التفاعلي: يظهر لك الحل والتعليل فورياً ويتم حذف السؤال عند إتقانه 🎯</span>
+              </div>
+              <button 
+                onClick={() => setScreen('index')}
+                className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 active:scale-95 cursor-pointer shrink-0"
+              >
+                <span>خروج</span>
+                <i className="fas fa-times-circle"></i>
+              </button>
+            </div>
+          ) : activeRetakeDirective?.retakeType === 'essay_only' ? (
+            <div className="bg-gradient-to-r from-amber-600 via-purple-600 to-indigo-600 text-white px-3 sm:px-4 py-2 text-xs sm:text-sm font-black flex flex-wrap items-center justify-center gap-2 shrink-0 shadow-md border-b-2 border-amber-400 z-50">
+              <span className="flex items-center gap-1.5 bg-white/20 px-2.5 py-0.5 rounded-full text-xs">
+                <span>✍️</span>
+                <span>إعادة الأسئلة المقالية فقط</span>
+              </span>
+              <span>
+                تم حفظ درجاتك في الأسئلة الاختيارية بنجاح ({toEasternArabic(activeRetakeDirective.preservedMcqScore || 0)} نقطة). ركّز في إجابة الأسئلة المقالية! 🎯
+              </span>
+            </div>
+          ) : activeRetakeDirective?.retakeType === 'full' ? (
+            <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 text-white px-3 sm:px-4 py-2 text-xs sm:text-sm font-black flex flex-wrap items-center justify-center gap-2 shrink-0 shadow-md border-b-2 border-emerald-400 z-50">
+              <span className="flex items-center gap-1.5 bg-white/20 px-2.5 py-0.5 rounded-full text-xs">
+                <span>🔄</span>
+                <span>إعادة الامتحان كاملاً</span>
+              </span>
+              <span>
+                تم تصفير المحاولة السابقة بتوجيه الأستاذ إسلام سعود. بالتوفيق في محاولتك الجديدة! 🚀
+              </span>
+            </div>
+          ) : isPracticeMode && !isReviewMode ? (
             <div className="bg-amber-500 text-slate-950 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-black flex items-center justify-center gap-2 shrink-0 shadow-xs border-b border-amber-600 z-50">
               <i className="fas fa-dumbbell text-slate-900 shrink-0"></i>
               <span>نمط التدريب الحر والتقوية (هذه المحاولة للتدريب فقط ولن تؤثر على درجتك الرسمية الأولى أو لوحة الشرف)</span>
             </div>
-          )}
+          ) : null}
           
           <div className={`shadow-md px-2 sm:px-4 pt-3 md:pt-4 lg:pt-3 pb-2 flex justify-between items-center gap-1 z-50 sticky top-0 shrink-0 w-full border-b-4 border-primary ${isDarkMode?'bg-gray-800':'bg-white'}`}>
             <div className="flex items-center gap-1 min-w-0 shrink">
@@ -8841,6 +9405,8 @@ function initAllSheetsMenu() {
                   ? (validOptions.length >= 2 ? validOptions.slice(0, 2) : ["العبارة صحيحة", "العبارة خاطئة"])
                   : question.options;
 
+                const isInstantFeedback = isReviewMode || isMistakesBank;
+
                 return (
                   <div className="flex flex-col gap-4 mb-8">
                     {optionsToRender.map((opt, idx) => {
@@ -8849,7 +9415,7 @@ function initAllSheetsMenu() {
                         ? "bg-slate-800/80 border-2 border-slate-500 text-gray-100 p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-slate-800"
                         : "bg-[#ebf5ff] border-2 border-[#bcccf0]/70 text-primary p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-[#e1f0fe]";
                       if (isAnswered && currentAnswer) {
-                        if (isReviewMode) {
+                        if (isInstantFeedback) {
                           if (isCorrectMatch) {
                             btnClass = isDarkMode 
                               ? "bg-green-950/40 border-green-500 text-green-200 p-4 rounded-2xl font-bold text-xl flex items-center shadow-md border-2"
@@ -8864,29 +9430,30 @@ function initAllSheetsMenu() {
                               : "bg-gray-50 border-gray-150 p-4 rounded-2xl font-bold text-xl flex items-center opacity-50 border-2";
                           }
                         } else {
-                          // نمط الاختبار الجاد: تحديد إجابة الطالب فقط بشكل محايد تماماً بدون كشف الصح والخطأ
+                          // نمط الاختبار الجاد: تحديد إجابة الطالب فقط بشكل محايد تماماً مع إتاحة حرية التعديل
                           if (currentAnswer.selected === opt) {
                             btnClass = isDarkMode
-                              ? "bg-primary/25 border-primary text-blue-200 p-4 rounded-2xl font-bold text-xl flex items-center shadow-md border-2 ring-2 ring-primary/40"
-                              : "bg-blue-100 border-primary text-primary p-4 rounded-2xl font-bold text-xl flex items-center shadow-md border-2 ring-2 ring-primary/30";
+                              ? "bg-gradient-to-r from-blue-600 to-indigo-700 text-white border-2 border-blue-400 p-4 rounded-2xl font-black text-xl flex items-center shadow-lg shadow-blue-950/60 ring-2 ring-blue-400/50 cursor-pointer transition-all scale-[1.01]"
+                              : "bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-2 border-blue-600 p-4 rounded-2xl font-black text-xl flex items-center shadow-lg shadow-blue-500/25 ring-2 ring-blue-400/50 cursor-pointer transition-all scale-[1.01]";
                           } else {
                             btnClass = isDarkMode
-                              ? "bg-slate-800/40 border-slate-700 text-gray-400 p-4 rounded-2xl font-bold text-xl flex items-center opacity-50 border-2"
-                              : "bg-gray-50 border-gray-200 text-gray-400 p-4 rounded-2xl font-bold text-xl flex items-center opacity-60 border-2";
+                              ? "bg-slate-800/80 border-2 border-slate-600 text-gray-200 p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-slate-800"
+                              : "bg-[#ebf5ff] border-2 border-[#bcccf0]/70 text-gray-800 p-4 rounded-2xl font-bold text-xl flex items-center shadow-sm cursor-pointer transition-all active:scale-95 hover:border-blue-400 hover:bg-[#e1f0fe]";
                           }
                         }
                       }
                       return (
                         <button 
                           key={idx} 
+                          type="button"
                           onClick={()=>handleOptionClick(opt, idx)} 
-                          className={btnClass} 
-                          disabled={isAnswered}
+                          className={`${btnClass} touch-manipulation select-none pointer-events-auto`} 
+                          disabled={isReviewMode || (isMistakesBank && isAnswered) || currentAnswer?.selected === 'انتهى الوقت المحدد للسؤال'}
                         >
                           <span 
                             className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-lg ml-4 shrink-0 transition-all ${
                               isAnswered && currentAnswer 
-                                ? (isReviewMode
+                                ? (isInstantFeedback
                                     ? (isCorrectMatch
                                         ? 'bg-green-500 text-white shadow-md' 
                                         : (currentAnswer.selected === opt 
@@ -8895,23 +9462,28 @@ function initAllSheetsMenu() {
                                                 ? 'bg-gray-700 text-gray-300 opacity-50' 
                                                 : 'bg-gray-100 text-gray-700 opacity-60')))
                                     : (currentAnswer.selected === opt
-                                        ? 'bg-primary text-white shadow-md scale-105'
-                                        : (isDarkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500')))
+                                        ? 'bg-white text-blue-700 shadow-md font-black scale-110 border-2 border-blue-200'
+                                        : (isDarkMode ? 'bg-slate-700 text-gray-200' : 'bg-[#074ba3] text-white')))
                                 : (isDarkMode ? 'bg-slate-700 text-gray-200' : 'bg-[#074ba3] text-white')
                             }`}
                             style={{
                               borderStyle: 'solid',
                               borderWidth: '1px',
-                              borderColor: '#844d06',
+                              borderColor: currentAnswer?.selected === opt && !isInstantFeedback ? '#93c5fd' : '#844d06',
                             }}
                           >
-                            {isAnswered && currentAnswer && isReviewMode ? (
+                            {isAnswered && currentAnswer && isInstantFeedback ? (
                               isCorrectMatch ? <i className="fas fa-check text-base"></i> : (currentAnswer.selected === opt ? <i className="fas fa-times text-base"></i> : ['أ','ب','ج','د'][idx])
                             ) : (
                               ['أ','ب','ج','د'][idx] || (idx + 1)
                             )}
                           </span>
-                          <span className="text-right leading-relaxed whitespace-pre-line">{opt}</span>
+                          <span className={`text-right leading-relaxed whitespace-pre-line flex-1 ${currentAnswer?.selected === opt && !isInstantFeedback ? 'text-white font-black' : ''}`}>{opt}</span>
+                          {currentAnswer?.selected === opt && !isInstantFeedback && (
+                            <span className="w-7 h-7 rounded-full bg-white/20 text-white flex items-center justify-center mr-auto text-sm shrink-0 shadow-inner">
+                              <i className="fas fa-check"></i>
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -9022,21 +9594,49 @@ function initAllSheetsMenu() {
                 </div>
               )}
               
-              {isAnswered && currentAnswer && isReviewMode && (question.type === 'mcq' || question.type === 'tf' || question.type === 't/f') && question.reason && (
-                <div className={`mt-4 rounded-3xl p-6 shadow-md border-r-8 ${
+              {isAnswered && currentAnswer && (isReviewMode || isMistakesBank) && (question.type === 'mcq' || question.type === 'tf' || question.type === 't/f') && (
+                <div className={`mt-4 rounded-3xl p-6 shadow-md border-r-8 animate-fade-in ${
                   isDarkMode 
                     ? (currentAnswer.isCorrect ? 'bg-green-950/20 border-green-500 text-gray-100' : 'bg-red-950/20 border-red-500 text-gray-100')
                     : (currentAnswer.isCorrect ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500')
                 }`}>
-                  <h3 className={`text-xl font-black underline underline-offset-4 mb-2 ${isDarkMode ? 'text-red-400 decoration-red-400' : 'text-red-600 decoration-red-600'}`}>التعليل:</h3>
-                  <div className="text-xl font-bold leading-relaxed">
-                    <HighlightText text={question.reason} concept={question.concept} isDarkMode={isDarkMode} />
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3 border-b pb-2 border-gray-200/50 dark:border-gray-700/50">
+                    <span className={`text-base sm:text-lg font-black px-3 py-1 rounded-xl flex items-center gap-1.5 ${
+                      currentAnswer.isCorrect 
+                        ? (isDarkMode ? 'bg-green-900/60 text-green-300' : 'bg-green-100 text-green-800')
+                        : (isDarkMode ? 'bg-red-900/60 text-red-300' : 'bg-red-100 text-red-800')
+                    }`}>
+                      <i className={`fas ${currentAnswer.isCorrect ? 'fa-check-circle' : 'fa-times-circle'}`}></i>
+                      {currentAnswer.isCorrect ? 'إجابة صحيحة ومتقنة 🎯' : 'إجابة غير صحيحة - راجع الشرح والتعليل 💡'}
+                    </span>
+                    {isMistakesBank && currentAnswer.isCorrect && (
+                      <span className="text-xs font-black bg-emerald-600 text-white px-3 py-1 rounded-xl shadow-xs flex items-center gap-1">
+                        <i className="fas fa-check-double"></i>
+                        <span>تم الإتقان والحذف من بنك الأخطاء ✅</span>
+                      </span>
+                    )}
                   </div>
-                  {question.concept && (
+
+                  {question.reason ? (
+                    <>
+                      <h3 className={`text-xl font-black underline underline-offset-4 mb-2 ${isDarkMode ? 'text-red-400 decoration-red-400' : 'text-red-600 decoration-red-600'}`}>التعليل:</h3>
+                      <div className="text-xl font-bold leading-relaxed">
+                        <HighlightText text={question.reason} concept={question.concept} isDarkMode={isDarkMode} />
+                      </div>
+                    </>
+                  ) : question.correct ? (
+                    <div className="text-lg font-bold text-gray-800 dark:text-gray-200 mt-1">
+                      الإجابة النموذجية الصحيحة هي: <span className="font-black text-emerald-600 dark:text-emerald-400">{question.correct}</span>
+                    </div>
+                  ) : null}
+
+                  {(question.paragraph || question.concept) && (
                     <div className="mt-4 pt-3 border-t border-gray-300/40 dark:border-gray-700/60 flex items-center gap-2 text-sm sm:text-base font-black text-amber-700 dark:text-amber-300">
-                      <i className="fas fa-lightbulb text-amber-500"></i>
-                      <span>المفهوم المرتبط:</span>
-                      <span className="text-primary dark:text-secondary underline decoration-dotted">{question.concept}</span>
+                      <i className="fas fa-book-reader text-amber-500"></i>
+                      <span>الفقرة / الجزئية المطلوب مراجعتها:</span>
+                      <span className="text-primary dark:text-secondary underline decoration-dotted font-black">
+                        {question.paragraph || question.concept}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -9066,13 +9666,30 @@ function initAllSheetsMenu() {
                     <i className="fas fa-check-circle text-amber-300"></i> إنهاء المراجعة والعودة للنتيجة
                   </button>
                 ) : (
-                  !isAnswered && currentQIndex < totalQs - 1 && timeLeft !== -1 && (
+                  !isAnswered && currentQIndex < totalQs - 1 && timeLeft !== -1 ? (
                     <button
+                      type="button"
                       onClick={handleSkip}
                       className={`font-black text-lg py-3 px-6 rounded-2xl transition-transform active:scale-95 shadow-md flex items-center gap-2 ${isDarkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
                     >
                       تخطي <i className="fas fa-forward"></i>
                     </button>
+                  ) : (
+                    !isMistakesBank && currentQIndex === totalQs - 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreSubmitReviewModalOpen(true)}
+                        className={`font-black text-xs sm:text-sm py-2.5 sm:py-3 px-3 sm:px-5 rounded-2xl transition-all active:scale-95 shadow-md flex items-center gap-1.5 cursor-pointer border ${
+                          isDarkMode 
+                            ? 'bg-slate-800 text-amber-300 border-amber-500/40 hover:bg-slate-700' 
+                            : 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                        }`}
+                        title="مراجعة كافة الإجابات قبل التسليم النهائي"
+                      >
+                        <i className="fas fa-list-check text-amber-600"></i>
+                        <span>مراجعة الإجابات</span>
+                      </button>
+                    ) : null
                   )
                 )}
 
@@ -9100,7 +9717,7 @@ function initAllSheetsMenu() {
                     onClick={()=>currentQIndex<totalQs-1?setCurrentQIndex(currentQIndex+1):handleFinishQuiz()} 
                     className={`text-white font-black text-xl py-3 px-8 rounded-2xl shadow-md transition-transform active:scale-95 ${currentQIndex===totalQs-1?'bg-red-500':'bg-secondary'}`}
                   >
-                    {currentQIndex===totalQs-1?'إنهاء':'التالي'} <i className="fas fa-arrow-left"></i>
+                    {currentQIndex===totalQs-1?(isMistakesBank ? 'إنهاء التدريب' : 'إنهاء'):'التالي'} <i className="fas fa-arrow-left"></i>
                   </button>
                 ) : (
                   currentQIndex === totalQs - 1 && (
@@ -9108,7 +9725,7 @@ function initAllSheetsMenu() {
                       onClick={() => handleFinishQuiz()} 
                       className="text-white font-black text-xl py-3 px-8 rounded-2xl shadow-md transition-transform active:scale-95 bg-red-500"
                     >
-                      إنهاء الاختبار
+                      {isMistakesBank ? 'إنهاء التدريب' : 'إنهاء الاختبار'}
                     </button>
                   )
                 )}
@@ -9204,7 +9821,8 @@ function initAllSheetsMenu() {
       const totalQs = activeLesson.questions.length; 
       const correct = userAnswers.filter(a => a.isCorrect).length; 
       const perc = Math.round((correct/totalQs)*100);
-      const wrongConcepts = [...new Set(userAnswers.filter(a => !a.isCorrect).map(a => a.paragraph || a.concept || 'مراجعة عامة'))];
+      const wrongConceptsRaw = [...new Set(userAnswers.filter(a => !a.isCorrect).map(a => (a.paragraph || a.concept || '').trim()).filter(Boolean))];
+      const wrongConcepts = wrongConceptsRaw.length > 0 ? wrongConceptsRaw : ['مراجعة عامة لمحتوى الدرس'];
       const firstName = studentName ? studentName.split(' ')[0] : 'يا بطل';
       const earnedXP = correct * 10;
       
@@ -9651,7 +10269,14 @@ function initAllSheetsMenu() {
             </div>
             <div className="flex flex-wrap justify-end gap-2 shrink-0">
               <button onClick={() => setScreen('index')} className="bg-blue-600 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm hover:bg-blue-500 transition-all shadow-sm border border-blue-500 flex items-center gap-2"><i className="fas fa-book-reader"></i> طالب</button>
-              <button onClick={fetchAdminData} className="bg-emerald-600 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm hover:bg-emerald-500 transition-all shadow-sm border border-emerald-500 flex items-center gap-2"><i className="fas fa-sync-alt"></i> تحديث</button>
+              <button 
+                onClick={fetchAdminData} 
+                disabled={isLoading}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm transition-all shadow-sm border border-emerald-500 flex items-center gap-2 cursor-pointer active:scale-95"
+              >
+                <i className={`fas fa-sync-alt ${isLoading ? 'fa-spin' : ''}`}></i>
+                <span>{isLoading ? 'جاري التحديث...' : 'تحديث'}</span>
+              </button>
               <button onClick={() => { setInputPhone(''); setInputPassword(''); setShowPasswordInput(false); setScreen('home'); }} className="bg-rose-600 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm hover:bg-rose-500 transition-all shadow-sm border border-rose-500 flex items-center gap-2"><i className="fas fa-sign-out-alt"></i> خروج</button>
             </div>
           </div>
@@ -10108,6 +10733,21 @@ function initAllSheetsMenu() {
                         displayList = displayList.filter(s => getStudentGender(s) === 'female');
                       }
 
+                      // حصر الامتحانات المقالية والهجينة قيد المراجعة والاعتماد لكل طالب
+                      const pendingSubmissionsMap = (() => {
+                        const map = new Map<string, number>();
+                        try {
+                          const list = getPendingEssaySubmissions();
+                          list.forEach(sub => {
+                            if (!sub.isFullyApproved) {
+                              const p = formatPhoneStr(sub.studentPhone);
+                              map.set(p, (map.get(p) || 0) + 1);
+                            }
+                          });
+                        } catch(e) {}
+                        return map;
+                      })();
+
                       return (
                         <React.Fragment>
                           {adminSort === 'none' && (
@@ -10270,6 +10910,7 @@ function initAllSheetsMenu() {
                                 const isBlocked = matchedSt ? (matchedSt as any).isBlocked : false;
                                 const gender = getStudentGender(student);
                                 const isFemale = gender === 'female';
+                                const studentPendingCount = pendingSubmissionsMap.get(formatPhoneStr(student.phone)) || 0;
 
                                 // حساب درجة الطالب في الدرس المحدد (إذا تم اختيار درس محدد من الفلتر)
                                 const studentLessonScore = (() => {
@@ -10340,6 +10981,22 @@ function initAllSheetsMenu() {
                                         <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-md text-[10px] font-black shadow-2xs shrink-0 flex items-center gap-1">
                                           <i className="fas fa-lock text-[8px]"></i> محظور
                                         </span>
+                                      )}
+
+                                      {/* شارة وجود امتحان قيد التصحيح والاعتماد للمعلم */}
+                                      {studentPendingCount > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setAdminActiveTab('essay_review');
+                                          }}
+                                          className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs animate-pulse"
+                                          title="يوجد اختبار قيد المراجعة - اضغط للانتقال للتصحيح والاعتماد"
+                                        >
+                                          <i className="fas fa-hourglass-half text-amber-600 text-[9px]"></i>
+                                          <span>{studentPendingCount > 1 ? `${toEasternArabic(studentPendingCount)} اختبارات قيد الاعتماد` : 'امتحان قيد المراجعة'}</span>
+                                        </button>
                                       )}
                                     </div>
 
@@ -13114,7 +13771,7 @@ function initAllSheetsMenu() {
             </div>
           </div>
 
-          {showAdminScrollTop && (
+          {showAdminScrollTop && !selectedStudentForAnalytics && (
             <button
               onClick={() => adminScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
               className="fixed bottom-6 left-6 md:bottom-8 md:left-8 bg-primary hover:bg-blue-800 text-white w-12 h-12 rounded-full shadow-2xl border-2 border-blue-400 flex items-center justify-center transition-all hover:-translate-y-1 active:scale-95 z-[999] cursor-pointer animate-fade-in"
@@ -13351,7 +14008,7 @@ function initAllSheetsMenu() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedPdfForView(null)}
+                  onClick={() => { setSelectedPdfForView(null); setPdfZoom(100); }}
                   className="bg-gray-800 hover:bg-gray-700 text-white w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer"
                   title="إغلاق العارض"
                 >
@@ -13361,13 +14018,83 @@ function initAllSheetsMenu() {
             </div>
 
             {/* إطار عرض الـ PDF مع طبقة الحماية والعلامة المائية العائمة لمنع التصوير */}
-            <div className="flex-1 w-full bg-slate-100 dark:bg-gray-950 relative overflow-hidden">
-              <iframe
-                src={getPdfViewerLink(selectedPdfForView.url)}
-                className="w-full h-full border-0"
-                title={selectedPdfForView.title}
-                allowFullScreen
+            <div className="flex-1 w-full bg-slate-100 dark:bg-gray-950 relative overflow-hidden flex flex-col">
+              
+              {/* درع الحماية الأمني فوق زر جوجل درايف الخارجي لمنع الخروج أو نسخ الرابط */}
+              <div 
+                className="absolute top-0 right-0 w-28 h-16 z-35 pointer-events-auto cursor-default" 
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
               />
+
+              {/* أداة التحكم العائمة في التكبير والتصغير وتغطية زر الانتقال الخارجي */}
+              <div className="absolute top-2.5 right-2.5 z-40 flex items-center gap-1.5 bg-slate-900/95 text-white backdrop-blur-md px-2.5 py-1.5 rounded-2xl shadow-xl border border-slate-700/90 pointer-events-auto select-none">
+                <button
+                  type="button"
+                  onClick={() => setPdfZoom(prev => Math.min(prev + 20, 200))}
+                  className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-black text-sm transition-all cursor-pointer shadow-sm"
+                  title="تكبير العرض (+)"
+                >
+                  <i className="fas fa-search-plus"></i>
+                </button>
+
+                <span className="text-xs font-black px-1 min-w-[36px] text-center text-amber-400">
+                  {pdfZoom}%
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setPdfZoom(prev => Math.max(prev - 20, 80))}
+                  className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-black text-sm transition-all cursor-pointer shadow-sm"
+                  title="تصغير العرض (-)"
+                >
+                  <i className="fas fa-search-minus"></i>
+                </button>
+
+                {pdfZoom !== 100 && (
+                  <button
+                    type="button"
+                    onClick={() => setPdfZoom(100)}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-gray-300 transition-all cursor-pointer mr-0.5"
+                    title="الحجم الافتراضي (100%)"
+                  >
+                    ١٠٠٪
+                  </button>
+                )}
+              </div>
+
+              {/* منطقة العرض القابلة للتمرير والتكبير الحقيقي */}
+              <div 
+                className="flex-1 w-full h-full overflow-auto custom-scrollbar relative flex items-start justify-center"
+                style={{ touchAction: 'pan-x pan-y' }}
+              >
+                <div 
+                  className="transition-all duration-200 flex items-start justify-center shrink-0"
+                  style={{
+                    width: pdfZoom > 100 ? `${pdfZoom}%` : '100%',
+                    height: pdfZoom > 100 ? `${pdfZoom}%` : '100%',
+                    minWidth: '100%',
+                    minHeight: '100%',
+                  }}
+                >
+                  <div
+                    className="w-full h-full flex origin-top"
+                    style={{
+                      width: pdfZoom > 100 ? `${(100 / (pdfZoom / 100))}%` : '100%',
+                      height: pdfZoom > 100 ? `${(100 / (pdfZoom / 100))}%` : '100%',
+                      transform: `scale(${pdfZoom / 100})`,
+                      transformOrigin: 'top center',
+                      transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+                    }}
+                  >
+                    <iframe
+                      src={getPdfViewerLink(selectedPdfForView.url)}
+                      className="w-full h-full border-0 flex-1 block"
+                      title={selectedPdfForView.title}
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              </div>
 
               {/* علامة مائية عائمة مدمجة خلف الكلام بدون أي خلفية أو تشويش على القراءة */}
               <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between items-center overflow-hidden select-none mix-blend-multiply dark:mix-blend-screen">
@@ -13559,6 +14286,25 @@ function initAllSheetsMenu() {
               </button>
             </div>
 
+            {/* تنبيه ذكي عند استخدام فلاتر نوع السؤال */}
+            {preSubmitFilter !== 'all' && (
+              <div className="mx-3 sm:mx-4 mt-2 px-3 py-2 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl text-xs font-bold text-indigo-900 dark:text-indigo-200 flex items-center justify-between gap-2 shrink-0">
+                <span className="flex items-center gap-1.5">
+                  <i className="fas fa-filter text-indigo-600"></i>
+                  <span>
+                    أنت تستعرض الآن أسئلة <b>({preSubmitFilter === 'mcq' ? 'اختر من متعدد' : preSubmitFilter === 'tf' ? 'صح وخطأ' : preSubmitFilter === 'essay' ? 'الأسئلة المقالية' : 'الأسئلة المتروكة'})</b> فقط. بقية أسئلة الامتحان موجودة في التبويبات الأخرى بالأعلى.
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreSubmitFilter('all')}
+                  className="text-primary dark:text-secondary underline font-black hover:opacity-80 shrink-0 cursor-pointer text-xs"
+                >
+                  عرض جميع الأسئلة (الكل)
+                </button>
+              </div>
+            )}
+
             {/* Questions List */}
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5">
               {filteredReviewQuestions.length === 0 ? (
@@ -13574,7 +14320,11 @@ function initAllSheetsMenu() {
                   return (
                     <div
                       key={item.idx}
-                      className={`p-3 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                      onClick={() => {
+                        setCurrentQIndex(item.idx);
+                        setPreSubmitReviewModalOpen(false);
+                      }}
+                      className={`p-3 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:border-primary/50 active:scale-[0.99] ${
                         item.hasAns
                           ? 'bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 shadow-xs'
                           : 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/50 shadow-xs'
@@ -14462,6 +15212,16 @@ function initAllSheetsMenu() {
         </div>
       )}
 
+      {/* بطاقة إشعار إعادة الامتحان الموجهة من الأستاذ إسلام سعود للطالب */}
+      <StudentRetakeNotificationModal
+        isOpen={!!retakeDirectiveForModal}
+        directive={retakeDirectiveForModal}
+        studentName={studentName || (studentData as any)?.name}
+        studentGender={(studentData as any)?.gender}
+        onAcknowledge={handleAcknowledgeRetakeDirective}
+        isDarkMode={isDarkMode}
+      />
+
       {/* نوافذ إشعار ومراجعة نتائج الأسئلة المقالية للطلاب */}
       <StudentApprovedEssayModal
         isOpen={!!approvedSubForModal}
@@ -14485,8 +15245,8 @@ function initAllSheetsMenu() {
       <MistakesNotebookModal
         isOpen={showMistakesNotebookModal}
         onClose={() => setShowMistakesNotebookModal(false)}
-        permanentMistakes={permanentNotebookMistakes}
-        mistakes={mistakesBank}
+        permanentMistakes={visibleNotebookMistakes}
+        mistakes={visibleMistakesBank}
         unitsData={data}
         essaySubmissions={currentStudentSubmissions}
         isDarkMode={isDarkMode}

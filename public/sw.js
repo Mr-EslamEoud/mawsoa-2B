@@ -1,5 +1,5 @@
 // Service Worker for Kanz Educational Platform (موسوعة الكنز التعليمي)
-const CACHE_NAME = 'kanz-cache-v6';
+const CACHE_NAME = 'kanz-cache-v7';
 
 // الأصول الأساسية لضمان عمل واجهة التطبيق بدون اتصال بالإنترنت (Offline App Shell)
 const PRECACHE_ASSETS = [
@@ -57,6 +57,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   const url = new URL(event.request.url);
+
+  // في بيئة التطوير (Dev Server عبر المنفذ 5173) يتم جلب الملفات مباشرة دون كاش لضمان التحديث الفوري
+  if (url.port === '5173') {
+    return;
+  }
 
   // تجاهل الروابط الخارجية (مثل Google Apps Script و Google Drive و Gemini API وروابط الصوت)
   // لضمان الحصول على أحدث البيانات دائماً ودعم استكمال تحميل الملفات الكبيرة

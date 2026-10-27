@@ -1,18 +1,19 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { StudentEssaySubmission, EssayReviewQuestionItem, Unit } from '../types';
+import { StudentEssaySubmission, EssayReviewQuestionItem, Unit, StudentRetakeDirective } from '../types';
 import defaultQuestionsData from '../defaultQuestions.json';
 import { 
   getPendingEssaySubmissions, 
   savePendingEssaySubmission, 
   getExamConfig, 
   calculateExamStructure,
-  detectEssayType
+  detectEssayType,
+  saveRetakeDirective
 } from '../examConfigUtils';
 import { HighlightText } from './HighlightText';
 import { FormatQuestionText } from './FormatQuestionText';
 import { compareStudentWithModelAnswer, EssayDiffComparison } from '../aiEvaluationService';
-import { toEasternArabic, API_URL, SECRET_API_KEY, formatPhoneStr } from '../utils';
+import { toEasternArabic, API_URL, SECRET_API_KEY, formatPhoneStr, detectArabicGender } from '../utils';
 
 interface AdminEssayReviewTabProps {
   onSaveResultToDB?: (result: { quizName: string; score: string; studentName?: string; studentPhone?: string }) => void;
@@ -195,6 +196,8 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
   const [selectedQuizFilter, setSelectedQuizFilter] = useState<string>(initialSelectedQuiz || 'all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [batchApproveDialog, setBatchApproveDialog] = useState<{ grp: { quizTitle: string; pendingCount: number; submissions: StudentEssaySubmission[] } } | null>(null);
+  const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
 
   // إذا لم تكن هناك امتحانات معلقة ولكن توجد امتحانات معتمدة في الأرشيف، ننتقل تلقائياً للأرشيف في البداية
   const [hasAutoSwitchedToArchive, setHasAutoSwitchedToArchive] = useState(false);
@@ -272,7 +275,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     }
   };
 
-  const fetchCloudSubmissions = async () => {
+  const fetchCloudSubmissions = async (isManual: boolean = false) => {
     setIsLoadingCloud(true);
     try {
       const res = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}&t=${Date.now()}`);
@@ -390,7 +393,11 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         localList.forEach(ls => {
           const mKey = `${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`;
           if (!mergedMap.has(mKey)) {
-            mergedMap.set(mKey, ls);
+            // لا نحتفظ من الكاش المحلي إلا بالتسليمات المحلية غير المتزامنة (أوفلاين)
+            // إذا كان التسليم أصلاً سحابياً وتم حذفه من الشيت، لا نعيد إحياءه بل نحذفه
+            if (!ls.id?.startsWith('cloud_') && !ls.isFullyApproved) {
+              mergedMap.set(mKey, ls);
+            }
           } else {
             const cloudItem = mergedMap.get(mKey)!;
             if (ls.isFullyApproved && !cloudItem.isFullyApproved) {
@@ -402,12 +409,21 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         const finalList = Array.from(mergedMap.values());
         localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(finalList));
         setSubmissions(finalList);
+        if (isManual) {
+          showToast('✅ تم جلب وتحديث كافة تسليمات المقالي من السحابة بنجاح!');
+        }
       } else {
         refreshSubmissions();
+        if (isManual) {
+          showToast('تم تحديث البيانات من السجلات المحلية.');
+        }
       }
     } catch (e) {
       console.error("Error fetching cloud essays:", e);
       refreshSubmissions();
+      if (isManual) {
+        showToast('⚠️ تعذر الاتصال بالسحابة، تم التحديث من الكاش المحلي.');
+      }
     } finally {
       setIsLoadingCloud(false);
     }
@@ -708,17 +724,21 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     showToast(`🎉 تم اعتماد جميع التسليمات المعلقة بنجاح!`);
   };
 
-  // اعتماد وإعلان نتائج امتحان بالكامل دفعة واحدة بنقرة واحدة
+  // اعتماد وإعلان نتائج امتحان بالكامل دفعة واحدة بنقرة واحدة مع تأكيد إتاحة بنك الأخطاء
   const handleApproveQuizBatch = (grp: { quizTitle: string; pendingCount: number; submissions: StudentEssaySubmission[] }) => {
     const pendingList = grp.submissions.filter(s => !s.isFullyApproved);
     if (pendingList.length === 0) {
       showToast('جميع درجات هذا الامتحان معتمدة بالفعل.');
       return;
     }
+    setBatchApproveDialog({ grp });
+  };
 
-    if (!window.confirm(`هل أنت متأكد من اعتماد وإعلان نتائج امتحان:\n"${grp.quizTitle}"\nلجميع الطلاب المعلقين (${pendingList.length} طالب) دفعة واحدة؟\nسيتمكن الطلاب من رؤية درجاتهم فوراً.`)) {
-      return;
-    }
+  const executeBatchApprove = (releaseMistakes: boolean) => {
+    if (!batchApproveDialog) return;
+    const { grp } = batchApproveDialog;
+    const pendingList = grp.submissions.filter(s => !s.isFullyApproved);
+    setBatchApproveDialog(null);
 
     pendingList.forEach(sub => {
       let earnedEssay = 0;
@@ -737,6 +757,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         ...sub,
         questions: updatedQuestions,
         isFullyApproved: true,
+        isMistakesBankReleased: releaseMistakes,
         finalScore: earnedEssay,
       };
 
@@ -756,7 +777,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     });
 
     refreshSubmissions();
-    showToast(`🎉 تم اعتماد وإعلان نتائج امتحان "${grp.quizTitle}" بنجاح!`);
+    showToast(`🎉 تم اعتماد نتائج امتحان "${grp.quizTitle}" (${releaseMistakes ? 'مع إتاحة بنك الأخطاء للطلاب' : 'مع حجب بنك الأخطاء'}) بنجاح!`);
   };
 
   // حذف تسليم
@@ -768,6 +789,98 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
       refreshSubmissions();
       showToast('تم حذف التسليم بنجاح');
     } catch (e) {}
+  };
+
+  // معالجات خيارات الحذف وإعادة الامتحان للطالب
+  const handleFullRetake = (sub: StudentEssaySubmission) => {
+    try {
+      const directive: StudentRetakeDirective = {
+        id: `retake_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        studentPhone: sub.studentPhone,
+        studentName: sub.studentName,
+        lessonId: sub.lessonId || sub.quizTitle,
+        lessonTitle: sub.quizTitle,
+        retakeType: 'full',
+        date: new Date().toLocaleDateString('ar-EG'),
+        seen: false,
+        maxPossibleScore: sub.maxPossibleScore || 50,
+      };
+      saveRetakeDirective(directive);
+
+      // إرسال تصفير إلى الشيت
+      if (onSaveResultToDB && sub.quizTitle) {
+        onSaveResultToDB({
+          quizName: `فرصة جديدة (كامل) 🔄: ${sub.quizTitle}`,
+          score: `تصفير كامل 🔄`,
+          studentName: sub.studentName,
+          studentPhone: sub.studentPhone,
+        });
+      }
+
+      // إزالة التسليم القديم
+      const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
+      localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
+      refreshSubmissions();
+      setRetakeModalSub(null);
+      showToast(`🔄 تم تفعيل إعادة الامتحان كاملاً بنجاح للطالب/ة: ${sub.studentName}`);
+    } catch (e) {
+      console.error("Error setting full retake:", e);
+    }
+  };
+
+  const handleEssayOnlyRetake = (sub: StudentEssaySubmission) => {
+    try {
+      const mcqQuestions = (sub.questions || []).filter(
+        q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ'
+      );
+      const preservedMcqScore = mcqQuestions.reduce((sum, q) => sum + (q.teacherScore || 0), 0);
+
+      const directive: StudentRetakeDirective = {
+        id: `retake_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        studentPhone: sub.studentPhone,
+        studentName: sub.studentName,
+        lessonId: sub.lessonId || sub.quizTitle,
+        lessonTitle: sub.quizTitle,
+        retakeType: 'essay_only',
+        date: new Date().toLocaleDateString('ar-EG'),
+        seen: false,
+        preservedMcqScore,
+        preservedMcqAnswers: mcqQuestions,
+        maxPossibleScore: sub.maxPossibleScore || 50,
+      };
+      saveRetakeDirective(directive);
+
+      // إرسال تصفير المقالي إلى الشيت
+      if (onSaveResultToDB && sub.quizTitle) {
+        onSaveResultToDB({
+          quizName: `فرصة جديدة (مقالي) ✍️: ${sub.quizTitle}`,
+          score: `تصفير مقالي ✍️`,
+          studentName: sub.studentName,
+          studentPhone: sub.studentPhone,
+        });
+      }
+
+      // إزالة التسليم القديم حتى يستقبله المصحح من جديد بعد صياغة الطالب
+      const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
+      localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
+      refreshSubmissions();
+      setRetakeModalSub(null);
+      showToast(`✍️ تم تفعيل إعادة الأسئلة المقالية فقط (وحفظ الاختياري: ${preservedMcqScore} درجة) للطالب/ة: ${sub.studentName}`);
+    } catch (e) {
+      console.error("Error setting essay only retake:", e);
+    }
+  };
+
+  const handleAdminDeleteOnly = (sub: StudentEssaySubmission) => {
+    try {
+      const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
+      localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
+      refreshSubmissions();
+      setRetakeModalSub(null);
+      showToast(`🗑️ تم حذف التسليم إدارياً للطالب/ة: ${sub.studentName}`);
+    } catch (e) {
+      console.error("Error admin delete:", e);
+    }
   };
 
   return (
@@ -787,7 +900,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={fetchCloudSubmissions}
+            onClick={() => fetchCloudSubmissions(true)}
             disabled={isLoadingCloud}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
             title="تحديث وجلب كافة إجابات الطلاب المقالية من السحابة فوراً"
@@ -1505,9 +1618,9 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
 
                         <button
                           type="button"
-                          onClick={() => handleDeleteSubmission(sub.id)}
+                          onClick={() => setRetakeModalSub(sub)}
                           className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-rose-100 text-gray-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer"
-                          title="حذف"
+                          title="خيارات الحذف وتصفير وإعادة الامتحان للطالب"
                         >
                           <i className="fas fa-trash-alt text-xs"></i>
                         </button>
@@ -1530,6 +1643,10 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           submission={selectedSubForReview}
           data={data}
           hasNextPending={!!nextPendingSub}
+          onRequestRetake={(sub) => {
+            setSelectedSubForReview(null);
+            setRetakeModalSub(sub);
+          }}
           onClose={() => setSelectedSubForReview(null)}
           onSaveApprovedAndNext={(updated) => {
             savePendingEssaySubmission(updated);
@@ -1590,6 +1707,214 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           isDarkMode={isDarkMode}
         />
       )}
+
+      {/* نافذة تأكيد اعتماد النتيجة وتحديد إتاحة بنك الأخطاء للامتحان دفعة واحدة */}
+      {batchApproveDialog && (
+        <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border-t-8 border-primary text-right animate-fade-in space-y-4">
+            <div className="flex items-center gap-3 border-b pb-3 dark:border-gray-700">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center text-2xl shrink-0">
+                🎯
+              </div>
+              <div>
+                <h3 className="text-lg sm:text-xl font-black text-gray-900 dark:text-gray-100">
+                  تأكيد اعتماد نتائج امتحان دفعة واحدة
+                </h3>
+                <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                  {batchApproveDialog.grp.quizTitle} • {toEasternArabic(batchApproveDialog.grp.pendingCount)} طالب معلق
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 text-xs sm:text-sm font-bold text-amber-900 dark:text-amber-200 leading-relaxed">
+              <i className="fas fa-circle-info text-amber-600 ml-1.5"></i>
+              <span>
+                أنت على وشك اعتماد وإعلان درجات جميع طلاب هذا الامتحان المعلقين ({toEasternArabic(batchApproveDialog.grp.pendingCount)} طالب). يرجى تحديد ما إذا كنت ترغب في <strong>إتاحة أسئلة هذا الاختبار في بنك الأخطاء</strong> للطلاب:
+              </span>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              <button
+                type="button"
+                onClick={() => executeBatchApprove(true)}
+                className="w-full p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">✅</span>
+                  <div className="text-right">
+                    <div>اعتماد النتيجة لجميع الطلاب + إتاحة بنك الأخطاء 🎯</div>
+                    <div className="text-[11px] font-normal text-emerald-100">تظهر أخطاء هذا الامتحان لجميع الطلاب في بنك الأخطاء للتدرب فوراً</div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => executeBatchApprove(false)}
+                className="w-full p-4 rounded-2xl bg-slate-700 hover:bg-slate-800 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">🔒</span>
+                  <div className="text-right">
+                    <div>اعتماد النتيجة فقط (حجب بنك الأخطاء عن الطلاب) 🔒</div>
+                    <div className="text-[11px] font-normal text-slate-300">تُعتمد الدرجات وتُعلن للطلاب، ولكن تُحجب الأخطاء من بنك الأخطاء</div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBatchApproveDialog(null)}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                إلغاء التراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة خيارات الحذف وإعادة المحاولة للطالب (كامل أو مقالي فقط) */}
+      {retakeModalSub && (() => {
+        const mcqQuestions = (retakeModalSub.questions || []).filter(
+          q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ'
+        );
+        const preservedMcqScore = mcqQuestions.reduce((sum, q) => sum + (q.teacherScore || 0), 0);
+        const gender = detectArabicGender(retakeModalSub.studentName);
+        const isFemale = gender === 'female';
+
+        return (
+          <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 select-none" dir="rtl">
+            <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl border-t-8 border-indigo-600 text-right animate-scale-up space-y-4 max-h-[92vh] overflow-y-auto">
+              
+              {/* ترويسة النافذة */}
+              <div className="flex items-center justify-between border-b pb-3.5 dark:border-gray-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-2xl shrink-0">
+                    🔄
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-gray-900 dark:text-gray-100">
+                      إدارة محاولة الامتحان وتوجيه الطالب
+                    </h3>
+                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 mt-0.5">
+                      {retakeModalSub.quizTitle}
+                    </p>
+                  </div>
+                </div>
+
+                <span className={`px-2.5 py-1 rounded-xl text-xs font-black border ${
+                  isFemale 
+                    ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300' 
+                    : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300'
+                }`}>
+                  {isFemale ? 'ابنتنا الطالبة 🌸' : 'ابننا الطالب 🎓'}
+                </span>
+              </div>
+
+              {/* بطاقة تعريف الطالب */}
+              <div className="bg-gray-50 dark:bg-gray-750 p-3 rounded-2xl border border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs font-bold text-gray-700 dark:text-gray-300">
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-gray-900 dark:text-white">👤 {retakeModalSub.studentName}</span>
+                  <span className="text-gray-400">|</span>
+                  <span dir="ltr">{retakeModalSub.studentPhone}</span>
+                </div>
+                {mcqQuestions.length > 0 && (
+                  <span className="text-[11px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-lg border border-emerald-200 dark:border-emerald-800 font-black">
+                    درجة الاختياري: {toEasternArabic(preservedMcqScore)} نقطة
+                  </span>
+                )}
+              </div>
+
+              {/* نص التوضيح */}
+              <div className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed font-bold">
+                اختر نوع الإجراء المطلوب تطبيقه. عند اختيار الإعادة، ستظهر للطالب بطاقة تنبيهية غير قابلة للإغلاق إلا بعد الموافقة، مع توجيه تعليمي تشجيعي من الأستاذ إسلام سعود:
+              </div>
+
+              {/* خيارات الإجراء */}
+              <div className="space-y-3 pt-1">
+                {/* الخيار 1: إعادة الامتحان بالكامل */}
+                <button
+                  type="button"
+                  onClick={() => handleFullRetake(retakeModalSub)}
+                  className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs sm:text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group text-right"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+                      🔄
+                    </span>
+                    <div>
+                      <div className="text-white text-sm font-black flex items-center gap-2">
+                        <span>إعادة محاولة الامتحان بالكامل (اختياري + مقالي)</span>
+                        <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">فرصة كاملة جديدة</span>
+                      </div>
+                      <div className="text-[11px] font-normal text-blue-100 mt-1 leading-normal">
+                        تصفير المحاولة وحذفها من الشيت، ويفتح الامتحان للطالب من السؤال الأول (شامل الاختياري والمقالي).
+                      </div>
+                    </div>
+                  </div>
+                  <i className="fas fa-chevron-left text-xs opacity-70 group-hover:-translate-x-1 transition-transform shrink-0 mr-2"></i>
+                </button>
+
+                {/* الخيار 2: إعادة الأسئلة المقالية فقط */}
+                <button
+                  type="button"
+                  onClick={() => handleEssayOnlyRetake(retakeModalSub)}
+                  className="w-full p-4 rounded-2xl bg-gradient-to-r from-amber-500 via-purple-600 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 text-white font-black text-xs sm:text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group text-right"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+                      ✍️
+                    </span>
+                    <div>
+                      <div className="text-white text-sm font-black flex items-center gap-2">
+                        <span>إعادة الأسئلة المقالية فقط (حفظ درجات الاختياري)</span>
+                        <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">تركيز مقالي 🎯</span>
+                      </div>
+                      <div className="text-[11px] font-normal text-amber-100 mt-1 leading-normal">
+                        الاحتفاظ بدرجة الاختياري ({toEasternArabic(preservedMcqScore)} نقطة)، ويفتح الامتحان مباشرة على الأسئلة المقالية فقط دون تكرار الاختياري.
+                      </div>
+                    </div>
+                  </div>
+                  <i className="fas fa-chevron-left text-xs opacity-70 group-hover:-translate-x-1 transition-transform shrink-0 mr-2"></i>
+                </button>
+
+                {/* الخيار 3: حذف إداري فقط */}
+                <button
+                  type="button"
+                  onClick={() => handleAdminDeleteOnly(retakeModalSub)}
+                  className="w-full p-3.5 rounded-2xl bg-gray-100 dark:bg-gray-700/80 hover:bg-rose-50 hover:border-rose-300 dark:hover:bg-rose-950/30 text-gray-700 dark:text-gray-200 hover:text-rose-700 dark:hover:text-rose-300 border border-gray-200 dark:border-gray-600 font-bold text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer group text-right"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-9 h-9 rounded-xl bg-gray-200 dark:bg-gray-600 flex items-center justify-center text-base shrink-0 group-hover:bg-rose-100 text-gray-600 dark:text-gray-300 group-hover:text-rose-600">
+                      🗑️
+                    </span>
+                    <div>
+                      <div className="font-black text-xs sm:text-sm">حذف إداري فقط من السجلات</div>
+                      <div className="text-[11px] font-normal text-gray-500 dark:text-gray-400 mt-0.5">
+                        إزالة التسليم من قائمة التصحيح فقط دون توجيه الطالب لإعادة الامتحان (لتنظيف السجلات).
+                      </div>
+                    </div>
+                  </div>
+                  <i className="fas fa-chevron-left text-xs opacity-50 group-hover:-translate-x-1 transition-transform shrink-0 mr-2"></i>
+                </button>
+
+                {/* زر التراجع والإلغاء */}
+                <button
+                  type="button"
+                  onClick={() => setRetakeModalSub(null)}
+                  className="w-full py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer text-center"
+                >
+                  إلغاء التراجع
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 };
@@ -1606,6 +1931,7 @@ interface StudentEssayReviewModalProps {
   onSaveDraft?: (updated: StudentEssaySubmission) => void;
   onSaveApprovedAndNext?: (updated: StudentEssaySubmission) => void;
   onSaveDraftAndNext?: (updated: StudentEssaySubmission) => void;
+  onRequestRetake?: (submission: StudentEssaySubmission) => void;
   hasNextPending?: boolean;
   isDarkMode?: boolean;
 }
@@ -1618,6 +1944,7 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
   onSaveDraft,
   onSaveApprovedAndNext,
   onSaveDraftAndNext,
+  onRequestRetake,
   hasNextPending = false,
   isDarkMode = false,
 }) => {
@@ -1740,7 +2067,30 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
 
   const handleApplyDiffSuggestion = (idx: number, diff: EssayDiffComparison) => {
     handleScoreChange(idx, diff.suggestedScore);
-    const feedbackText = diff.studentFeedback || `${diff.verdictSummary} (${diff.styleNote})`;
+
+    // تنظيف العناصر الناقصة أو المفقودة وتنسيقها تربوياً وبلاغياً للمعلم والطالب
+    const validMissing = (diff.missingPoints || [])
+      .filter(p => p && !p.includes('جميع العناصر') && !p.includes('جميع عناصر') && !p.includes('جميع النقاط'))
+      .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, '').trim())
+      .filter(Boolean);
+
+    let feedbackText = '';
+    const q = questions[idx];
+    const maxScore = q?.maxScore || 2;
+    const score = diff.suggestedScore;
+
+    if (score >= maxScore * 0.9 || validMissing.length === 0) {
+      feedbackText = '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
+    } else if (score >= maxScore * 0.4) {
+      const missingListStr = validMissing.slice(0, 2).join('، ');
+      feedbackText = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
+    } else if (score > 0) {
+      const missingListStr = validMissing.slice(0, 2).join('، ');
+      feedbackText = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
+    } else {
+      feedbackText = diff.studentFeedback || `${diff.verdictSummary}`;
+    }
+
     handleFeedbackChange(idx, feedbackText);
   };
 
@@ -1788,24 +2138,28 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
 
   const perc = Math.round((totalEarnedScore / Math.max(1, totalMaxScore)) * 100);
 
+  const [mistakesReleaseDialog, setMistakesReleaseDialog] = useState<'publish' | 'next' | null>(null);
+
   const handleApproveAndPublish = () => {
-    const updated: StudentEssaySubmission = {
-      ...submission,
-      questions: questions.map(q => ({ ...q, isApproved: true })),
-      isFullyApproved: true,
-      finalScore: totalEarnedScore,
-    };
-    onSaveApproved(updated);
+    setMistakesReleaseDialog('publish');
   };
 
   const handleApproveAndNext = () => {
+    setMistakesReleaseDialog('next');
+  };
+
+  const executeApprovalWithMistakesOption = (releaseMistakes: boolean) => {
     const updated: StudentEssaySubmission = {
       ...submission,
       questions: questions.map(q => ({ ...q, isApproved: true })),
       isFullyApproved: true,
+      isMistakesBankReleased: releaseMistakes,
       finalScore: totalEarnedScore,
     };
-    if (onSaveApprovedAndNext) {
+    const targetMode = mistakesReleaseDialog;
+    setMistakesReleaseDialog(null);
+
+    if (targetMode === 'next' && onSaveApprovedAndNext) {
       onSaveApprovedAndNext(updated);
     } else {
       onSaveApproved(updated);
@@ -1907,6 +2261,19 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
               )}
             </span>
           </div>
+
+          {onRequestRetake && (
+            <button
+              type="button"
+              onClick={() => onRequestRetake(submission)}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-amber-300 dark:border-amber-700 cursor-pointer shadow-xs active:scale-95"
+              title="إتاحة إعادة المحاولة للطالب (كامل أو مقالي فقط)"
+            >
+              <i className="fas fa-redo-alt"></i>
+              <span className="hidden sm:inline">إعادة المحاولة للطالب 🔄</span>
+              <span className="sm:hidden">إعادة 🔄</span>
+            </button>
+          )}
 
           <button 
             onClick={onClose}
@@ -2530,6 +2897,74 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
           </button>
         </div>
       </footer>
+
+      {/* نافذة تأكيد اعتماد النتيجة وتحديد إتاحة بنك الأخطاء للطالب */}
+      {mistakesReleaseDialog && (
+        <div className="fixed inset-0 z-[100000] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border-t-8 border-primary text-right animate-fade-in space-y-4">
+            <div className="flex items-center gap-3 border-b pb-3 dark:border-gray-700">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center text-2xl shrink-0">
+                🎯
+              </div>
+              <div>
+                <h3 className="text-lg sm:text-xl font-black text-gray-900 dark:text-gray-100">
+                  تأكيد اعتماد النتيجة وبنك الأخطاء
+                </h3>
+                <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                  {submission.studentName} • {submission.quizTitle}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 text-xs sm:text-sm font-bold text-amber-900 dark:text-amber-200 leading-relaxed">
+              <i className="fas fa-circle-info text-amber-600 ml-1.5"></i>
+              <span>
+                أنت الآن بصدد اعتماد نتيجة الامتحان. يرجى تحديد ما إذا كنت ترغب في <strong>إتاحة أسئلة هذا الاختبار في بنك الأخطاء</strong> للطالب للتدرب عليها:
+              </span>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              <button
+                type="button"
+                onClick={() => executeApprovalWithMistakesOption(true)}
+                className="w-full p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">✅</span>
+                  <div className="text-right">
+                    <div>اعتماد النتيجة + إتاحة بنك الأخطاء 🎯</div>
+                    <div className="text-[11px] font-normal text-emerald-100">تظهر أخطاء هذا الامتحان للطالب في بنك الأخطاء للتدرب فوراً</div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => executeApprovalWithMistakesOption(false)}
+                className="w-full p-4 rounded-2xl bg-slate-700 hover:bg-slate-800 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">🔒</span>
+                  <div className="text-right">
+                    <div>اعتماد النتيجة فقط (حجب بنك الأخطاء) 🔒</div>
+                    <div className="text-[11px] font-normal text-slate-300">تُعتمد الدرجة وتصل للطالب، ولكن تُحجب الأخطاء من بنك الأخطاء</div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMistakesReleaseDialog(null)}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                إلغاء التراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>,
     document.body
   );

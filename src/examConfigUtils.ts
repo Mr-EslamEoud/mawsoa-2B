@@ -1,5 +1,5 @@
-import { Question, ExamConfig, GlobalExamConfig, DialectPolicy, StudentEssaySubmission, EssayReviewQuestionItem, ExamLeaderboardPolicy, ExamScheduleTarget, ExamAudienceSchedule } from "./types";
-export { type DialectPolicy, type GlobalExamConfig, type ExamLeaderboardPolicy, type ExamScheduleTarget, type ExamAudienceSchedule };
+import { Question, ExamConfig, GlobalExamConfig, DialectPolicy, StudentEssaySubmission, EssayReviewQuestionItem, ExamLeaderboardPolicy, ExamScheduleTarget, ExamAudienceSchedule, StudentRetakeDirective } from "./types";
+export { type DialectPolicy, type GlobalExamConfig, type ExamLeaderboardPolicy, type ExamScheduleTarget, type ExamAudienceSchedule, type StudentRetakeDirective };
 
 export const GLOBAL_EXAM_CONFIG_KEY = 'kanz_global_exam_config';
 
@@ -538,4 +538,78 @@ export const isTestEligibleForLeaderboard = (
   
   return true;
 };
+
+// -------------------------------------------------------------
+// إدارة توجيهات وتنبيهات إعادة الاختبار (Retake Directives)
+// -------------------------------------------------------------
+
+const RETAKE_DIRECTIVES_STORAGE_KEY = "kanz_student_retake_directives";
+
+export const getRetakeDirectives = (): StudentRetakeDirective[] => {
+  try {
+    const raw = localStorage.getItem(RETAKE_DIRECTIVES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+export const saveRetakeDirective = (directive: StudentRetakeDirective): void => {
+  try {
+    const all = getRetakeDirectives();
+    const cleanPhone = directive.studentPhone.trim().replace(/[^\d]/g, '');
+    const cleanTitle = (directive.lessonTitle || '').trim();
+    // إزالة أي توجيه سابق لنفس الطالب ونفس الدرس
+    const filtered = all.filter(item => {
+      const itemPhone = (item.studentPhone || '').trim().replace(/[^\d]/g, '');
+      const itemTitle = (item.lessonTitle || '').trim();
+      return !(itemPhone === cleanPhone && itemTitle === cleanTitle);
+    });
+    filtered.unshift(directive);
+    localStorage.setItem(RETAKE_DIRECTIVES_STORAGE_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.error("Error saving retake directive:", e);
+  }
+};
+
+export const getStudentUnseenRetakeDirective = (studentPhone: string): StudentRetakeDirective | null => {
+  if (!studentPhone) return null;
+  const cleanPhone = studentPhone.trim().replace(/[^\d]/g, '');
+  const all = getRetakeDirectives();
+  return all.find(item => {
+    const itemPhone = (item.studentPhone || '').trim().replace(/[^\d]/g, '');
+    const matchesPhone = itemPhone === cleanPhone || (itemPhone.length >= 8 && cleanPhone.length >= 8 && (itemPhone.endsWith(cleanPhone) || cleanPhone.endsWith(itemPhone)));
+    return !item.seen && matchesPhone;
+  }) || null;
+};
+
+export const markRetakeDirectiveSeen = (directiveId: string): void => {
+  try {
+    const all = getRetakeDirectives();
+    const updated = all.map(item => item.id === directiveId ? { ...item, seen: true } : item);
+    localStorage.setItem(RETAKE_DIRECTIVES_STORAGE_KEY, JSON.stringify(updated));
+  } catch (e) {}
+};
+
+export const getActiveRetakeDirectiveForLesson = (studentPhone: string, lessonIdOrTitle: string): StudentRetakeDirective | null => {
+  if (!studentPhone || !lessonIdOrTitle) return null;
+  const cleanPhone = studentPhone.trim().replace(/[^\d]/g, '');
+  const cleanKey = lessonIdOrTitle.trim();
+  const all = getRetakeDirectives();
+  return all.find(item => {
+    const itemPhone = (item.studentPhone || '').trim().replace(/[^\d]/g, '');
+    const matchesPhone = itemPhone === cleanPhone || (itemPhone.length >= 8 && cleanPhone.length >= 8 && (itemPhone.endsWith(cleanPhone) || cleanPhone.endsWith(itemPhone)));
+    if (!matchesPhone) return false;
+    return item.lessonId === cleanKey || item.lessonTitle === cleanKey || item.lessonTitle.includes(cleanKey) || cleanKey.includes(item.lessonTitle);
+  }) || null;
+};
+
+export const removeRetakeDirective = (directiveId: string): void => {
+  try {
+    const all = getRetakeDirectives();
+    const filtered = all.filter(item => item.id !== directiveId);
+    localStorage.setItem(RETAKE_DIRECTIVES_STORAGE_KEY, JSON.stringify(filtered));
+  } catch (e) {}
+};
+
 

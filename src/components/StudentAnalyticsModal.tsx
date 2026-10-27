@@ -37,6 +37,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
   const [copiedReport, setCopiedReport] = useState<boolean>(false);
   const [expandedUnitIds, setExpandedUnitIds] = useState<string[]>([]);
   const [isGeneratingImage, setIsGeneratingImage] = useState<boolean>(false);
+  const [showKpis, setShowKpis] = useState<boolean>(true);
 
   const isBlocked = !!studentMeta?.isBlocked;
   const gender = detectArabicGender(student.name, studentMeta?.gender);
@@ -244,20 +245,20 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
     : units.filter(u => u.id === selectedUnitId);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-fade-in" dir="rtl">
-      <div className={`w-full max-w-4xl max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border ${
+    <div className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-xs flex items-center justify-center p-1 sm:p-5 animate-fade-in" dir="rtl">
+      <div className={`w-full max-w-4xl h-[96vh] sm:h-auto sm:max-h-[92vh] rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border ${
         isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-100 text-gray-900'
       }`}>
-        {/* الترويسة الرئيسية والبطاقة الشخصية */}
-        <div className={`p-4 sm:p-6 border-b shrink-0 ${
+        {/* الترويسة الرئيسية والبطاقة الشخصية المدمجة والذكية */}
+        <div className={`p-3 sm:p-5 border-b shrink-0 ${
           isDarkMode 
             ? 'bg-gradient-to-r from-gray-800 to-gray-850 border-gray-700' 
             : 'bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-white border-gray-200'
         }`}>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5 min-w-0">
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
               {/* أيقونة الطالب مع تمييز النوع */}
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-black shrink-0 shadow-sm border ${
+              <div className={`w-10 h-10 sm:w-13 sm:h-13 rounded-xl sm:rounded-2xl flex items-center justify-center text-xl sm:text-2xl font-black shrink-0 shadow-xs border ${
                 isFemale
                   ? 'bg-rose-100 text-rose-700 border-rose-200'
                   : 'bg-blue-100 text-blue-700 border-blue-200'
@@ -266,10 +267,10 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               </div>
 
               <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-lg sm:text-xl font-black truncate">{student.name}</h3>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h3 className="text-base sm:text-lg font-black truncate max-w-[170px] sm:max-w-none">{student.name}</h3>
                   {/* شارة النوع */}
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                  <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-black border ${
                     isFemale
                       ? 'bg-rose-50 text-rose-700 border-rose-200'
                       : 'bg-blue-50 text-blue-700 border-blue-200'
@@ -278,35 +279,35 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                   </span>
                   {/* شارة السنتر / أونلاين */}
                   {isStudentOnline ? (
-                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-300 px-1.5 py-0.2 rounded-full text-[9px] font-black flex items-center gap-1">
                       <i className="fas fa-globe text-emerald-600"></i> أونلاين
                     </span>
                   ) : (
-                    <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                    <span className="bg-indigo-50 text-indigo-800 border border-indigo-200 px-1.5 py-0.2 rounded-full text-[9px] font-black flex items-center gap-1">
                       <i className="fas fa-school text-indigo-600"></i> سنتر
                     </span>
                   )}
                   {/* حالة الحظر */}
                   {isBlocked && (
-                    <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px] font-black shadow-xs flex items-center gap-1">
-                      <i className="fas fa-lock text-[9px]"></i> محظور
+                    <span className="bg-red-500 text-white px-1.5 py-0.2 rounded-full text-[9px] font-black shadow-xs flex items-center gap-1">
+                      <i className="fas fa-lock text-[8px]"></i> محظور
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 font-bold mt-1 flex-wrap">
+                <div className="flex items-center gap-2 text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 font-bold mt-0.5 flex-wrap">
                   <span className="flex items-center gap-1">
-                    <i className="fas fa-phone text-gray-400"></i>
+                    <i className="fas fa-phone text-gray-400 text-[10px]"></i>
                     <span dir="ltr" className="font-mono">{String(student.phone || '')}</span>
                   </span>
                   {studentMeta?.code && (
-                    <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-md font-mono text-[11px]">
-                      <i className="fas fa-id-card text-gray-400"></i> كود: {studentMeta.code}
+                    <span className="hidden xs:inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.2 rounded font-mono text-[10px]">
+                      كود: {studentMeta.code}
                     </span>
                   )}
                   {studentMeta?.registrationDate && (
-                    <span className="flex items-center gap-1">
-                      <i className="fas fa-calendar-alt text-gray-400"></i> انضم: {studentMeta.registrationDate}
+                    <span className="hidden sm:inline-flex items-center gap-1">
+                      انضم: {studentMeta.registrationDate}
                     </span>
                   )}
                 </div>
@@ -314,14 +315,14 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
             </div>
 
             {/* الأزرار العلوية السريعة */}
-            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
+            <div className="flex items-center gap-1.5 shrink-0">
               {/* زر واتساب السريع متضمناً نص التقرير جاهزاً */}
               {student?.phone != null && String(student.phone).trim() !== '' && (
                 <a
                   href={getWhatsAppReportUrl()}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                  className="p-2 sm:px-3 sm:py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
                   title="إرسال تقرير الطالب لولي الأمر عبر واتساب مع نص التقرير معبأ تلقائياً"
                 >
                   <i className="fab fa-whatsapp text-sm"></i>
@@ -333,7 +334,7 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               <button
                 type="button"
                 onClick={() => onResetDevice(String(student.phone || ''), student.name)}
-                className="px-3 py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-bold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                className="p-2 sm:px-3 sm:py-2 bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-bold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 title="السماح للطالب بالدخول من جهاز جديد"
               >
                 <i className="fas fa-mobile-alt"></i>
@@ -345,19 +346,21 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                 <button
                   type="button"
                   onClick={() => onUnblockStudent(String(student.phone || ''), student.name)}
-                  className="px-3 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                  className="p-2 sm:px-3 sm:py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                  title="فك حظر الطالب"
                 >
                   <i className="fas fa-unlock"></i>
-                  <span>فك الحظر</span>
+                  <span className="hidden sm:inline">فك الحظر</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={() => onBlockStudent(String(student.phone || ''), student.name)}
-                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                  className="p-2 sm:px-3 sm:py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-black text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                  title="حظر الطالب"
                 >
                   <i className="fas fa-ban"></i>
-                  <span>حظر</span>
+                  <span className="hidden sm:inline">حظر</span>
                 </button>
               )}
 
@@ -365,37 +368,40 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 flex items-center justify-center transition-colors cursor-pointer"
                 title="إغلاق"
               >
-                <i className="fas fa-times text-base"></i>
+                <i className="fas fa-times text-sm sm:text-base"></i>
               </button>
             </div>
           </div>
+        </div>
 
+        {/* حاوية المحتوى القابلة للتمرير بالكامل على الموبايل والشاشات المختلفة */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col overscroll-contain">
           {/* شريط الإجراءات: تنزيل تقرير مصور، ونسخ تقرير للواتساب */}
-          <div className="mt-3.5 pt-3 border-t border-gray-200/70 dark:border-gray-700 flex flex-wrap items-center justify-between gap-2.5">
-            <span className="text-xs text-gray-500 dark:text-gray-400 font-bold flex items-center gap-1.5">
+          <div className="p-2.5 sm:px-5 sm:py-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-850/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-bold hidden sm:flex items-center gap-1.5">
               <i className="fas fa-info-circle text-blue-500"></i>
               يمكنك تنزيل شهادة تقييم مصورة أو نسخ تقرير نصي لإرساله لولي الأمر
             </span>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
               {/* زر تنزيل التقرير المصور */}
               <button
                 type="button"
                 onClick={() => handleDownloadReportImage(false)}
                 disabled={isGeneratingImage}
-                className="px-3.5 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white disabled:opacity-60 active:scale-95"
+                className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white disabled:opacity-60 active:scale-95"
                 title="تنزيل تقرير رسمي مصور عالي الدقة باسم المنصة والأستاذ إسلام سعود"
               >
-                <i className={isGeneratingImage ? "fas fa-spinner fa-spin" : "fas fa-file-image"}></i>
-                <span>
+                <i className={isGeneratingImage ? "fas fa-spinner fa-spin text-xs" : "fas fa-file-image text-xs"}></i>
+                <span className="truncate">
                   {isGeneratingImage 
-                    ? 'جاري تجهيز الصورة... ⏳' 
+                    ? 'جاري التجهيز... ⏳' 
                     : selectedUnitId !== 'all' 
-                      ? `🖼️ تنزيل تقرير (${displayedUnits[0]?.title || 'الوحدة'}) صورة`
-                      : '🖼️ تنزيل تقرير كصورة (PNG)'
+                      ? `تقرير (${displayedUnits[0]?.title || 'الوحدة'}) صورة`
+                      : '🖼️ تنزيل كصورة'
                   }
                 </span>
               </button>
@@ -406,11 +412,11 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                   type="button"
                   onClick={() => handleDownloadReportImage(true)}
                   disabled={isGeneratingImage}
-                  className="px-3 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 active:scale-95 disabled:opacity-60"
+                  className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 active:scale-95 disabled:opacity-60"
                   title="تنزيل تقرير يشمل كافة الوحدات والدروس كصورة واحدة"
                 >
-                  <i className="fas fa-layer-group"></i>
-                  <span>📑 التقرير الشامل (صورة)</span>
+                  <i className="fas fa-layer-group text-xs"></i>
+                  <span className="truncate">📑 التقرير الشامل</span>
                 </button>
               )}
 
@@ -420,10 +426,10 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
                   href={getWhatsAppReportUrl()}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3.5 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95"
+                  className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white active:scale-95"
                   title="فتح محادثة واتساب مع الطالب أو ولي الأمر مع تقرير الدرجات معبأ تلقائياً"
                 >
-                  <i className="fab fa-whatsapp"></i>
+                  <i className="fab fa-whatsapp text-xs"></i>
                   <span>إرسال واتساب</span>
                 </a>
               )}
@@ -432,215 +438,233 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               <button
                 type="button"
                 onClick={handleCopyParentReport}
-                className={`px-3.5 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ${
+                className={`px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer ${
                   copiedReport
                     ? 'bg-emerald-600 text-white'
                     : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-50'
                 }`}
                 title="نسخ تقرير نصي منسق لإرساله في رسالة واتساب"
               >
-                <i className={copiedReport ? "fas fa-check" : "fas fa-clipboard-list"}></i>
-                <span>{copiedReport ? 'تم نسخ التقرير! 🎉' : '📋 نسخ للواتساب'}</span>
+                <i className={copiedReport ? "fas fa-check text-xs" : "fas fa-clipboard-list text-xs"}></i>
+                <span className="truncate">{copiedReport ? 'تم النسخ! 🎉' : '📋 نسخ للواتساب'}</span>
               </button>
             </div>
           </div>
-        </div>
 
-        {/* المؤشرات الإحصائية السريعة (KPIs) */}
-        <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-gray-50/70 dark:bg-gray-900/40 border-b border-gray-200/70 dark:border-gray-800 shrink-0">
-          {/* كارت إجمالي الاختبارات */}
-          <div className="bg-white dark:bg-gray-800 p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-xs font-bold mb-1">
-              <span>الاختبارات المنجزة</span>
-              <i className="fas fa-tasks text-blue-500 text-base"></i>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-gray-900 dark:text-white">
-                {toEasternArabic(solvedLessonsCount)}
+          {/* قسم المؤشرات الإحصائية السريعة مع زر الطي والتوسيع */}
+          <div className="bg-gray-50/70 dark:bg-gray-900/40 border-b border-gray-200/70 dark:border-gray-800">
+            <div className="px-3 pt-2.5 pb-1 sm:px-5 sm:pt-3 flex items-center justify-between">
+              <span className="text-[11px] sm:text-xs font-black text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                <i className="fas fa-chart-pie text-indigo-500 text-xs"></i>
+                <span>المؤشرات الإحصائية السريعة</span>
               </span>
-              <span className="text-xs font-bold text-gray-400">
-                من {toEasternArabic(totalLessonsCount)} درس
-              </span>
-            </div>
-            <div className="mt-2 w-full bg-gray-100 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
-              <div 
-                className="bg-blue-600 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.round((solvedLessonsCount / (totalLessonsCount || 1)) * 100)}%` }}
-              ></div>
-            </div>
-          </div>
-
-          {/* كارت المتوسط العام */}
-          <div className="bg-white dark:bg-gray-800 p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-xs font-bold mb-1">
-              <span>المتوسط العام</span>
-              <i className="fas fa-chart-line text-emerald-500 text-base"></i>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <span className={`text-2xl font-black ${
-                avgScore >= 85 ? 'text-emerald-600' : avgScore >= 65 ? 'text-blue-600' : avgScore > 0 ? 'text-orange-500' : 'text-gray-400'
-              }`}>
-                {toEasternArabic(avgScore)}٪
-              </span>
-              <span className="text-[10px] font-bold text-gray-400">
-                {avgScore >= 85 ? 'ممتاز' : avgScore >= 75 ? 'جيد جداً' : avgScore >= 60 ? 'جيد' : avgScore > 0 ? 'يحتاج متابعة' : 'لم يبدأ'}
-              </span>
-            </div>
-            <div className="mt-2 w-full bg-gray-100 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
-              <div 
-                className={`h-full rounded-full transition-all duration-500 ${
-                  avgScore >= 85 ? 'bg-emerald-500' : avgScore >= 65 ? 'bg-blue-500' : 'bg-orange-500'
-                }`}
-                style={{ width: `${avgScore}%` }}
-              ></div>
-            </div>
-          </div>
-
-          {/* كارت أعلى وأدنى درجة */}
-          <div className="bg-white dark:bg-gray-800 p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-xs font-bold mb-1">
-              <span>أعلى وأدنى درجة</span>
-              <i className="fas fa-trophy text-amber-500 text-base"></i>
-            </div>
-            <div className="flex items-center justify-between mt-1">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-gray-400 font-bold">أعلى درجة</span>
-                <span className="text-base font-black text-emerald-600">
-                  {toEasternArabic(maxScore)}٪
-                </span>
-              </div>
-              <div className="h-6 w-px bg-gray-200 dark:bg-gray-700"></div>
-              <div className="flex flex-col">
-                <span className="text-[10px] text-gray-400 font-bold">أدنى درجة</span>
-                <span className="text-base font-black text-rose-600">
-                  {toEasternArabic(minScore)}٪
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* كارت لوحة الشرف والتصفيرات */}
-          <div className="bg-white dark:bg-gray-800 p-3.5 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-xs font-bold mb-1">
-              <span>لوحة الشرف</span>
-              <i className="fas fa-award text-purple-500 text-base"></i>
-            </div>
-            <div>
-              {missingHonorLessons.length === 0 && solvedLessonsCount > 0 ? (
-                <span className="text-xs font-black text-emerald-600 flex items-center gap-1">
-                  <i className="fas fa-check-circle"></i> مؤهل بامتياز 🏆
-                </span>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-amber-600 flex items-center gap-1">
-                    <i className="fas fa-exclamation-circle"></i> نواقص: {toEasternArabic(missingHonorLessons.length)}
-                  </span>
-                  {resetTests.length > 0 && (
-                    <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded">
-                      🔄 {toEasternArabic(resetTests.length)} تصفير
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            <span className="text-[10px] text-gray-400 font-bold mt-1">
-              {resetTests.length > 0 ? `تم إعادة المحاولات ${toEasternArabic(resetTests.length)} مرة` : 'سجل محاولات نقي بدون تصفير'}
-            </span>
-          </div>
-        </div>
-
-        {/* أشرطة التبويب الداخلية وتصفية الوحدات */}
-        <div className="p-3 bg-gray-50/50 dark:bg-gray-900/60 border-b border-gray-200 dark:border-gray-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1 bg-gray-200/80 dark:bg-gray-800 p-1 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setActiveTab('units')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'units'
-                  ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-xs'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-              }`}
-            >
-              <i className="fas fa-layer-group"></i>
-              <span>الأداء حسب الوحدات</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('timeline')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'timeline'
-                  ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-xs'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-              }`}
-            >
-              <i className="fas fa-history"></i>
-              <span>السجل الزمني ({toEasternArabic(student.tests?.length || 0)})</span>
-            </button>
-            {missingHonorLessons.length > 0 && (
               <button
                 type="button"
-                onClick={() => setActiveTab('missing')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-                  activeTab === 'missing'
-                    ? 'bg-rose-600 text-white shadow-xs'
-                    : 'text-rose-600 dark:text-rose-400 hover:text-rose-700'
-                }`}
+                onClick={() => setShowKpis(prev => !prev)}
+                className="text-[10px] sm:text-xs font-bold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-gray-200/60 dark:hover:bg-gray-800 transition-colors cursor-pointer"
               >
-                <i className="fas fa-exclamation-triangle"></i>
-                <span>النواقص ({toEasternArabic(missingHonorLessons.length)})</span>
+                <i className={`fas ${showKpis ? 'fa-chevron-up' : 'fa-chevron-down'} text-[9px]`}></i>
+                <span>{showKpis ? 'طي الإحصائيات' : 'عرض الإحصائيات'}</span>
               </button>
+            </div>
+
+            {showKpis && (
+              <div className="p-2.5 sm:p-5 pt-1 grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 animate-fade-in">
+                {/* كارت إجمالي الاختبارات */}
+                <div className="bg-white dark:bg-gray-800 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-[11px] sm:text-xs font-bold mb-1">
+                    <span>الاختبارات المنجزة</span>
+                    <i className="fas fa-tasks text-blue-500 text-xs sm:text-base"></i>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-lg sm:text-2xl font-black text-gray-900 dark:text-white">
+                      {toEasternArabic(solvedLessonsCount)}
+                    </span>
+                    <span className="text-[10px] sm:text-xs font-bold text-gray-400">
+                      من {toEasternArabic(totalLessonsCount)} درس
+                    </span>
+                  </div>
+                  <div className="mt-1.5 sm:mt-2 w-full bg-gray-100 dark:bg-gray-700 h-1 sm:h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-blue-600 h-full rounded-full transition-all duration-500" 
+                      style={{ width: `${Math.round((solvedLessonsCount / (totalLessonsCount || 1)) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* كارت المتوسط العام */}
+                <div className="bg-white dark:bg-gray-800 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-[11px] sm:text-xs font-bold mb-1">
+                    <span>المتوسط العام</span>
+                    <i className="fas fa-chart-line text-emerald-500 text-xs sm:text-base"></i>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-lg sm:text-2xl font-black ${
+                      avgScore >= 85 ? 'text-emerald-600' : avgScore >= 65 ? 'text-blue-600' : avgScore > 0 ? 'text-orange-500' : 'text-gray-400'
+                    }`}>
+                      {toEasternArabic(avgScore)}٪
+                    </span>
+                    <span className="text-[9px] sm:text-[10px] font-bold text-gray-400">
+                      {avgScore >= 85 ? 'ممتاز' : avgScore >= 75 ? 'جيد جداً' : avgScore >= 60 ? 'جيد' : avgScore > 0 ? 'يحتاج متابعة' : 'لم يبدأ'}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 sm:mt-2 w-full bg-gray-100 dark:bg-gray-700 h-1 sm:h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        avgScore >= 85 ? 'bg-emerald-500' : avgScore >= 65 ? 'bg-blue-500' : 'bg-orange-500'
+                      }`}
+                      style={{ width: `${avgScore}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* كارت أعلى وأدنى درجة */}
+                <div className="bg-white dark:bg-gray-800 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-[11px] sm:text-xs font-bold mb-1">
+                    <span>أعلى وأدنى درجة</span>
+                    <i className="fas fa-trophy text-amber-500 text-xs sm:text-base"></i>
+                  </div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] text-gray-400 font-bold">أعلى درجة</span>
+                      <span className="text-sm sm:text-base font-black text-emerald-600">
+                        {toEasternArabic(maxScore)}٪
+                      </span>
+                    </div>
+                    <div className="h-5 sm:h-6 w-px bg-gray-200 dark:bg-gray-700"></div>
+                    <div className="flex flex-col">
+                      <span className="text-[9px] text-gray-400 font-bold">أدنى درجة</span>
+                      <span className="text-sm sm:text-base font-black text-rose-600">
+                        {toEasternArabic(minScore)}٪
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* كارت لوحة الشرف والتصفيرات */}
+                <div className="bg-white dark:bg-gray-800 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 text-[11px] sm:text-xs font-bold mb-1">
+                    <span>لوحة الشرف</span>
+                    <i className="fas fa-award text-purple-500 text-xs sm:text-base"></i>
+                  </div>
+                  <div>
+                    {missingHonorLessons.length === 0 && solvedLessonsCount > 0 ? (
+                      <span className="text-[11px] sm:text-xs font-black text-emerald-600 flex items-center gap-1">
+                        <i className="fas fa-check-circle"></i> مؤهل بامتياز 🏆
+                      </span>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] sm:text-xs font-black text-amber-600 flex items-center gap-1">
+                          <i className="fas fa-exclamation-circle"></i> نواقص: {toEasternArabic(missingHonorLessons.length)}
+                        </span>
+                        {resetTests.length > 0 && (
+                          <span className="text-[9px] sm:text-[10px] font-bold text-rose-600 bg-rose-50 px-1 py-0.2 rounded">
+                            🔄 {toEasternArabic(resetTests.length)} تصفير
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold mt-1 truncate block">
+                    {resetTests.length > 0 ? `إعادة ${toEasternArabic(resetTests.length)} مرة` : 'سجل بدون تصفير'}
+                  </span>
+                </div>
+              </div>
             )}
           </div>
 
-          {/* قائمة تصفية الوحدات */}
-          {activeTab === 'units' && (
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* زر طي وعرض الكل */}
-              {selectedUnitId === 'all' && (
+          {/* أشرطة التبويب الداخلية وتصفية الوحدات (مثبتة في الأعلى أثناء التمرير) */}
+          <div className="sticky top-0 z-20 p-2 sm:p-3 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xs border-b border-gray-200 dark:border-gray-800 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
+            <div className="flex items-center gap-1 bg-gray-200/80 dark:bg-gray-800 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setActiveTab('units')}
+                className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'units'
+                    ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-xs'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+              >
+                <i className="fas fa-layer-group"></i>
+                <span>الأداء حسب الوحدات</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('timeline')}
+                className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'timeline'
+                    ? 'bg-white dark:bg-gray-700 text-primary dark:text-white shadow-xs'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
+                }`}
+              >
+                <i className="fas fa-history"></i>
+                <span>السجل الزمني ({toEasternArabic(student.tests?.length || 0)})</span>
+              </button>
+              {missingHonorLessons.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (expandedUnitIds.length === units.length) {
-                      setExpandedUnitIds([]);
-                    } else {
-                      setExpandedUnitIds(units.map(u => u.id));
-                    }
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                  title={expandedUnitIds.length === units.length ? "طي جميع الدروس في كل الوحدات" : "عرض جميع الدروس في كل الوحدات"}
+                  onClick={() => setActiveTab('missing')}
+                  className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    activeTab === 'missing'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-rose-600 dark:text-rose-400 hover:text-rose-700'
+                  }`}
                 >
-                  <i className={`fas ${expandedUnitIds.length === units.length ? 'fa-compress-alt text-amber-600' : 'fa-expand-alt text-blue-600'}`}></i>
-                  <span>{expandedUnitIds.length === units.length ? 'طي الكل' : 'عرض الكل'}</span>
+                  <i className="fas fa-exclamation-triangle"></i>
+                  <span>النواقص ({toEasternArabic(missingHonorLessons.length)})</span>
                 </button>
               )}
-
-              <div className="flex items-center gap-1.5">
-                <label className="text-xs font-bold text-gray-500 whitespace-nowrap">الوحدة:</label>
-                <select
-                  value={selectedUnitId}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setSelectedUnitId(val);
-                    if (val !== 'all') {
-                      setExpandedUnitIds([val]);
-                    }
-                  }}
-                  className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-xs font-bold rounded-lg px-2.5 py-1.5 outline-none focus:border-primary shadow-xs cursor-pointer"
-                >
-                  <option value="all">📁 جميع الوحدات ({toEasternArabic(units.length)})</option>
-                  {units.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
-          )}
-        </div>
 
-        {/* جسم العرض الرئيسي القابل للتمرير */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar">
+            {/* قائمة تصفية الوحدات */}
+            {activeTab === 'units' && (
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                {/* زر طي وعرض الكل */}
+                {selectedUnitId === 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (expandedUnitIds.length === units.length) {
+                        setExpandedUnitIds([]);
+                      } else {
+                        setExpandedUnitIds(units.map(u => u.id));
+                      }
+                    }}
+                    className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
+                    title={expandedUnitIds.length === units.length ? "طي جميع الدروس في كل الوحدات" : "عرض جميع الدروس في كل الوحدات"}
+                  >
+                    <i className={`fas ${expandedUnitIds.length === units.length ? 'fa-compress-alt text-amber-600' : 'fa-expand-alt text-blue-600'}`}></i>
+                    <span>{expandedUnitIds.length === units.length ? 'طي الكل' : 'عرض الكل'}</span>
+                  </button>
+                )}
+
+                <div className="flex items-center gap-1">
+                  <label className="text-[11px] sm:text-xs font-bold text-gray-500 whitespace-nowrap">الوحدة:</label>
+                  <select
+                    value={selectedUnitId}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setSelectedUnitId(val);
+                      if (val !== 'all') {
+                        setExpandedUnitIds([val]);
+                      }
+                    }}
+                    className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-[11px] sm:text-xs font-bold rounded-lg px-2 py-1 outline-none focus:border-primary shadow-xs cursor-pointer max-w-[130px] sm:max-w-none truncate"
+                  >
+                    <option value="all">📁 جميع الوحدات ({toEasternArabic(units.length)})</option>
+                    {units.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* محتوى التبويبات الفعلي */}
+          <div className="p-3 sm:p-5 space-y-4 flex-1">
           {/* تبويب 1: الأداء بحسب الوحدات */}
           {activeTab === 'units' && (
             <div className="space-y-4">
@@ -883,14 +907,15 @@ export const StudentAnalyticsModal: React.FC<StudentAnalyticsModalProps> = ({
               </div>
             </div>
           )}
+          </div>
         </div>
 
         {/* تذييل النافذة */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-850 border-t border-gray-200 dark:border-gray-800 flex justify-end shrink-0">
+        <div className="p-3 sm:p-4 bg-gray-50 dark:bg-gray-850 border-t border-gray-200 dark:border-gray-800 flex justify-end shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-6 py-2.5 bg-primary text-white font-black text-xs rounded-xl shadow-md hover:bg-gray-800 active:scale-95 transition-all cursor-pointer"
+            className="w-full sm:w-auto px-6 py-2 sm:py-2.5 bg-primary text-white font-black text-xs rounded-xl shadow-md hover:bg-gray-800 active:scale-95 transition-all cursor-pointer"
           >
             إغلاق وعودة
           </button>

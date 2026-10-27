@@ -24,16 +24,13 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
   const [viewMode, setViewMode] = useState<'alert' | 'details'>('alert');
   const [detailsFilter, setDetailsFilter] = useState<'all' | 'wrong' | 'correct' | 'essay' | 'mcq'>('all');
 
-  // استرجاع ودمج كامل أسئلة الاختبار (المقالية والاختيارية) إن كانت ناقصة في التسجيل القديم
-  const allResolvedQuestions = useMemo(() => {
-    if (!submission) return [];
-    let list: EssayReviewQuestionItem[] = [...(submission.questions || [])];
-
+  // تحديد الدرس المطابق من المنهج لاستخراج الفقرات والمفاهيم
+  const matchedLesson = useMemo(() => {
+    if (!submission) return null;
     const sourceData = (data && data.length > 0) ? data : undefined;
     const cleanQuizTitle = (submission.quizTitle || '').trim();
     const normQuizTitle = normalizeTextForMatching(cleanQuizTitle);
 
-    let matchedLesson: any = null;
     if (sourceData) {
       for (const u of sourceData) {
         if (!u.lessons) continue;
@@ -43,15 +40,11 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
           if (normQuizTitle && normalizeTextForMatching(les.title) === normQuizTitle) return true;
           return false;
         });
-        if (l) {
-          matchedLesson = l;
-          break;
-        }
+        if (l) return l;
       }
     }
 
-    // إذا لم نجد في data نبحث في defaultQuestionsData كخيار احتياطي
-    if (!matchedLesson && defaultQuestionsData && Array.isArray(defaultQuestionsData)) {
+    if (defaultQuestionsData && Array.isArray(defaultQuestionsData)) {
       for (const u of (defaultQuestionsData as any[])) {
         if (!u.lessons) continue;
         const l = u.lessons.find((les: any) => {
@@ -60,12 +53,24 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
           if (normQuizTitle && normalizeTextForMatching(les.title) === normQuizTitle) return true;
           return false;
         });
-        if (l) {
-          matchedLesson = l;
-          break;
-        }
+        if (l) return l;
       }
     }
+
+    return null;
+  }, [submission, data]);
+
+  // استرجاع ودمج كامل أسئلة الاختبار (المقالية والاختيارية) مع دمج الفقرات
+  const allResolvedQuestions = useMemo(() => {
+    if (!submission) return [];
+    let list: EssayReviewQuestionItem[] = (submission.questions || []).map(item => {
+      if (item.paragraph) return item;
+      const matchQ = matchedLesson?.questions?.find((mq: any) => normalizeTextForMatching(mq.q) === normalizeTextForMatching(item.questionText));
+      return {
+        ...item,
+        paragraph: matchQ?.paragraph || matchQ?.concept || item.concept || ''
+      };
+    });
 
     // إذا وُجد الدرس في المنهج ولديه أسئلة أكثر مما هو مسجل في submission (مثل أسئلة الاختيار من متعدد)
     if (matchedLesson && matchedLesson.questions && matchedLesson.questions.length > list.length) {
@@ -77,7 +82,6 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
                        (Array.isArray(lq.options) && lq.options.length === 2 && (lq.options.includes('صح') || lq.options.includes('خطأ')));
           const qMax = lq.maxScore || 1;
           
-          // الأسئلة التكميلية للعرض والمراجعة لا نمنحها درجات كاملة وهمية
           list.push({
             qIndex: lqIdx,
             questionText: lq.q,
@@ -88,7 +92,9 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
             teacherScore: 0,
             aiScore: 0,
             teacherFeedback: lq.reason || 'راجع نموذج الإجابة المعتمد لهذا السؤال.',
-            isApproved: true
+            isApproved: true,
+            paragraph: lq.paragraph || lq.concept || '',
+            concept: lq.concept || ''
           });
           existingTexts.add(normLq);
         }
@@ -96,7 +102,23 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
     }
 
     return list.sort((a, b) => a.qIndex - b.qIndex);
-  }, [submission, data]);
+  }, [submission, matchedLesson]);
+
+  // استخراج قائمة فقرات الدرس التي أخطأ فيها الطالب للمراجعة المركزة
+  const wrongParagraphs = useMemo(() => {
+    const set = new Set<string>();
+    allResolvedQuestions.forEach(q => {
+      const finalQScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
+      const isPassing = finalQScore >= Math.max(1, (q.maxScore || 1) * 0.6);
+      if (!isPassing) {
+        const para = (q.paragraph || q.concept || '').trim();
+        if (para && !para.startsWith('مراجعة عامة')) {
+          set.add(para);
+        }
+      }
+    });
+    return Array.from(set);
+  }, [allResolvedQuestions]);
 
   const maxScore = useMemo(() => {
     if (!submission) return 50;
@@ -439,6 +461,24 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
               </p>
             </div>
 
+            {/* فقرات وأجزاء الدرس التي تحتاج مراجعة وتركيز */}
+            {wrongParagraphs.length > 0 && (
+              <div className="w-full bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-3.5 sm:p-4 mb-4 text-right shadow-2xs">
+                <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-rose-800 dark:text-rose-300 mb-2">
+                  <i className="fas fa-exclamation-triangle text-rose-600 animate-pulse"></i>
+                  <span>أجزاء وفقرات الدرس المطلوب مراجعتها والتركيز عليها:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                  {wrongParagraphs.map((para, pIdx) => (
+                    <span key={pIdx} className="bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-200 border border-rose-300 dark:border-rose-800 px-3 py-1 rounded-xl text-xs font-black shadow-2xs flex items-center gap-1.5">
+                      <i className="fas fa-bookmark text-rose-500 text-[10px]"></i>
+                      <span>{para}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* أزرار الإجراءات */}
             <div className="w-full flex flex-col sm:flex-row items-center gap-2.5">
               <button
@@ -566,6 +606,23 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
               </button>
             </div>
 
+            {/* شريط الفقرات المطلوب مراجعتها في شاشة التفاصيل */}
+            {wrongParagraphs.length > 0 && (
+              <div className="mx-3.5 sm:mx-5 mt-2 p-3 bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40 rounded-xl text-right">
+                <div className="flex items-center gap-1.5 text-xs font-black text-rose-800 dark:text-rose-300 mb-1.5">
+                  <i className="fas fa-lightbulb text-amber-500"></i>
+                  <span>فقرات في هذا الدرس بحاجة لمراجعة دقيقة:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {wrongParagraphs.map((para, pIdx) => (
+                    <span key={pIdx} className="bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 px-2 py-0.5 rounded-lg text-[11px] font-black">
+                      📌 {para}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* محتوى الأسئلة الكامل وملاحظات المعلم */}
             <div className="p-3.5 sm:p-5 overflow-y-auto space-y-3.5 flex-1">
               {filteredQuestions.length === 0 ? (
@@ -626,6 +683,15 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
                           <FormatQuestionText text={q.questionText} isDarkMode={isDarkMode} />
                         </div>
                       </div>
+
+                      {/* فقرة الدرس المرتبطة بالسؤال من عمود الفقرة */}
+                      {(q.paragraph || q.concept) && (
+                        <div className="mb-2.5 px-3 py-1.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 flex items-center gap-2 text-xs font-black text-amber-900 dark:text-amber-300">
+                          <i className="fas fa-book-reader text-amber-600 shrink-0"></i>
+                          <span className="shrink-0 text-slate-500 dark:text-slate-400">الفقرة / الجزئية بالمنهج:</span>
+                          <span className="text-primary dark:text-amber-200 font-black">{q.paragraph || q.concept}</span>
+                        </div>
+                      )}
 
                       {/* إجابة الطالب */}
                       <div className={`mb-2.5 p-3 rounded-xl border ${

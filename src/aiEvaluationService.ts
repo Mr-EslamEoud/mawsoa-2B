@@ -696,12 +696,19 @@ ${modelAnswer}
         // إعداد توجيه تربوي مرن ومباشر للطالب
         let studentFeedback = parsed.studentFeedback;
         if (!studentFeedback) {
-          if (suggested >= maxScore * 0.9) {
-            studentFeedback = 'إجابة نموذجية ومكتملة العناصر، أحسنت وبارك الله فيك يا بطل! 🌟';
-          } else if (missing.length > 0) {
-            studentFeedback = `إجابة جيدة ومجهود طيب، ولكن ينقصك لاكتمال إجابتك النموذجية ذكر: (${missing.slice(0, 2).join('، ')}). ركز عليها يا بطل! 💡`;
+          const validMissing = missing
+            .filter(p => p && !p.includes('جميع العناصر') && !p.includes('جميع عناصر') && !p.includes('جميع النقاط'))
+            .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, '').trim())
+            .filter(Boolean);
+
+          if (suggested >= maxScore * 0.9 || validMissing.length === 0) {
+            studentFeedback = '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
+          } else if (suggested >= maxScore * 0.4) {
+            const missingListStr = validMissing.slice(0, 2).join('، ');
+            studentFeedback = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
           } else {
-            studentFeedback = 'إجابة مقبولة، يرجى مراجعة نموذج الإجابة المعتمد لمزيد من الدقة والتفصيل.';
+            const missingListStr = validMissing.slice(0, 2).join('، ');
+            studentFeedback = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
           }
         }
 
@@ -774,23 +781,22 @@ ${modelAnswer}
     : `الإجابة ضعيفة وتفتقر إلى معظم الشواهد والمفاهيم الواردة بالنموذج (${suggestedScore} من ${maxScore}).`;
 
   // إعداد توجيه تربوي مباشر ومرن ومخصص للطالب موضحاً النواقص المستخرجة من إجابته الفعلية
+  const validMissing = missingPoints
+    .filter(p => p && !p.includes('جميع العناصر') && !p.includes('جميع عناصر') && !p.includes('جميع النقاط'))
+    .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, '').trim())
+    .filter(Boolean);
+
   let studentFeedback = '';
-  if (matchRatio >= 0.85 || suggestedScore >= maxScore * 0.9) {
-    studentFeedback = 'إجابة نموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
-  } else if (matchRatio >= 0.4) {
-    const missingClean = missingPoints
-      .slice(0, 2)
-      .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, ''))
-      .join('، ');
-    studentFeedback = `إجابة جيدة ومجهود طيب، ولكن ينقصك لاكتمال إجابتك النموذجية توضيح: (${missingClean}). ركز على هذه النقاط يا بطل! 💡`;
-  } else if (matchRatio > 0) {
-    const missingClean = missingPoints
-      .slice(0, 2)
-      .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, ''))
-      .join('، ');
-    studentFeedback = `إجابتك ناقصة وتحتاج إلى تدقيق. يرجى مراجعة الدرس ونموذج الإجابة، حيث أغفلت ذكر: (${missingClean}) ⚠️`;
+  if (matchRatio >= 0.85 || suggestedScore >= maxScore * 0.9 || validMissing.length === 0) {
+    studentFeedback = '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
+  } else if (matchRatio >= 0.4 || suggestedScore >= maxScore * 0.4) {
+    const missingClean = validMissing.slice(0, 2).join('، ');
+    studentFeedback = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
+  } else if (matchRatio > 0 || suggestedScore > 0) {
+    const missingClean = validMissing.slice(0, 2).join('، ');
+    studentFeedback = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`;
   } else {
-    studentFeedback = 'إجابتك بعيدة عن المطلوب ولم تستوفِ مفاهيم السؤال، يرجى مراجعة شرح الدرس ونموذج الإجابة بدقة ⚠️';
+    studentFeedback = '⚠️ إجابتك بعيدة عن المطلوب ولم تستوفِ مفاهيم السؤال، يرجى مراجعة شرح الدرس ونموذج الإجابة بدقة.';
   }
 
   return {

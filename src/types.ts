@@ -163,6 +163,8 @@ export interface EssayReviewQuestionItem {
   teacherScore?: number;
   teacherFeedback?: string;
   isApproved?: boolean;
+  paragraph?: string;
+  concept?: string;
 }
 
 export interface StudentEssaySubmission {
@@ -177,6 +179,7 @@ export interface StudentEssaySubmission {
   finalScore?: number;
   maxPossibleScore?: number;
   studentType?: string;
+  isMistakesBankReleased?: boolean;
 }
 
 export interface PermanentMistakeItem {
@@ -207,5 +210,20 @@ export interface ExamSecuritySettings {
   maxTabSwitchStrikes: number;
   offlineModeEnabled: boolean;
 }
+
+export interface StudentRetakeDirective {
+  id: string;
+  studentPhone: string;
+  studentName: string;
+  lessonId: string;
+  lessonTitle: string;
+  retakeType: 'full' | 'essay_only';
+  date: string;
+  seen: boolean;
+  preservedMcqScore?: number;
+  preservedMcqAnswers?: any[];
+  maxPossibleScore?: number;
+}
+
 
 
