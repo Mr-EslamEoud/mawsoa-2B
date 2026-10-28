@@ -4,7 +4,7 @@ import App from './App.tsx';
 import './index.css';
 
 // حجب سجلات التصحيح والتتبع في بيئة الإنتاج لحماية خصوصية بيانات الطلاب
-if (import.meta.env.PROD) {
+if ((import.meta as any).env?.PROD) {
   console.debug = () => {};
 }
 

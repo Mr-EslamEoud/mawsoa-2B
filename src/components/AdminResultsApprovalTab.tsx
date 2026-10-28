@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { StudentEssaySubmission, Unit } from '../types';
-import { getPendingEssaySubmissions, savePendingEssaySubmission } from '../examConfigUtils';
+import { getPendingEssaySubmissions, savePendingEssaySubmission, hasWrittenEssayAnswers } from '../examConfigUtils';
 
 interface AdminResultsApprovalTabProps {
   data?: Unit[];
@@ -120,7 +120,7 @@ export const AdminResultsApprovalTab: React.FC<AdminResultsApprovalTabProps> = (
       } else {
         grp.pendingCount++;
         // فحص هل وضع المعلم درجات كمسودة
-        const hasDraftScores = sub.questions.some(q => q.teacherScore !== undefined);
+        const hasDraftScores = sub.isTeacherReviewed || sub.questions.some(q => q.teacherScore !== undefined);
         if (hasDraftScores) {
           grp.draftCount++;
         }
@@ -623,7 +623,8 @@ export const AdminResultsApprovalTab: React.FC<AdminResultsApprovalTabProps> = (
                           const maxSc = sub.maxPossibleScore || 50;
                           const currentScore = sub.finalScore ?? sub.questions.reduce((sum, q) => sum + (q.teacherScore ?? q.aiScore ?? 0), 0);
                           const perc = Math.round((currentScore / Math.max(1, maxSc)) * 100);
-                          const hasDraft = !sub.isFullyApproved && sub.questions.some(q => q.teacherScore !== undefined);
+                          const hasDraft = !sub.isFullyApproved && (sub.isTeacherReviewed || sub.questions.some(q => q.teacherScore !== undefined));
+                          const noEssayNeeded = !hasWrittenEssayAnswers(sub);
 
                           return (
                             <div
@@ -649,9 +650,17 @@ export const AdminResultsApprovalTab: React.FC<AdminResultsApprovalTabProps> = (
                                       ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
                                       : hasDraft 
                                         ? 'bg-purple-50 text-purple-800 border border-purple-200'
-                                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                        : noEssayNeeded
+                                          ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                          : 'bg-amber-50 text-amber-800 border border-amber-200'
                                   }`}>
-                                    {sub.isFullyApproved ? '✅ معتمد' : hasDraft ? '💾 مسودة مصححة' : '⏳ معلق'}
+                                    {sub.isFullyApproved 
+                                      ? '✅ معتمد' 
+                                      : hasDraft 
+                                        ? '💾 مسودة مصححة' 
+                                        : noEssayNeeded 
+                                          ? '⚡ جاهز (بدون مقالي)' 
+                                          : '⏳ بانتظار تصحيح المقالي'}
                                   </span>
                                 </div>
                                 <div className="text-[11px] text-gray-500 font-bold mt-0.5 flex items-center gap-2">

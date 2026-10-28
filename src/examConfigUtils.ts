@@ -1,4 +1,4 @@
-import { Question, ExamConfig, GlobalExamConfig, DialectPolicy, StudentEssaySubmission, EssayReviewQuestionItem, ExamLeaderboardPolicy, ExamScheduleTarget, ExamAudienceSchedule, StudentRetakeDirective } from "./types";
+import { Question, ExamConfig, GlobalExamConfig, DialectPolicy, StudentEssaySubmission, EssayReviewQuestionItem, ExamLeaderboardPolicy, ExamScheduleTarget, ExamAudienceSchedule, StudentRetakeDirective, Unit } from "./types";
 export { type DialectPolicy, type GlobalExamConfig, type ExamLeaderboardPolicy, type ExamScheduleTarget, type ExamAudienceSchedule, type StudentRetakeDirective };
 
 export const GLOBAL_EXAM_CONFIG_KEY = 'kanz_global_exam_config';
@@ -610,6 +610,131 @@ export const removeRetakeDirective = (directiveId: string): void => {
     const filtered = all.filter(item => item.id !== directiveId);
     localStorage.setItem(RETAKE_DIRECTIVES_STORAGE_KEY, JSON.stringify(filtered));
   } catch (e) {}
+};
+
+/**
+ * فحص هل قام الطالب بكتابة أي إجابة مقالية فعلية
+ * (إذا كان كل المقالي فارغاً أو مسحوباً لمخالفات -> يعود false ليذهب مباشرة للاعتماد دون المرور بتصحيح المقالي)
+ */
+export const hasWrittenEssayAnswers = (sub: StudentEssaySubmission): boolean => {
+  if (!sub || !Array.isArray(sub.questions)) return false;
+  const essayQs = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+  if (essayQs.length === 0) return false;
+  
+  return essayQs.some(q => 
+    q.studentText && 
+    q.studentText.trim() !== '' && 
+    !q.studentText.includes('لم يتم الإجابة') && 
+    !q.studentText.includes('سُحبت')
+  );
+};
+
+/**
+ * فحص هل إجابة الطالب تفتقر لترقيم وتنسيق الفقرات
+ * (لإرشاد الطالب تربوياً بضرورة ترقيم إجابته لامتحانات الثانوية العامة)
+ */
+export const checkNeedsFormattingGuidance = (studentText: string): boolean => {
+  if (!studentText || studentText.trim().length < 25) return false;
+  const text = studentText.trim();
+  // هل يحتوي النص على أرقام عناصر (1. أو 1- أو أولاً أو ثانياً أو تعداد نقطي)
+  const hasNumbering = /[1-9١-٩][\.\-\)\:]|أولاً|ثانياً|ثالثاً|رابعاً|خامساً|\n[\s]*[\-\•\*\d]/.test(text);
+  // هل مقسم لفقرات بأسطر واضحة
+  const hasMultipleParagraphs = text.split('\n').filter(p => p.trim().length > 10).length >= 2;
+  
+  return !hasNumbering && !hasMultipleParagraphs;
+};
+
+const normTextHelper = (t: string): string => {
+  if (!t) return '';
+  return t
+    .replace(/[«»"“”'`ـ\u0640\u064B-\u065F]/g, '')
+    .replace(/[أإآا]/g, 'ا')
+    .replace(/[ةه]/g, 'ه')
+    .replace(/[يى]/g, 'ي')
+    .replace(/[^\u0621-\u064A0-9a-zA-Z]/g, '')
+    .toLowerCase()
+    .trim();
+};
+
+/**
+ * العثور على الدرس في المنهج بناءً على اسم الامتحان أو معرفه
+ */
+export const findLessonForQuizInUnits = (quizTitle: string, lessonId?: string, allData?: Unit[]): any => {
+  if (!allData || !Array.isArray(allData)) return null;
+  const cleanQTitle = (quizTitle || '').trim();
+  const normQuizTitle = normTextHelper(cleanQTitle);
+
+  for (const u of allData) {
+    if (!u.lessons || !Array.isArray(u.lessons)) continue;
+    const l = u.lessons.find(les => {
+      if (lessonId && (les.id === lessonId || les.id.trim() === lessonId.trim())) return true;
+      if (cleanQTitle && les.title.trim() === cleanQTitle) return true;
+      if (normQuizTitle) {
+        const normLTitle = normTextHelper(les.title);
+        if (normLTitle === normQuizTitle || normLTitle.includes(normQuizTitle) || normQuizTitle.includes(normLTitle)) {
+          return true;
+        }
+      }
+      return false;
+    });
+    if (l) return l;
+  }
+  return null;
+};
+
+/**
+ * إكمال الأسئلة المقالية الناقصة للتسليم (حل مشكلة ترك الطالب لسؤال مقالي وظهوره بسؤال واحد)
+ * يضمن ظهور كافة أسئلة الامتحان المقالية في شاشة التصحيح والاعتماد مع رصد (0) للسؤال المتروك
+ */
+export const ensureCompleteEssayQuestions = (sub: StudentEssaySubmission, allData?: Unit[]): StudentEssaySubmission => {
+  if (!sub) return sub;
+  const lesson = findLessonForQuizInUnits(sub.quizTitle, sub.lessonId, allData);
+  if (!lesson || !lesson.questions || !Array.isArray(lesson.questions)) {
+    return sub;
+  }
+
+  const lessonEssayQs = lesson.questions.filter((q: any) => q.type === 'essay');
+  if (lessonEssayQs.length === 0) return sub;
+
+  const currentQuestions = [...(sub.questions || [])];
+  let hasMissing = false;
+
+  lessonEssayQs.forEach((lq: any, lqi: number) => {
+    const normLq = normTextHelper(lq.q);
+    const existing = currentQuestions.find(sq => 
+      sq.questionText.trim() === lq.q.trim() || 
+      normTextHelper(sq.questionText) === normLq
+    );
+
+    if (!existing) {
+      hasMissing = true;
+      currentQuestions.push({
+        qIndex: lqi,
+        questionText: lq.q.trim(),
+        essayType: lq.essayType || detectEssayType(lq.q).label,
+        modelAnswer: lq.answer || lq.reason || (lq as any).modelAnswer || '',
+        studentText: 'لم يتم الإجابة على هذا السؤال',
+        maxScore: lq.maxScore || 2,
+        teacherScore: 0,
+        aiScore: 0,
+        teacherFeedback: 'لم يتم الإجابة على هذا السؤال (0 من 2)',
+        aiFeedback: 'لم يتم الإجابة على هذا السؤال (0 من 2)',
+        isApproved: false
+      });
+    }
+  });
+
+  if (!hasMissing) return sub;
+
+  const earned = currentQuestions.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
+  const totalMax = currentQuestions.reduce((sum, q) => sum + (Number(q.maxScore) || 2), 0);
+
+  return {
+    ...sub,
+    questions: currentQuestions,
+    finalScore: earned,
+    maxPossibleScore: Math.max(sub.maxPossibleScore || 0, totalMax)
+  };
 };
 
 

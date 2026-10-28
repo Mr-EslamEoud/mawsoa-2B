@@ -47,6 +47,7 @@ import { LessonPdfManagerModal } from './components/LessonPdfManagerModal';
 import { StudentAnalyticsModal } from './components/StudentAnalyticsModal';
 import { TeacherExamSandboxModal } from './components/TeacherExamSandboxModal';
 import { AdminEssayReviewTab } from './components/AdminEssayReviewTab';
+import { AdminApproveResultsTab } from './components/AdminApproveResultsTab';
 import { AdminExamScheduleTab } from './components/AdminExamScheduleTab';
 import { StudentApprovedEssayModal } from './components/StudentApprovedEssayModal';
 import { StudentEssayListModal } from './components/StudentEssayListModal';
@@ -54,7 +55,7 @@ import { MistakesNotebookModal } from './components/MistakesNotebookModal';
 import { FaithPrayerModal } from './components/FaithPrayerModal';
 import { FaithFloatingToast } from './components/FaithFloatingToast';
 import { StudentRetakeNotificationModal } from './components/StudentRetakeNotificationModal';
-import { getGeminiApiKey, setGeminiApiKey, evaluateEssayAnswer } from './aiEvaluationService';
+import { getGeminiApiKey, setGeminiApiKey, getGroqApiKey, setGroqApiKey, evaluateEssayAnswer } from './aiEvaluationService';
 import { 
   getExamConfig, 
   getAllExamConfigs,
@@ -73,9 +74,10 @@ import {
   getStudentUnseenRetakeDirective,
   markRetakeDirectiveSeen,
   getActiveRetakeDirectiveForLesson,
-  removeRetakeDirective
+  removeRetakeDirective,
+  saveRetakeDirective
 } from './examConfigUtils';
-import { StudentEssaySubmission, PermanentMistakeItem, StudentRetakeDirective } from './types';
+import { StudentEssaySubmission, PermanentMistakeItem, StudentRetakeDirective, EssayReviewQuestionItem } from './types';
 import { usePWA } from './usePWA';
 
 
@@ -390,6 +392,11 @@ export default function App() {
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
   const [geminiKeyStatus, setGeminiKeyStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
+  const [groqKeyInput, setGroqKeyInput] = useState<string>(() => getGroqApiKey());
+  const [showGroqKey, setShowGroqKey] = useState<boolean>(false);
+  const [isTestingGroqKey, setIsTestingGroqKey] = useState<boolean>(false);
+  const [groqKeyStatus, setGroqKeyStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
   const handleTestGeminiKey = async () => {
     if (!geminiKeyInput.trim()) return;
     setIsTestingKey(true);
@@ -430,14 +437,63 @@ export default function App() {
       setIsTestingKey(false);
     }
   };
-  
-  const pendingEssayCount = useMemo(() => {
+
+  const handleTestGroqKey = async () => {
+    if (!groqKeyInput.trim()) return;
+    setIsTestingGroqKey(true);
+    setGroqKeyStatus(null);
     try {
-      return getPendingEssaySubmissions().filter(s => !s.isFullyApproved).length;
+      const res = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${groqKeyInput.trim()}`
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.data && data.data.length > 0) {
+        setGroqKeyStatus({ type: 'success', msg: '✅ متصل بنجاح بسيرفرات Groq AI (Llama 3.3 جاهز ونشط 🚀)' });
+        setGroqApiKey(groqKeyInput.trim());
+      } else {
+        const errMsg = data.error?.message || '';
+        setGroqKeyStatus({ type: 'error', msg: `❌ المفتاح غير صالح: ${errMsg.slice(0, 45) || 'تأكد من نسخه بدقة'}` });
+      }
+    } catch (e) {
+      setGroqKeyStatus({ type: 'error', msg: '❌ تعذر الاتصال بسيرفر Groq، تحقق من الإنترنت' });
+    } finally {
+      setIsTestingGroqKey(false);
+    }
+  };
+  
+  const { needsGradingCount, readyToApproveCount } = useMemo(() => {
+    try {
+      const subs = getPendingEssaySubmissions().filter(s => !s.isFullyApproved);
+      let needsGrading = 0;
+      let readyToApprove = 0;
+
+      subs.forEach(s => {
+        const essayQs = (s.questions || []).filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+        const isAllBlankOrTerminated = essayQs.length === 0 || essayQs.every(q => 
+          !q.studentText || 
+          q.studentText.trim() === '' || 
+          q.studentText.includes('لم يتم الإجابة') || 
+          q.studentText.includes('سُحبت')
+        );
+
+        if (isAllBlankOrTerminated || s.isAutoTerminated) {
+          readyToApprove++;
+        } else if (s.isTeacherReviewed) {
+          readyToApprove++;
+        } else {
+          needsGrading++;
+        }
+      });
+
+      return { needsGradingCount: needsGrading, readyToApproveCount: readyToApprove };
     } catch(e) {
-      return 0;
+      return { needsGradingCount: 0, readyToApproveCount: 0 };
     }
   }, [adminActiveTab]);
+
+  const [essayReviewInitialQuiz, setEssayReviewInitialQuiz] = useState<string | undefined>(undefined);
 
   // حالة الإشعارات والنتائج المقالية المعتمدة للطلاب
   const [approvedSubForModal, setApprovedSubForModal] = useState<StudentEssaySubmission | null>(null);
@@ -477,6 +533,10 @@ export default function App() {
       const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
       const res = await fetch(API_URL, {
         method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
         body: JSON.stringify({
           action: 'saveEssaySubmission',
           date: new Date().toLocaleString('ar-EG'),
@@ -631,6 +691,13 @@ export default function App() {
   }, [data, publishedLessons]); 
   const [currentQIndex, setCurrentQIndex] = useState<number>(0);
   const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
+  const userAnswersRef = useRef<UserAnswer[]>([]);
+  userAnswersRef.current = userAnswers;
+
+  const activeLessonRef = useRef<Lesson | null>(null);
+  activeLessonRef.current = activeLesson;
+
+  const finishQuizInternalRef = useRef<(isAutoTerminatedByWarnings?: boolean) => void>(() => {});
   const [isDrawingMode, setIsDrawingMode] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -1206,7 +1273,10 @@ export default function App() {
           answer: item.modelAnswer || '',
           reason: item.teacherFeedback || item.aiFeedback || '',
           type: 'essay',
-          essayType: item.essayType
+          essayType: item.essayType,
+          concept: item.concept || '',
+          paragraph: item.paragraph || '',
+          section: ''
         };
 
         mistakes.push({
@@ -1287,7 +1357,7 @@ export default function App() {
     }
 
     if (targetLesson) {
-      startLesson(targetLesson);
+      startQuizForLesson(targetLesson);
     } else {
       setScreen('home');
       showAlert(`🌟 يمكنك الآن بدء امتحان: ${dir.lessonTitle}`);
@@ -1623,23 +1693,166 @@ export default function App() {
     }
   }, [skippedQuestions.length, screen]);
 
+  // إدارة سجل تاريخ تنقلات لوحة الإدارة
+  const adminTabHistoryRef = useRef<string[]>(['results']);
+
   useEffect(() => {
-    window.history.pushState({ screen: 'home' }, '');
+    if (screen === 'admin') {
+      const h = adminTabHistoryRef.current;
+      if (h[h.length - 1] !== adminActiveTab) {
+        h.push(adminActiveTab);
+      }
+    }
+  }, [adminActiveTab, screen]);
+
+  // إدارة زر الرجوع في المتصفح وهواتف أندرويد (Popstate Handler)
+  useEffect(() => {
+    // دفع حالة للتاريخ لتسجيل الصفحة الحالية ومنع الخروج المفاجئ
+    window.history.pushState({ app: 'elkanz', screen }, '');
+
     const handlePopState = () => {
+      // إعادة تثبيت حالة لمنع المتصفح من إغلاق التبويب فوراً
+      window.history.pushState({ app: 'elkanz', screen }, '');
+
+      // 1. فحص النوافذ المنبثقة أولاً وإغلاقها خطوة بخطوة
+      if (dialog.isOpen) {
+        setDialog(prev => ({ ...prev, isOpen: false }));
+        return;
+      }
+      if (approvedSubForModal) {
+        setApprovedSubForModal(null);
+        return;
+      }
+      if (showStudentEssayListModal) {
+        setShowStudentEssayListModal(false);
+        return;
+      }
+      if (showMistakesNotebookModal) {
+        setShowMistakesNotebookModal(false);
+        return;
+      }
+      if (showCertModal) {
+        setShowCertModal(false);
+        return;
+      }
+      if (showLeaderboard) {
+        setShowLeaderboard(false);
+        return;
+      }
+      if (showWhyModal) {
+        setShowWhyModal(false);
+        return;
+      }
+      if (showRegisterModal) {
+        setShowRegisterModal(false);
+        return;
+      }
+      if (showWelcomeSubscribeModal) {
+        setShowWelcomeSubscribeModal(false);
+        return;
+      }
+      if (showUnpaidModal) {
+        setShowUnpaidModal(false);
+        return;
+      }
+      if (showManualOnlineModal) {
+        setShowManualOnlineModal(false);
+        return;
+      }
+      if (showOpeningPrayer) {
+        setShowOpeningPrayer(false);
+        return;
+      }
+      if (preSubmitReviewModalOpen) {
+        setPreSubmitReviewModalOpen(false);
+        return;
+      }
+      if (showSkippedModal) {
+        setShowSkippedModal(false);
+        return;
+      }
+      if (tabSwitchWarningModal) {
+        setTabSwitchWarningModal(null);
+        return;
+      }
+
+      // 2. إذا كان المستخدم في شاشة الاختبار
       if (screen === 'quiz') {
-        showConfirm('هل أنت متأكد من مغادرة الاختبار؟\nسيتم حفظ تقدمك الحالي.', () => setScreen('index'));
-        window.history.pushState({ screen: 'quiz' }, ''); 
+        if (isReviewMode) {
+          setIsReviewMode(false);
+          setScreen('result');
+          return;
+        }
+        showConfirm('هل أنت متأكد من مغادرة الاختبار؟\nسيتم حفظ تقدمك الحالي في هذا الاختبار.', () => {
+          setScreen('index');
+        });
+        return;
       }
-      else if (screen === 'index') {
-        window.history.pushState({ screen: 'index' }, ''); 
+
+      // 3. إذا كان في شاشة النتيجة
+      if (screen === 'result') {
+        setScreen('index');
+        return;
       }
-      else if (screen === 'result') setScreen('index');
-      else if (screen === 'admin') setScreen('home');
-      else window.history.pushState(null, ''); 
+
+      // 4. إذا كان في شاشة الخرائط التفاعلية
+      if (screen === 'maps') {
+        setScreen('index');
+        setActiveMapUrl(null);
+        return;
+      }
+
+      // 5. إذا كان المعلم في لوحة الإدارة (منع الطرد للشاشة الرئيسية والتنقل بين التبويبات)
+      if (screen === 'admin') {
+        const h = adminTabHistoryRef.current;
+        if (h.length > 1) {
+          h.pop(); // إزالة التبويب الحالي
+          const prevTab = h[h.length - 1];
+          setAdminActiveTab(prevTab);
+        } else {
+          // إذا كان في التبويب الأساسي، العودة لشاشة الطالب
+          showConfirm('هل تريد الخروج من لوحة الإدارة والعودة لواجهة الطالب؟', () => {
+            setScreen('index');
+          });
+        }
+        return;
+      }
+
+      // 6. إذا كان الطالب في الفهرس الرئيسي (index)
+      if (screen === 'index') {
+        showConfirm('هل تريد تسجيل الخروج والعودة للشاشة الرئيسية؟', () => {
+          setScreen('home');
+        });
+        return;
+      }
+
+      // 7. الشاشة الترحيبية (home)
+      if (screen === 'home') {
+        window.history.back();
+      }
     };
+
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [screen]);
+  }, [
+    screen,
+    isReviewMode,
+    dialog.isOpen,
+    approvedSubForModal,
+    showStudentEssayListModal,
+    showMistakesNotebookModal,
+    showCertModal,
+    showLeaderboard,
+    showWhyModal,
+    showRegisterModal,
+    showWelcomeSubscribeModal,
+    showUnpaidModal,
+    showManualOnlineModal,
+    showOpeningPrayer,
+    preSubmitReviewModalOpen,
+    showSkippedModal,
+    tabSwitchWarningModal
+  ]);
   
   useEffect(() => {
     if (screen === 'quiz' && activeLesson && activeLesson.id !== 'mistakes_bank') {
@@ -1756,7 +1969,9 @@ export default function App() {
             const currentStrikes = tabSwitchStrikesRef.current;
             setTabSwitchStrikes(currentStrikes);
             if (currentStrikes > securitySettings.maxTabSwitchStrikes) {
-              finishQuizInternal();
+              if (finishQuizInternalRef.current) {
+                finishQuizInternalRef.current(true);
+              }
               showAlert(`🚫 تم إنهاء وسحب ورقة الامتحان تلقائياً لتكرار مغادرة شاشة الاختبار (${securitySettings.maxTabSwitchStrikes} مخالفات)!`);
             }
           }
@@ -1900,6 +2115,10 @@ export default function App() {
           if(result.geminiApiKey && typeof result.geminiApiKey === 'string' && result.geminiApiKey.trim()) {
             setGeminiKeyInput(result.geminiApiKey.trim());
             setGeminiApiKey(result.geminiApiKey.trim());
+          }
+          if(result.groqApiKey && typeof result.groqApiKey === 'string' && result.groqApiKey.trim()) {
+            setGroqKeyInput(result.groqApiKey.trim());
+            setGroqApiKey(result.groqApiKey.trim());
           }
           if(result.certSettings) {
             try {
@@ -2593,9 +2812,10 @@ export default function App() {
           try {
             const essayRes = await fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}&t=${noCache}`);
             const essayData = await essayRes.json();
+            let myRows: any[] = [];
             if (essayData && essayData.status === 'success' && Array.isArray(essayData.data)) {
               const myPhone = formatPhoneStr(inputPhone);
-              const myRows = essayData.data.filter((row: any) => formatPhoneStr(row.studentPhone) === myPhone);
+              myRows = essayData.data.filter((row: any) => formatPhoneStr(row.studentPhone) === myPhone);
               if (myRows.length > 0) {
                 const groupedMap = new Map<string, any>();
                 myRows.forEach((row: any) => {
@@ -2646,12 +2866,66 @@ export default function App() {
                 localList.forEach(ls => mergedMap.set(`${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`, ls));
                 groupedMap.forEach(grp => {
                   grp.isFullyApproved = grp.questions.length > 0 && grp.questions.every((q: any) => q.isApproved);
-                  grp.finalScore = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore || 0), 0);
                   const mKey = `${myPhone}___${grp.quizTitle}`;
-                  mergedMap.set(mKey, grp);
+                  const existingLocal = mergedMap.get(mKey);
+                  if (existingLocal && existingLocal.questions && existingLocal.questions.length > grp.questions.length) {
+                    // الطالب لديه الأسئلة كاملة (الموضوعية والمقالية) محلياً: نحدّث فقط درجات المقالي وحالة الاعتماد دون مسح الموضوعي
+                    existingLocal.isFullyApproved = grp.isFullyApproved;
+                    if (grp.isFullyApproved) {
+                      existingLocal.isMistakesBankReleased = true;
+                    }
+                    grp.questions.forEach((gq: any) => {
+                      const matchedQ = existingLocal.questions.find((lq: any) => 
+                        lq.questionText.trim() === gq.questionText.trim() ||
+                        (lq.essayType !== 'اختر من متعدد' && lq.essayType !== 'صح وخطأ' && lq.qIndex === gq.qIndex)
+                      );
+                      if (matchedQ) {
+                        matchedQ.teacherScore = gq.teacherScore;
+                        matchedQ.teacherFeedback = gq.teacherFeedback;
+                        matchedQ.isApproved = gq.isApproved;
+                      }
+                    });
+                    // حساب المجموع الكلي الدقيق للامتحان (الموضوعي + المقالي)
+                    const totalEarned = existingLocal.questions.reduce((sum: number, q: any) => sum + (Number(q.teacherScore) || 0), 0);
+                    existingLocal.finalScore = totalEarned;
+                    mergedMap.set(mKey, existingLocal);
+                  } else {
+                    grp.finalScore = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore || 0), 0);
+                    mergedMap.set(mKey, grp);
+                  }
                 });
                 localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(Array.from(mergedMap.values())));
               }
+            }
+
+            // تنظيف أي تسليمات معلقة لامتحانات لا تحتوي على مقالي أصلاً (مثل الدرس الأول)
+            // وإعادة إرسال أي تسليمات مقالية معلقة لم تصل السحابة
+            const rawLocalSubs = getPendingEssaySubmissions();
+            if (rawLocalSubs.length > 0) {
+              const myPhone = formatPhoneStr(inputPhone);
+              const validSubs: StudentEssaySubmission[] = [];
+              for (const ls of rawLocalSubs) {
+                if (formatPhoneStr(ls.studentPhone) !== myPhone) {
+                  validSubs.push(ls);
+                  continue;
+                }
+                let matchedLesson: Lesson | null = null;
+                for (const u of builtData) {
+                  const found = u.lessons.find(l => l.id === ls.lessonId || l.title.trim() === ls.quizTitle.trim());
+                  if (found) { matchedLesson = found; break; }
+                }
+                const hasEssay = matchedLesson ? matchedLesson.questions.some(q => q.type === 'essay') : false;
+                if (matchedLesson && !hasEssay) {
+                  // هذا الاختبار موضوعي بالكامل (لا مقالي فيه) - نحذفه من قائمة المقالي المعلقة
+                  continue;
+                }
+                // إذا كان الامتحان يحتوي على مقالي ومعلق محلياً فقط دون وجوده في السحابة، نعيد إرساله فوراً
+                if (hasEssay && (!myRows || !myRows.some((r: any) => String(r.quizTitle || '').trim() === ls.quizTitle.trim()))) {
+                  syncEssaySubmissionToCloud(ls);
+                }
+                validSubs.push(ls);
+              }
+              localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(validSubs));
             }
           } catch(e) {}
         }
@@ -2729,6 +3003,10 @@ export default function App() {
           if(sData.geminiApiKey && typeof sData.geminiApiKey === 'string' && sData.geminiApiKey.trim()) {
             setGeminiKeyInput(sData.geminiApiKey.trim());
             setGeminiApiKey(sData.geminiApiKey.trim());
+          }
+          if(sData.groqApiKey && typeof sData.groqApiKey === 'string' && sData.groqApiKey.trim()) {
+            setGroqKeyInput(sData.groqApiKey.trim());
+            setGroqApiKey(sData.groqApiKey.trim());
           }
           if(sData.certSettings) {
             try {
@@ -3294,7 +3572,7 @@ export default function App() {
             }
           }
 
-          if (!grouped[correctName]) grouped[correctName] = { quizzes: {}, firstAttemptIndices: {} };
+          if (!grouped[correctName]) grouped[correctName] = { quizzes: {}, firstAttemptIndices: {}, latestTestOriginalIndex: -1 };
           
           if (isAmbiguousOldQuiz(r.quiz)) return;
 
@@ -3895,6 +4173,7 @@ export default function App() {
       localStorage.setItem('publishedLessons_init', 'true');
       const allConfigs = getAllExamConfigs();
       const currentGeminiKey = geminiKeyInput ? geminiKeyInput.trim() : getGeminiApiKey();
+      const currentGroqKey = groqKeyInput ? groqKeyInput.trim() : getGroqApiKey();
       await fetch(API_URL, {
         method: 'POST',
         body: JSON.stringify({
@@ -3908,6 +4187,7 @@ export default function App() {
           examTotalMinutes: examTotalMinutes,
           publishedLessons: JSON.stringify(publishedLessons),
           geminiApiKey: currentGeminiKey,
+          groqApiKey: currentGroqKey,
           showMistakesNotebook: showMistakesNotebookSetting,
           showResetButtons: showResetButtonSetting,
           certSettings: JSON.stringify(certSettings),
@@ -3928,6 +4208,7 @@ export default function App() {
     try {
       const allConfigs = getAllExamConfigs();
       const currentGeminiKey = geminiKeyInput ? geminiKeyInput.trim() : getGeminiApiKey();
+      const currentGroqKey = groqKeyInput ? groqKeyInput.trim() : getGroqApiKey();
       const res = await fetch(API_URL, {
         method: 'POST',
         body: JSON.stringify({
@@ -3941,6 +4222,7 @@ export default function App() {
           examTotalMinutes: examTotalMinutes,
           publishedLessons: JSON.stringify(publishedLessons),
           geminiApiKey: currentGeminiKey,
+          groqApiKey: currentGroqKey,
           showMistakesNotebook: showMistakesNotebookSetting,
           showResetButtons: showResetButtonSetting,
           certSettings: JSON.stringify(certSettings),
@@ -5440,7 +5722,7 @@ function doPost(e) {
           if (cleanPhone(eData[ei][2]) === targetPhone && (!targetQuiz || String(eData[ei][3]).trim() === targetQuiz)) {
             if (payload.teacherScore !== undefined) essaySheet.getRange(ei + 1, 7).setValue(payload.teacherScore);
             if (payload.teacherFeedback !== undefined) essaySheet.getRange(ei + 1, 8).setValue(payload.teacherFeedback);
-            essaySheet.getRange(ei + 1, 9).setValue(payload.isApproved ? "معتمد" : "قيد المراجعة");
+            essaySheet.getRange(ei + 1, 9).setValue(payload.status ? payload.status : (payload.isApproved ? "معتمد" : "قيد المراجعة"));
           }
         }
         return respondJSON({status: 'success'});
@@ -7202,6 +7484,7 @@ function initAllSheetsMenu() {
           examTotalMinutes: examTotalMinutes,
           publishedLessons: JSON.stringify(publishedLessons),
           geminiApiKey: geminiKeyInput.trim(),
+          groqApiKey: groqKeyInput.trim(),
           showMistakesNotebook: showMistakesNotebookSetting,
           showResetButtons: showResetButtonSetting,
           certSettings: JSON.stringify(certSettings),
@@ -7223,6 +7506,9 @@ function initAllSheetsMenu() {
       localStorage.setItem('app_exam_security_settings', JSON.stringify(securitySettings));
       if (geminiKeyInput.trim()) {
         setGeminiApiKey(geminiKeyInput.trim());
+      }
+      if (groqKeyInput.trim()) {
+        setGroqApiKey(groqKeyInput.trim());
       }
       setPackagePrices(editPrices);
       setPlatformFee(editPrices.monthly + ' جنيهاً');
@@ -7334,7 +7620,14 @@ function initAllSheetsMenu() {
       apiKey: SECRET_API_KEY 
     };
     try {
-      const response = await fetch(API_URL, { method: 'POST', body: JSON.stringify(payload) });
+      const response = await fetch(API_URL, { 
+        method: 'POST', 
+        keepalive: true, 
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload) 
+      });
       if (!response.ok) throw new Error('Network error');
       const result = await response.json();
       if (result.status !== 'success') throw new Error('Server error');
@@ -7444,16 +7737,19 @@ function initAllSheetsMenu() {
     }
   };
 
-  const finishQuizInternal = () => {
-    if (activeLesson) {
-      const finalAnswers = [...userAnswers];
+  const finishQuizInternal = (isAutoTerminatedByWarnings: boolean = false) => {
+    const currentLesson = activeLessonRef.current || activeLesson;
+    if (currentLesson) {
+      const currentAnswers = userAnswersRef.current && userAnswersRef.current.length > 0 ? userAnswersRef.current : userAnswers;
+      const finalAnswers = [...currentAnswers];
       const newMistakesToAdd: Question[] = [];
       
-      activeLesson.questions.forEach((q, idx) => {
+      currentLesson.questions.forEach((q, idx) => {
         if (!finalAnswers[idx]) {
           finalAnswers[idx] = {
             isCorrect: false,
-            selected: 'لم يتم الإجابة (انتهى الوقت)',
+            selected: isAutoTerminatedByWarnings ? 'لم يتم الإجابة (سُحبت الورقة لمخالفات أمنية)' : 'لم يتم الإجابة (انتهى الوقت)',
+            studentAnswerText: isAutoTerminatedByWarnings ? 'لم يتم الإجابة (سُحبت ورقة الامتحان لتجاوز مخالفات الخروج)' : '',
             concept: q.concept,
             paragraph: q.paragraph,
             type: q.type === 'essay' ? 'essay' : 'mcq'
@@ -7470,45 +7766,45 @@ function initAllSheetsMenu() {
       })();
       const pendingSubs = getPendingEssaySubmissions();
       const hasPriorEssaySub = pendingSubs.some(s => 
-        (s.lessonId === activeLesson.id || s.quizTitle?.trim() === activeLesson.title?.trim()) &&
+        (s.lessonId === currentLesson.id || s.quizTitle?.trim() === currentLesson.title?.trim()) &&
         formatPhoneStr(s.studentPhone) === cleanPhone
       );
-      const hasPriorScore = lessonScores[activeLesson.id] !== undefined;
+      const hasPriorScore = lessonScores[currentLesson.id] !== undefined;
       const isDirectiveRetake = Boolean(activeRetakeDirective && (
-        activeRetakeDirective.lessonId === activeLesson.id || 
-        activeRetakeDirective.lessonTitle === activeLesson.title ||
-        activeLesson.title.includes(activeRetakeDirective.lessonTitle)
+        activeRetakeDirective.lessonId === currentLesson.id || 
+        activeRetakeDirective.lessonTitle === currentLesson.title ||
+        currentLesson.title.includes(activeRetakeDirective.lessonTitle)
       ));
-      const isAlreadySubmitted = !isDirectiveRetake && Boolean(isPracticeMode || completedList.includes(activeLesson.id) || hasPriorEssaySub || hasPriorScore);
+      const isAlreadySubmitted = !isDirectiveRetake && Boolean(isPracticeMode || completedList.includes(currentLesson.id) || hasPriorEssaySub || hasPriorScore);
 
       // إذا كانت هذه هي المحاولة الرسمية الأولى، نسجل إتمام الاختبار فوراً في القائمة المكتملة ونمسح الجلسة المعلقة
       if (!isAlreadySubmitted) {
         try {
           const completed = JSON.parse(localStorage.getItem('completedLessons') || '[]');
-          if (!completed.includes(activeLesson.id)) {
-            completed.push(activeLesson.id);
+          if (!completed.includes(currentLesson.id)) {
+            completed.push(currentLesson.id);
             localStorage.setItem('completedLessons', JSON.stringify(completed));
           }
         } catch(e) {}
         localStorage.removeItem('savedSession');
       }
 
-      const hasEssayQuestions = activeLesson.questions.some(q => q.type === 'essay');
-      const examConfig = getExamConfig(activeLesson.id);
-      if (activeLesson.id === 'mistakes_bank') {
+      const hasEssayQuestions = currentLesson.questions.some(q => q.type === 'essay');
+      const examConfig = getExamConfig(currentLesson.id);
+      if (currentLesson.id === 'mistakes_bank') {
         examConfig.gradingMode = 'instant_ai';
       }
-      const isInstantGrading = activeLesson.id === 'mistakes_bank' || (examConfig.gradingMode !== 'hybrid' && (!hasEssayQuestions || examConfig.gradingMode === 'instant_ai'));
+      const isInstantGrading = currentLesson.id === 'mistakes_bank' || (examConfig.gradingMode !== 'hybrid' && (!hasEssayQuestions || examConfig.gradingMode === 'instant_ai'));
 
-      if (newMistakesToAdd.length > 0 && isInstantGrading && activeLesson.id !== 'mistakes_bank') {
+      if (newMistakesToAdd.length > 0 && isInstantGrading && currentLesson.id !== 'mistakes_bank') {
         setUserAnswers(finalAnswers);
         newMistakesToAdd.forEach(q => {
           addMistakeToPermanentNotebook(
             q,
-            'لم يتم الإجابة (انتهى الوقت)',
-            'لم يتم الإجابة (انتهى الوقت)',
-            activeLesson.id,
-            activeLesson.title
+            isAutoTerminatedByWarnings ? 'لم يتم الإجابة (سُحبت الورقة لمخالفات أمنية)' : 'لم يتم الإجابة (انتهى الوقت)',
+            isAutoTerminatedByWarnings ? 'لم يتم الإجابة (سُحبت الورقة لمخالفات أمنية)' : 'لم يتم الإجابة (انتهى الوقت)',
+            currentLesson.id,
+            currentLesson.title
           );
         });
         setMistakesBank(prev => {
@@ -7524,27 +7820,45 @@ function initAllSheetsMenu() {
         });
       }
 
-      if (hasEssayQuestions || examConfig.gradingMode === 'hybrid') {
+      if (hasEssayQuestions) {
         if (examConfig.gradingMode === 'instant_ai') {
           setEssaySubmissionModal({
             isOpen: true,
             isGrading: true,
             message: "جاري تصحيح إجاباتك بالذكاء الاصطناعي واعتماد النتيجة...",
-            quizTitle: activeLesson.title
+            quizTitle: currentLesson.title
           });
 
           (async () => {
             let earnedScore = 0;
             const essayItemsForStorage: any[] = [];
 
-            for (let idx = 0; idx < activeLesson.questions.length; idx++) {
-              const q = activeLesson.questions[idx];
+            for (let idx = 0; idx < currentLesson.questions.length; idx++) {
+              const q = currentLesson.questions[idx];
               const ans = finalAnswers[idx];
               const maxQScore = getQuestionMaxScore(q, idx, examConfig);
 
               if (q.type === 'essay') {
                 const studentText = ans?.studentAnswerText || ans?.selected || '';
-                const evalResult = await evaluateEssayAnswer(q, studentText, maxQScore);
+                const isBlankOrTerminated = !studentText || 
+                  studentText.trim() === '' || 
+                  studentText.includes('لم يتم الإجابة') || 
+                  studentText.includes('سُحبت');
+
+                let evalResult = { score: 0, feedback: 'لم يتم إجابة السؤال', percentage: 0 };
+                if (!isBlankOrTerminated) {
+                  try {
+                    evalResult = await evaluateEssayAnswer(q, studentText, maxQScore);
+                  } catch(e) {}
+                } else {
+                  evalResult = {
+                    score: 0,
+                    feedback: isAutoTerminatedByWarnings 
+                      ? '🚫 تم سحب ورقة الاختبار تلقائياً لتجاوز مخالفات مغادرة الشاشة' 
+                      : 'لم يتم الإجابة على هذا السؤال',
+                    percentage: 0
+                  };
+                }
                 const isCorrect = evalResult.percentage >= 60;
                 
                 finalAnswers[idx] = {
@@ -7561,7 +7875,7 @@ function initAllSheetsMenu() {
                   earnedScore += evalResult.score;
                 }
 
-                if (activeLesson.id === 'mistakes_bank' && isCorrect) {
+                if (currentLesson.id === 'mistakes_bank' && isCorrect) {
                   const qHash = simpleHash(q.q);
                   setMistakesBank(prev => prev.filter(m => simpleHash(m.q) !== qHash));
                   try {
@@ -7594,7 +7908,7 @@ function initAllSheetsMenu() {
             const isEssayOnlyRetake = activeRetakeDirective?.retakeType === 'essay_only';
             const preservedScore = isEssayOnlyRetake ? (activeRetakeDirective.preservedMcqScore || 0) : 0;
             const effectiveEarned = earnedScore + preservedScore;
-            const structure = calculateExamStructure(activeLesson.questions, examConfig);
+            const structure = calculateExamStructure(currentLesson.questions, examConfig);
             const effectiveMax = (isEssayOnlyRetake && activeRetakeDirective.maxPossibleScore) 
               ? activeRetakeDirective.maxPossibleScore 
               : structure.examTotalScore;
@@ -7612,21 +7926,23 @@ function initAllSheetsMenu() {
                 id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
                 studentName: studentName || 'طالب',
                 studentPhone: inputPhone || '0000',
-                quizTitle: activeLesson.title,
-                lessonId: activeLesson.id,
+                quizTitle: currentLesson.title,
+                lessonId: currentLesson.id,
                 submissionDate: new Date().toLocaleDateString('ar-EG'),
                 questions: finalQuestionsToStore,
                 isFullyApproved: true,
+                isAutoTerminated: Boolean(isAutoTerminatedByWarnings),
+                terminationReason: isAutoTerminatedByWarnings ? 'مخالفات مغادرة نافذة الامتحان' : undefined,
                 finalScore: effectiveEarned,
                 maxPossibleScore: effectiveMax
               };
               savePendingEssaySubmission(instantSub);
               syncEssaySubmissionToCloud(instantSub);
 
-              if (activeLesson.id !== 'mistakes_bank') {
-                saveResultToDB({ quizName: activeLesson.title, score: `${calculatedPerc}%` });
+              if (currentLesson.id !== 'mistakes_bank') {
+                saveResultToDB({ quizName: currentLesson.title, score: `${calculatedPerc}%` });
                 setLessonScores(prev => {
-                  const newScores = { ...prev, [activeLesson.id]: Math.round(effectiveEarned) };
+                  const newScores = { ...prev, [currentLesson.id]: Math.round(effectiveEarned) };
                   localStorage.setItem('lessonScores', JSON.stringify(newScores));
                   return newScores;
                 });
@@ -7639,7 +7955,7 @@ function initAllSheetsMenu() {
             }
 
             // تسجيل أخطاء الامتحان رسمياً بعد انتهاء التقييم
-            commitExamMistakesOnCompletion(activeLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
+            commitExamMistakesOnCompletion(currentLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
 
             setIsScreenObfuscated(false);
             setTabSwitchStrikes(0);
@@ -7660,7 +7976,7 @@ function initAllSheetsMenu() {
             // عرض النتيجة الفورية للتدريب ليرى درجاته وأخطاءه وفقرات الدرس التي يحتاج لمراجعتها
             setUserAnswers(finalAnswers);
             setIsPracticeMode(true);
-            commitExamMistakesOnCompletion(activeLesson, finalAnswers, true);
+            commitExamMistakesOnCompletion(currentLesson, finalAnswers, true);
             setIsScreenObfuscated(false);
             setTabSwitchStrikes(0);
             tabSwitchStrikesRef.current = 0;
@@ -7675,23 +7991,27 @@ function initAllSheetsMenu() {
           }
 
           // المحاولة الرسمية الأولى: تجميع الأسئلة وتقييمها بالذكاء الاصطناعي ثم إرسالها للمعلم لمرة واحدة فقط
-          const structure = calculateExamStructure(activeLesson.questions, examConfig);
+          const structure = calculateExamStructure(currentLesson.questions, examConfig);
           const allItemsForStorage: EssayReviewQuestionItem[] = [];
           const essayItemsForStorage: EssayReviewQuestionItem[] = [];
           let initialEarnedScore = 0;
 
-          activeLesson.questions.forEach((q, idx) => {
+          currentLesson.questions.forEach((q, idx) => {
             const ans = finalAnswers[idx];
             const maxQScore = getQuestionMaxScore(q, idx, examConfig);
             const studentText = ans?.studentAnswerText || ans?.selected || '';
 
             if (q.type === 'essay') {
+              const isUnanswered = !studentText || studentText.trim() === '' || studentText.includes('لم يتم الإجابة');
+              const finalStudentText = isUnanswered 
+                ? (isAutoTerminatedByWarnings ? 'لم يتم الإجابة (سُحبت ورقة الامتحان لتجاوز مخالفات الخروج)' : 'لم يتم الإجابة (انتهى الوقت)')
+                : studentText;
               const item: EssayReviewQuestionItem = {
                 qIndex: idx,
                 questionText: q.q,
                 essayType: q.essayType || detectEssayType(q.q).label,
                 modelAnswer: q.answer || q.reason || '',
-                studentText,
+                studentText: finalStudentText,
                 maxScore: maxQScore,
                 paragraph: q.paragraph || q.concept || '',
                 concept: q.concept || '',
@@ -7726,8 +8046,20 @@ function initAllSheetsMenu() {
           (async () => {
             let essayEarned = 0;
             for (const item of essayItemsForStorage) {
-              const q = activeLesson.questions[item.qIndex];
-              if (q && item.studentText) {
+              const q = currentLesson.questions[item.qIndex];
+              const isBlankOrTerminated = !item.studentText || 
+                item.studentText.trim() === '' || 
+                item.studentText.includes('لم يتم الإجابة') || 
+                item.studentText.includes('سُحبت');
+
+              if (isBlankOrTerminated) {
+                item.aiScore = 0;
+                item.teacherScore = 0;
+                item.aiFeedback = isAutoTerminatedByWarnings
+                  ? `🚫 تم سحب ورقة الاختبار تلقائياً لمخالفات أمنية (0 من ${item.maxScore})`
+                  : `لم يتم الإجابة على هذا السؤال (0 من ${item.maxScore})`;
+                item.teacherFeedback = item.aiFeedback;
+              } else if (q && item.studentText) {
                 try {
                   const evalRes = await evaluateEssayAnswer(q, item.studentText, item.maxScore);
                   item.aiScore = evalRes.score;
@@ -7751,18 +8083,42 @@ function initAllSheetsMenu() {
               id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
               studentName: studentName || 'طالب',
               studentPhone: inputPhone || '0000',
-              quizTitle: activeLesson.title,
-              lessonId: activeLesson.id,
+              quizTitle: currentLesson.title,
+              lessonId: currentLesson.id,
               submissionDate: new Date().toLocaleDateString('ar-EG'),
               questions: finalQuestionsToStore,
               isFullyApproved: false,
+              isAutoTerminated: Boolean(isAutoTerminatedByWarnings),
+              terminationReason: isAutoTerminatedByWarnings ? 'مخالفات مغادرة نافذة الامتحان' : undefined,
               finalScore: initialEarnedScore + preservedScore + essayEarned,
               maxPossibleScore: effectiveTotalMax
             };
             savePendingEssaySubmission(evaluatedSub);
+
+            // توثيق ملخص نتيجة الأسئلة الموضوعية (الاختيارية والصح/خطأ) ومزامنتها سحابياً مع المقالي
+            const mcqMaxScore = structure.mcqTotalScore + structure.tfTotalScore;
+            const mcqEarned = initialEarnedScore + preservedScore;
+            const cloudQuestionsToSync = [...essayItemsForStorage];
+
+            if (mcqMaxScore > 0) {
+              const mcqSummaryItem: EssayReviewQuestionItem = {
+                qIndex: -1,
+                questionText: 'الأسئلة الموضوعية (الاختياري والصح/خطأ)',
+                essayType: 'اختر من متعدد',
+                modelAnswer: `الدرجة العظمى: ${mcqMaxScore}`,
+                studentText: `حصل الطالب على ${mcqEarned} من أصل ${mcqMaxScore}`,
+                maxScore: mcqMaxScore,
+                teacherScore: mcqEarned,
+                aiScore: mcqEarned,
+                teacherFeedback: `نتيجة الأسئلة الموضوعية المرصودة آلياً: ${mcqEarned} / ${mcqMaxScore}`,
+                isApproved: true
+              };
+              cloudQuestionsToSync.unshift(mcqSummaryItem);
+            }
+
             syncEssaySubmissionToCloud({
               ...evaluatedSub,
-              questions: essayItemsForStorage
+              questions: cloudQuestionsToSync
             });
 
             if (activeRetakeDirective) {
@@ -7782,14 +8138,16 @@ function initAllSheetsMenu() {
           setEssaySubmissionModal({
             isOpen: true,
             isGrading: false,
-            message: "⏳ تم تسليم إجاباتك بنجاح! جاري مراجعة وتصحيح الاختبار واعتماد النتيجة من المعلم أ/ إسلام سعود.",
-            quizTitle: activeLesson.title
+            message: isAutoTerminatedByWarnings
+              ? "🚫 تم سحب وإنهاء ورقة الامتحان وتسجيلها تلقائياً لتجاوز عدد مخالفات مغادرة الشاشة. جاري مراجعة إجاباتك واعتماد النتيجة من المعلم."
+              : "⏳ تم تسليم إجاباتك بنجاح! جاري مراجعة وتصحيح الاختبار واعتماد النتيجة من المعلم أ/ إسلام سعود.",
+            quizTitle: currentLesson.title
           });
           return;
         }
       }
 
-      const totalQs = activeLesson.questions.length;
+      const totalQs = currentLesson.questions.length;
       const correct = finalAnswers.filter(a => a.isCorrect).length;
       const perc = Math.round((correct/totalQs)*100);
 
@@ -7816,18 +8174,18 @@ function initAllSheetsMenu() {
           const newBadges = new Set(prev);
           const hour = new Date().getHours();
           if (hour >= 0 && hour <= 4) newBadges.add('night_owl');
-          if (perc === 100 && activeLesson.id !== 'mistakes_bank') newBadges.add('perfect_arrow');
-          if (activeLesson.id === 'mistakes_bank' && perc === 100) newBadges.add('mistake_conqueror');
+          if (perc === 100 && currentLesson.id !== 'mistakes_bank') newBadges.add('perfect_arrow');
+          if (currentLesson.id === 'mistakes_bank' && perc === 100) newBadges.add('mistake_conqueror');
           const badgesArr = Array.from(newBadges);
           localStorage.setItem('userBadges', JSON.stringify(badgesArr));
           return badgesArr;
         });
 
-        if (activeLesson.id !== 'mistakes_bank') {
-          saveResultToDB({ quizName: activeLesson.title, score: `${perc}%` });
+        if (currentLesson.id !== 'mistakes_bank') {
+          saveResultToDB({ quizName: currentLesson.title, score: `${perc}%` });
           
           setLessonScores(prev => {
-            const newScores = { ...prev, [activeLesson.id]: correct };
+            const newScores = { ...prev, [currentLesson.id]: correct };
             localStorage.setItem('lessonScores', JSON.stringify(newScores));
             return newScores;
           });
@@ -7839,15 +8197,15 @@ function initAllSheetsMenu() {
 
           try {
             const completed = JSON.parse(localStorage.getItem('completedLessons') || '[]');
-            if (!completed.includes(activeLesson.id)) {
-              completed.push(activeLesson.id);
+            if (!completed.includes(currentLesson.id)) {
+              completed.push(currentLesson.id);
               localStorage.setItem('completedLessons', JSON.stringify(completed));
             }
           } catch(e) {}
         }
       }
       // تسجيل أخطاء الامتحان رسمياً بعد انتهاء جلسة الامتحان بالكامل لمنع تسريب أي أخطاء أثناء المحاولة
-      commitExamMistakesOnCompletion(activeLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
+      commitExamMistakesOnCompletion(currentLesson, finalAnswers, isAlreadySubmitted || isPracticeMode);
     }
     setIsScreenObfuscated(false);
     setTabSwitchStrikes(0);
@@ -7859,6 +8217,8 @@ function initAllSheetsMenu() {
     examEndTimeRef.current = null;
     setScreen('result');
   };
+
+  finishQuizInternalRef.current = finishQuizInternal;
 
   const handleFinishQuiz = (force?: boolean) => {
     if (securitySettings.offlineModeEnabled && typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -7922,8 +8282,9 @@ function initAllSheetsMenu() {
                       getActiveRetakeDirectiveForLesson(cleanPhone, lesson.title) ||
                       (activeRetakeDirective && (activeRetakeDirective.lessonId === lesson.id || activeRetakeDirective.lessonTitle === lesson.title || lesson.title.includes(activeRetakeDirective.lessonTitle)) ? activeRetakeDirective : null);
 
+    const hasEssayQuestionsInLesson = lesson.questions.some(q => q.type === 'essay');
     const submissions = getStudentSubmissions(cleanPhone);
-    const pendingSub = !retakeDir && submissions.find(s => (s.lessonId === lesson.id || s.quizTitle?.trim() === lesson.title?.trim()) && !s.isFullyApproved);
+    const pendingSub = !retakeDir && hasEssayQuestionsInLesson && submissions.find(s => (s.lessonId === lesson.id || s.quizTitle?.trim() === lesson.title?.trim()) && !s.isFullyApproved);
     if (pendingSub) {
       showAlert('⏳ هذا الاختبار قيد المراجعة والاعتماد حالياً من المعلم أ/ إسلام سعود، ستتمكن من مراجعته والتدريب عليه فور اعتماد النتيجة.');
       return;
@@ -8016,7 +8377,7 @@ function initAllSheetsMenu() {
           ? rawEssayQs 
           : lesson.questions.filter(q => {
               const d = detectEssayType(q.q);
-              return d.type !== 'mcq' && d.type !== 'tf';
+              return d.key !== 'mcq' && d.key !== 'tf';
             });
         if (essayQs.length > 0) {
           targetQuestions = essayQs;
@@ -8724,8 +9085,13 @@ function initAllSheetsMenu() {
                                   }
 
                                   const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
-                                  const submissions = getStudentSubmissions(phone);
-                                  const pendingSub = submissions.find(s => (s.lessonId === lesson.id || s.quizTitle === lesson.title) && !s.isFullyApproved);
+                                  const cleanPhone = formatPhoneStr(phone);
+                                  const retakeDir = getActiveRetakeDirectiveForLesson(cleanPhone, lesson.id) || 
+                                                    getActiveRetakeDirectiveForLesson(cleanPhone, lesson.title) ||
+                                                    (activeRetakeDirective && (activeRetakeDirective.lessonId === lesson.id || activeRetakeDirective.lessonTitle === lesson.title || lesson.title.includes(activeRetakeDirective.lessonTitle)) ? activeRetakeDirective : null);
+                                  const hasEssayQuestionsInLesson = lesson.questions.some(q => q.type === 'essay');
+                                  const submissions = getStudentSubmissions(cleanPhone);
+                                  const pendingSub = !retakeDir && hasEssayQuestionsInLesson && submissions.find(s => (s.lessonId === lesson.id || s.quizTitle === lesson.title) && !s.isFullyApproved);
                                   if (pendingSub) {
                                     showAlert('⏳ هذا الاختبار قيد المراجعة والاعتماد حالياً من المعلم أ/ إسلام سعود، ستتمكن من مراجعته والتدريب عليه فور اعتماد النتيجة.');
                                     return;
@@ -8780,8 +9146,13 @@ function initAllSheetsMenu() {
                                 </div>
                                 {(() => {
                                   const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
-                                  const submissions = getStudentSubmissions(phone);
-                                  const pendingSub = submissions.find(s => (s.lessonId === lesson.id || s.quizTitle === lesson.title) && !s.isFullyApproved);
+                                  const cleanPhone = formatPhoneStr(phone);
+                                  const retakeDir = getActiveRetakeDirectiveForLesson(cleanPhone, lesson.id) || 
+                                                    getActiveRetakeDirectiveForLesson(cleanPhone, lesson.title) ||
+                                                    (activeRetakeDirective && (activeRetakeDirective.lessonId === lesson.id || activeRetakeDirective.lessonTitle === lesson.title || lesson.title.includes(activeRetakeDirective.lessonTitle)) ? activeRetakeDirective : null);
+                                  const hasEssayQuestionsInLesson = lesson.questions.some(q => q.type === 'essay');
+                                  const submissions = getStudentSubmissions(cleanPhone);
+                                  const pendingSub = !retakeDir && hasEssayQuestionsInLesson && submissions.find(s => (s.lessonId === lesson.id || s.quizTitle === lesson.title) && !s.isFullyApproved);
                                   if (pendingSub) {
                                     return (
                                       <span className="text-xs font-black px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 border border-amber-300 dark:border-amber-700 flex items-center gap-1.5 shadow-xs">
@@ -10291,16 +10662,33 @@ function initAllSheetsMenu() {
               <button onClick={() => setAdminActiveTab('lessons')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='lessons'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-layer-group w-5 text-center text-emerald-500"></i> إدارة ونشر الدروس</button>
               <button onClick={() => setAdminActiveTab('schedules')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='schedules'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-calendar-alt w-5 text-center text-indigo-500"></i> جدولة الامتحانات 📅</button>
               <button 
-                onClick={() => setAdminActiveTab('essay_review')} 
+                onClick={() => {
+                  setEssayReviewInitialQuiz(undefined);
+                  setAdminActiveTab('essay_review');
+                }} 
                 className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${
                   adminActiveTab==='essay_review'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'
                 }`}
               >
                 <i className="fas fa-feather-alt w-5 text-center text-amber-500"></i> 
                 <span>تصحيح المقالي</span>
-                {pendingEssayCount > 0 && (
+                {needsGradingCount > 0 && (
                   <span className="absolute top-2 left-2 bg-amber-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse">
-                    {pendingEssayCount}
+                    {needsGradingCount}
+                  </span>
+                )}
+              </button>
+              <button 
+                onClick={() => setAdminActiveTab('approve_results')} 
+                className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${
+                  adminActiveTab==='approve_results'?'bg-emerald-700 text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'
+                }`}
+              >
+                <i className="fas fa-stamp w-5 text-center text-emerald-500"></i> 
+                <span>اعتماد النتائج 🎯</span>
+                {readyToApproveCount > 0 && (
+                  <span className="absolute top-2 left-2 bg-emerald-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse">
+                    {readyToApproveCount}
                   </span>
                 )}
               </button>
@@ -11388,6 +11776,21 @@ function initAllSheetsMenu() {
                   isDarkMode={isDarkMode}
                   onlineStudents={adminOnlineStudents}
                   data={data}
+                  initialSelectedQuiz={essayReviewInitialQuiz}
+                  onNavigateToApproval={() => setAdminActiveTab('approve_results')}
+                />
+              )}
+
+              {adminActiveTab === 'approve_results' && (
+                <AdminApproveResultsTab
+                  onSaveResultToDB={saveResultToDB}
+                  isDarkMode={isDarkMode}
+                  onlineStudents={adminOnlineStudents}
+                  data={data}
+                  onNavigateToEssayReview={(quizTitle) => {
+                    setEssayReviewInitialQuiz(quizTitle);
+                    setAdminActiveTab('essay_review');
+                  }}
                 />
               )}
 
@@ -13003,38 +13406,50 @@ function initAllSheetsMenu() {
                             <span className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm shadow-sm">
                               <i className="fas fa-robot"></i>
                             </span>
-                            <span>إعدادات الذكاء الاصطناعي (Google Gemini Pro):</span>
+                            <span>إعدادات محركات الذكاء الاصطناعي (Gemini & Groq AI):</span>
                           </h3>
                           <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">تصحيح المقالي</span>
                         </div>
                         
                         <p className="text-xs text-gray-600 font-bold mb-3 leading-relaxed">
-                          ضع مفتاح Gemini API لتفعيل التصحيح فائق الذكاء للأسئلة المقالية، أو اتركه فارغاً للاعتماد على المحلل الذكي المحلي المدمج.
+                          يوفر التطبيق بنية ثلاثية ذكية لتصحيح المقالي: Google Gemini (المزود الأساسي ⚡)، يليه Groq AI (المزود الاحتياطي فائق السرعة 🚀)، وأخيراً المحلل الذكي المحلي المدمج 🧠 لضمان العمل دائماً بأقل قدر من الأخطاء ودون توقف.
                         </p>
                         
+                        {/* مزود 1: Google Gemini */}
                         <div className="bg-indigo-50/70 border border-indigo-200 rounded-2xl p-4 space-y-3">
-                          <div>
-                            <label className="block text-xs font-black text-indigo-950 mb-1">
-                              مفتاح Google Gemini API:
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-black text-indigo-950 mb-1 flex items-center gap-1.5">
+                              <span className="w-5 h-5 rounded-md bg-indigo-200 text-indigo-800 flex items-center justify-center text-xs">⚡</span>
+                              <span>مفتاح Google Gemini API (المزود الأساسي):</span>
                             </label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type={showGeminiKey ? "text" : "password"}
-                                placeholder="AIzaSy..."
-                                value={geminiKeyInput}
-                                onChange={e => setGeminiKeyInput(e.target.value)}
-                                className="w-full bg-white border border-indigo-300 focus:border-indigo-600 outline-none rounded-xl px-3 py-2 text-xs font-bold font-mono text-left"
-                                dir="ltr"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowGeminiKey(!showGeminiKey)}
-                                className="px-3 py-2 bg-white border border-indigo-200 hover:bg-indigo-100 rounded-xl text-indigo-700 text-xs font-bold shrink-0 transition-colors cursor-pointer"
-                                title={showGeminiKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
-                              >
-                                <i className={`fas ${showGeminiKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                              </button>
-                            </div>
+                            <a
+                              href="https://aistudio.google.com/app/apikey"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 hover:underline flex items-center gap-1"
+                            >
+                              <span>جلب المفتاح من Google AI Studio</span>
+                              <i className="fas fa-external-link-alt text-[9px]"></i>
+                            </a>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <input
+                              type={showGeminiKey ? "text" : "password"}
+                              placeholder="AIzaSy..."
+                              value={geminiKeyInput}
+                              onChange={e => setGeminiKeyInput(e.target.value)}
+                              className="w-full bg-white border border-indigo-300 focus:border-indigo-600 outline-none rounded-xl px-3 py-2 text-xs font-bold font-mono text-left"
+                              dir="ltr"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowGeminiKey(!showGeminiKey)}
+                              className="px-3 py-2 bg-white border border-indigo-200 hover:bg-indigo-100 rounded-xl text-indigo-700 text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                              title={showGeminiKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
+                            >
+                              <i className={`fas ${showGeminiKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                            </button>
                           </div>
 
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -13045,7 +13460,7 @@ function initAllSheetsMenu() {
                               className="text-xs font-bold px-3 py-1.5 bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-800 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
                             >
                               <i className={isTestingKey ? "fas fa-spinner fa-spin" : "fas fa-bolt text-amber-500"}></i>
-                              اختبار المفتاح والاتصال ⚡
+                              اختبار مفتاح Gemini والاتصال ⚡
                             </button>
                             
                             {geminiKeyStatus && (
@@ -13055,6 +13470,70 @@ function initAllSheetsMenu() {
                                   : 'bg-rose-100 text-rose-800 border border-rose-300'
                               }`}>
                                 {geminiKeyStatus.msg}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* مزود 2: Groq Cloud AI (Llama 3.3) */}
+                        <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 space-y-3 mt-4">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-black text-amber-950 mb-1 flex items-center gap-1.5">
+                              <span className="w-5 h-5 rounded-md bg-amber-200 text-amber-900 flex items-center justify-center text-xs">🚀</span>
+                              <span>مفتاح Groq Cloud API (المزود الاحتياطي فائق السرعة - Llama 3.3):</span>
+                            </label>
+                            <a
+                              href="https://console.groq.com/keys"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-amber-700 hover:text-amber-900 hover:underline flex items-center gap-1"
+                            >
+                              <span>جلب المفتاح من Groq Cloud</span>
+                              <i className="fas fa-external-link-alt text-[9px]"></i>
+                            </a>
+                          </div>
+
+                          <p className="text-[11px] text-amber-900/80 font-bold leading-relaxed">
+                            💡 مفتاح مجاني وسريع جداً. يعمل فورياً كخط دفاع بديل عند استنفاذ كوتا Gemini لضمان عدم توقف التصحيح التلقائي إطلاقاً.
+                          </p>
+                          
+                          <div className="flex items-center gap-2">
+                            <input
+                              type={showGroqKey ? "text" : "password"}
+                              placeholder="gsk_..."
+                              value={groqKeyInput}
+                              onChange={e => setGroqKeyInput(e.target.value)}
+                              className="w-full bg-white border border-amber-300 focus:border-amber-600 outline-none rounded-xl px-3 py-2 text-xs font-bold font-mono text-left"
+                              dir="ltr"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowGroqKey(!showGroqKey)}
+                              className="px-3 py-2 bg-white border border-amber-200 hover:bg-amber-100 rounded-xl text-amber-700 text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                              title={showGroqKey ? "إخفاء المفتاح" : "إظهار المفتاح"}
+                            >
+                              <i className={`fas ${showGroqKey ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                            </button>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={handleTestGroqKey}
+                              disabled={isTestingGroqKey || !groqKeyInput.trim()}
+                              className="text-xs font-bold px-3 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-xl transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
+                            >
+                              <i className={isTestingGroqKey ? "fas fa-spinner fa-spin" : "fas fa-bolt text-amber-500"}></i>
+                              اختبار مفتاح Groq والاتصال 🚀
+                            </button>
+                            
+                            {groqKeyStatus && (
+                              <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg ${
+                                groqKeyStatus.type === 'success' 
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                                  : 'bg-rose-100 text-rose-800 border border-rose-300'
+                              }`}>
+                                {groqKeyStatus.msg}
                               </span>
                             )}
                           </div>
@@ -13923,8 +14402,14 @@ function initAllSheetsMenu() {
               const avail = cfg ? getExamAvailability(cfg, sCat) : null;
               const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
               const cleanPhone = formatPhoneStr(phone);
+              const retakeDir = lessonModalOptions ? (
+                getActiveRetakeDirectiveForLesson(cleanPhone, lessonModalOptions.id) || 
+                getActiveRetakeDirectiveForLesson(cleanPhone, lessonModalOptions.title) ||
+                (activeRetakeDirective && (activeRetakeDirective.lessonId === lessonModalOptions.id || activeRetakeDirective.lessonTitle === lessonModalOptions.title || lessonModalOptions.title.includes(activeRetakeDirective.lessonTitle)) ? activeRetakeDirective : null)
+              ) : null;
+              const hasEssayQuestionsInLesson = lessonModalOptions ? lessonModalOptions.questions.some(q => q.type === 'essay') : false;
               const submissions = getStudentSubmissions(cleanPhone);
-              const pendingSub = lessonModalOptions ? submissions.find(s => (s.lessonId === lessonModalOptions.id || s.quizTitle?.trim() === lessonModalOptions.title?.trim()) && !s.isFullyApproved) : null;
+              const pendingSub = (!retakeDir && hasEssayQuestionsInLesson && lessonModalOptions) ? submissions.find(s => (s.lessonId === lessonModalOptions.id || s.quizTitle?.trim() === lessonModalOptions.title?.trim()) && !s.isFullyApproved) : null;
               const isLocked = Boolean((avail && (avail.status === 'upcoming' || avail.status === 'expired' || avail.status === 'not_targeted')) || pendingSub);
 
               return (

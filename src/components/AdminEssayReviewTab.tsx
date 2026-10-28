@@ -8,11 +8,14 @@ import {
   getExamConfig, 
   calculateExamStructure,
   detectEssayType,
-  saveRetakeDirective
+  saveRetakeDirective,
+  hasWrittenEssayAnswers,
+  checkNeedsFormattingGuidance,
+  ensureCompleteEssayQuestions
 } from '../examConfigUtils';
 import { HighlightText } from './HighlightText';
 import { FormatQuestionText } from './FormatQuestionText';
-import { compareStudentWithModelAnswer, EssayDiffComparison } from '../aiEvaluationService';
+import { compareStudentWithModelAnswer, EssayDiffComparison, getGeminiApiKey, getGroqApiKey } from '../aiEvaluationService';
 import { toEasternArabic, API_URL, SECRET_API_KEY, formatPhoneStr, detectArabicGender } from '../utils';
 
 interface AdminEssayReviewTabProps {
@@ -177,6 +180,108 @@ export const resolveModelAnswer = (
   return { modelAnswer: '' };
 };
 
+export const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore?: number, teacherFeedback?: string) => {
+  try {
+    const cleanPhone = formatPhoneStr(sub.studentPhone);
+    const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
+
+    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي بدقة في صفوف شيت إجابات المقالي
+    const essayOnlyQuestions = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+    if (essayOnlyQuestions.length > 0) {
+      await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'saveEssaySubmission',
+          date: sub.submissionDate || new Date().toLocaleString('ar-EG'),
+          studentName: sub.studentName,
+          studentPhone: fullPhone,
+          quizTitle: sub.quizTitle,
+          questions: essayOnlyQuestions.map(q => ({
+            ...q,
+            isApproved: true,
+            teacherScore: q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0),
+            teacherFeedback: q.teacherFeedback || teacherFeedback || 'تم اعتماد الإجابة بنجاح'
+          })),
+          isApproved: true,
+          status: 'معتمد',
+          studentType: sub.studentType || 'سنتر',
+          apiKey: SECRET_API_KEY
+        })
+      });
+    }
+
+    // 2. تحديث الحالة العامة
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateEssayGrade',
+        studentPhone: fullPhone,
+        quizTitle: sub.quizTitle,
+        teacherScore: teacherScore !== undefined ? teacherScore : sub.finalScore,
+        teacherFeedback: teacherFeedback || 'تم اعتماد الإجابة بنجاح',
+        isApproved: true,
+        status: 'معتمد',
+        apiKey: SECRET_API_KEY
+      })
+    });
+  } catch (e) {
+    console.error("Cloud essay grade update error:", e);
+  }
+};
+
+export const syncDraftToCloud = async (sub: StudentEssaySubmission) => {
+  try {
+    const cleanPhone = formatPhoneStr(sub.studentPhone);
+    const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
+
+    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي بدقة كمسودة مصححة في شيت إجابات المقالي
+    const essayOnlyQuestions = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+    if (essayOnlyQuestions.length > 0) {
+      await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'saveEssaySubmission',
+          date: sub.submissionDate || new Date().toLocaleString('ar-EG'),
+          studentName: sub.studentName,
+          studentPhone: fullPhone,
+          quizTitle: sub.quizTitle,
+          questions: essayOnlyQuestions.map(q => ({
+            ...q,
+            isApproved: false,
+            teacherScore: q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0),
+            teacherFeedback: q.teacherFeedback || 'تم التصحيح وحفظ المسودة بواسطة المعلم'
+          })),
+          isApproved: false,
+          status: 'تم التصحيح',
+          studentType: sub.studentType || 'سنتر',
+          apiKey: SECRET_API_KEY
+        })
+      });
+    }
+
+    // 2. تحديث حالة المسودة
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateEssayGrade',
+        studentPhone: fullPhone,
+        quizTitle: sub.quizTitle,
+        teacherScore: sub.finalScore,
+        teacherFeedback: 'تم التصحيح وحفظ المسودة بواسطة المعلم',
+        isApproved: false,
+        status: 'تم التصحيح',
+        apiKey: SECRET_API_KEY
+      })
+    });
+  } catch (e) {
+    console.error("Cloud essay draft sync error:", e);
+  }
+};
+
 export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
   onSaveResultToDB,
   isDarkMode = false,
@@ -187,34 +292,29 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
 }) => {
   const [submissions, setSubmissions] = useState<StudentEssaySubmission[]>([]);
   const [selectedSubForReview, setSelectedSubForReview] = useState<StudentEssaySubmission | null>(null);
-  const [mainView, setMainView] = useState<'pending' | 'archive' | 'students'>(initialSelectedQuiz ? 'students' : 'pending');
-  const [previousQuizView, setPreviousQuizView] = useState<'pending' | 'archive'>('pending');
-  const [quizSearchTerm, setQuizSearchTerm] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved'>('pending');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'reviewed' | 'approved'>('pending');
   const [studentTypeFilter, setStudentTypeFilter] = useState<'all' | 'center' | 'online'>('all');
   const [selectedUnitFilter, setSelectedUnitFilter] = useState<string>('all');
   const [selectedQuizFilter, setSelectedQuizFilter] = useState<string>(initialSelectedQuiz || 'all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [batchApproveDialog, setBatchApproveDialog] = useState<{ grp: { quizTitle: string; pendingCount: number; submissions: StudentEssaySubmission[] } } | null>(null);
   const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
 
-  // إذا لم تكن هناك امتحانات معلقة ولكن توجد امتحانات معتمدة في الأرشيف، ننتقل تلقائياً للأرشيف في البداية
-  const [hasAutoSwitchedToArchive, setHasAutoSwitchedToArchive] = useState(false);
+  // إذا لم تكن هناك إجابات بانتظار التصحيح في البداية، نعرض الكل تلقائياً
+  const [hasAutoSwitchedToAll, setHasAutoSwitchedToAll] = useState(false);
   useEffect(() => {
-    if (!initialSelectedQuiz && !hasAutoSwitchedToArchive && submissions.length > 0) {
-      const pendingCount = submissions.filter(s => !s.isFullyApproved).length;
+    if (!initialSelectedQuiz && !hasAutoSwitchedToAll && submissions.length > 0) {
+      const pendingCount = submissions.filter(s => !s.isFullyApproved && !s.isTeacherReviewed && hasWrittenEssayAnswers(s)).length;
       if (pendingCount === 0) {
-        setMainView('archive');
-        setHasAutoSwitchedToArchive(true);
+        setStatusFilter('all');
+        setHasAutoSwitchedToAll(true);
       }
     }
-  }, [submissions, initialSelectedQuiz, hasAutoSwitchedToArchive]);
+  }, [submissions, initialSelectedQuiz, hasAutoSwitchedToAll]);
 
   useEffect(() => {
     if (initialSelectedQuiz) {
       setSelectedQuizFilter(initialSelectedQuiz);
-      setMainView('students');
     }
   }, [initialSelectedQuiz]);
 
@@ -254,27 +354,6 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     setSubmissions(list);
   };
 
-  const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore?: number, teacherFeedback?: string) => {
-    try {
-      const cleanPhone = formatPhoneStr(sub.studentPhone);
-      const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
-      await fetch(API_URL, {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'updateEssayGrade',
-          studentPhone: fullPhone,
-          quizTitle: sub.quizTitle,
-          teacherScore: teacherScore !== undefined ? teacherScore : sub.finalScore,
-          teacherFeedback: teacherFeedback || 'تم اعتماد الإجابة بنجاح',
-          isApproved: true,
-          apiKey: SECRET_API_KEY
-        })
-      });
-    } catch (e) {
-      console.error("Cloud essay grade update error:", e);
-    }
-  };
-
   const fetchCloudSubmissions = async (isManual: boolean = false) => {
     setIsLoadingCloud(true);
     try {
@@ -305,18 +384,39 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             });
           }
           const grp = groupedMap.get(key)!;
-          const scoreNum = row.teacherScore !== "" && row.teacherScore !== undefined ? Number(row.teacherScore) : undefined;
+          const scoreNum = row.teacherScore !== "" && row.teacherScore !== undefined && !isNaN(Number(row.teacherScore)) ? Number(row.teacherScore) : undefined;
           const isAppr = String(row.status || '').trim() === 'معتمد';
+          const isGradedStatus = String(row.status || '').trim() === 'تم التصحيح' || 
+                                 String(row.status || '').trim() === 'مصحح' || 
+                                 String(row.status || '').trim() === 'مسودة مصححة';
+          const rawFb = String(row.teacherFeedback || '').trim();
+          const hasTeacherMark = rawFb.includes('تم التصحيح وحفظ المسودة بواسطة المعلم') ||
+                                 rawFb.startsWith('[مصحح من المعلم]') ||
+                                 rawFb.startsWith('[المعلم]') ||
+                                 rawFb.includes('بواسطة المعلم');
+
+          const isAITemplate = !rawFb || 
+                               rawFb.includes('إجابة جيدة جداً') || 
+                               rawFb.includes('إجابة ممتازة') || 
+                               rawFb.includes('إجابة مقبولة') || 
+                               rawFb.includes('إجابة ضعيفة') || 
+                               rawFb.includes('لم يتم الإجابة') || 
+                               rawFb.includes('سُحبت');
+
+          // هل تم تصحيح هذا السؤال بواسطة المعلم بالفعل أم أنه مجرد تقييم آلي أولي ينتظر المعلم؟
+          const isTeacherGradedQuestion = isAppr || isGradedStatus || hasTeacherMark || (!isAITemplate && scoreNum !== undefined);
+
+          if (isTeacherGradedQuestion) (grp as any).hasGradedStatus = true;
           const cleanQText = (row.questionText || `سؤال مقالي ${grp.questions.length + 1}`).trim();
 
           // تجنب تكرار السؤال المقالي للطالب إذا تم إرسال الإجابة أكثر من مرة أو عند التدريب
           const existingQ = grp.questions.find(q => q.questionText.trim() === cleanQText);
           if (existingQ) {
-            if (scoreNum !== undefined && existingQ.teacherScore === undefined) {
+            if (isTeacherGradedQuestion && scoreNum !== undefined && existingQ.teacherScore === undefined) {
               existingQ.teacherScore = scoreNum;
             }
-            if (row.teacherFeedback && !existingQ.teacherFeedback) {
-              existingQ.teacherFeedback = row.teacherFeedback;
+            if (isTeacherGradedQuestion && rawFb && !existingQ.teacherFeedback) {
+              existingQ.teacherFeedback = rawFb;
             }
             if (!existingQ.isApproved && isAppr) {
               existingQ.isApproved = true;
@@ -331,8 +431,10 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             modelAnswer: '',
             studentText: row.studentAnswerText || '',
             maxScore: 2,
-            teacherScore: scoreNum,
-            teacherFeedback: row.teacherFeedback || '',
+            teacherScore: isTeacherGradedQuestion ? scoreNum : undefined,
+            teacherFeedback: isTeacherGradedQuestion ? rawFb : '',
+            aiScore: scoreNum,
+            aiFeedback: rawFb,
             isApproved: isAppr
           });
         });
@@ -340,7 +442,8 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         const cloudSubmissions: StudentEssaySubmission[] = [];
         groupedMap.forEach((grp, key) => {
           const isAllApproved = grp.questions.length > 0 && grp.questions.every(q => q.isApproved);
-          const earned = grp.questions.reduce((sum, q) => sum + (q.teacherScore || 0), 0);
+          const hasAllTeacherScores = grp.questions.length > 0 && grp.questions.every(q => q.teacherScore !== undefined && q.teacherScore !== null);
+          const isReviewed = Boolean(isAllApproved || (grp as any).hasGradedStatus || hasAllTeacherScores);
           
           let lessonId = grp.quizTitle;
           grp.questions.forEach((q, qi) => {
@@ -356,7 +459,24 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             }
           });
 
-          cloudSubmissions.push({
+          // معالجة تصحيح التكرار في حال تم حفظ الدرجة الكلية في كل صف بدلاً من توزيعها
+          const totalMaxPossible = grp.questions.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+          const rawEarned = grp.questions.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          
+          if (isReviewed && grp.questions.length > 1 && rawEarned > totalMaxPossible) {
+            const firstScore = grp.questions[0].teacherScore;
+            const isAllSameTotal = grp.questions.every(q => q.teacherScore === firstScore && (firstScore || 0) > (q.maxScore || 2));
+            if (isAllSameTotal && firstScore !== undefined) {
+              const distributedScore = Math.min(totalMaxPossible, firstScore) / grp.questions.length;
+              grp.questions.forEach(q => {
+                q.teacherScore = Number(distributedScore.toFixed(2));
+              });
+            }
+          }
+
+          const finalEarned = grp.questions.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+
+          const rawSub: StudentEssaySubmission = {
             id: `cloud_${key}`,
             studentName: grp.studentName,
             studentPhone: grp.studentPhone,
@@ -365,10 +485,12 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             submissionDate: grp.date,
             questions: grp.questions,
             isFullyApproved: isAllApproved,
-            finalScore: earned,
-            maxPossibleScore: grp.questions.reduce((sum, q) => sum + (q.maxScore || 2), 0),
+            isTeacherReviewed: isReviewed,
+            finalScore: finalEarned,
+            maxPossibleScore: totalMaxPossible,
             studentType: grp.studentType
-          });
+          };
+          cloudSubmissions.push(ensureCompleteEssayQuestions(rawSub, data));
         });
 
         const localList = getPendingEssaySubmissions();
@@ -392,16 +514,26 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         });
         localList.forEach(ls => {
           const mKey = `${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`;
+          const normalizedLs = ensureCompleteEssayQuestions(ls, data);
           if (!mergedMap.has(mKey)) {
-            // لا نحتفظ من الكاش المحلي إلا بالتسليمات المحلية غير المتزامنة (أوفلاين)
-            // إذا كان التسليم أصلاً سحابياً وتم حذفه من الشيت، لا نعيد إحياءه بل نحذفه
-            if (!ls.id?.startsWith('cloud_') && !ls.isFullyApproved) {
-              mergedMap.set(mKey, ls);
-            }
+            // الاحتفاظ بالتسليمات المحلية غير الموجودة في السحابة
+            mergedMap.set(mKey, normalizedLs);
           } else {
             const cloudItem = mergedMap.get(mKey)!;
-            if (ls.isFullyApproved && !cloudItem.isFullyApproved) {
-              mergedMap.set(mKey, ls);
+            // حماية تصحيح المعلم: إذا كان الكاش المحلي أو السحابي يحتوي على تصحيح المعلم أو اعتماده، نعطيه الأولوية المطلقة حتى لا يضيع تصحيح المعلم!
+            const hasLocalReview = ls.isTeacherReviewed || ls.isFullyApproved;
+            const hasCloudReview = cloudItem.isTeacherReviewed || cloudItem.isFullyApproved;
+            if (hasLocalReview) {
+              mergedMap.set(mKey, ensureCompleteEssayQuestions({
+                ...cloudItem,
+                ...normalizedLs,
+                questions: normalizedLs.questions,
+                finalScore: normalizedLs.finalScore,
+                isTeacherReviewed: true,
+                isFullyApproved: normalizedLs.isFullyApproved || cloudItem.isFullyApproved
+              }, data));
+            } else if (hasCloudReview) {
+              cloudItem.isTeacherReviewed = true;
             }
           }
         });
@@ -438,55 +570,11 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     setTimeout(() => setToastMessage(null), 2500);
   };
 
-  // استخراج قائمة الوحدات المتاحة
-  const availableUnits = useMemo(() => {
-    const map = new Map<string, { id: string; title: string; count: number }>();
-    if (data && data.length > 0) {
-      data.forEach(u => {
-        map.set(u.title, { id: u.id, title: u.title, count: 0 });
-      });
-    }
-    submissions.forEach(sub => {
-      let uTitle = 'عام';
-      if (data && data.length > 0) {
-        const found = data.find(u => u.lessons.some(l => l.id === sub.lessonId || l.title === sub.quizTitle));
-        if (found) uTitle = found.title;
-      }
-      if (!map.has(uTitle)) {
-        map.set(uTitle, { id: uTitle, title: uTitle, count: 0 });
-      }
-      map.get(uTitle)!.count++;
-    });
-    return Array.from(map.values());
-  }, [data, submissions]);
-
-  // استخراج قائمة الامتحانات المتاحة بناءً على الوحدة المحددة
-  const availableQuizzes = useMemo(() => {
-    const map = new Map<string, { title: string; count: number; pendingCount: number }>();
-
-    let allowedLessonTitles: string[] | null = null;
-    if (selectedUnitFilter !== 'all' && data && data.length > 0) {
-      const matchedUnit = data.find(u => u.title === selectedUnitFilter || u.id === selectedUnitFilter);
-      if (matchedUnit) {
-        allowedLessonTitles = matchedUnit.lessons.map(l => l.title);
-      }
-    }
-
-    submissions.forEach(sub => {
-      const qTitle = sub.quizTitle || 'اختبار';
-      if (allowedLessonTitles && !allowedLessonTitles.includes(qTitle) && !qTitle.includes(selectedUnitFilter)) {
-        return;
-      }
-      if (!map.has(qTitle)) {
-        map.set(qTitle, { title: qTitle, count: 0, pendingCount: 0 });
-      }
-      const item = map.get(qTitle)!;
-      item.count++;
-      if (!sub.isFullyApproved) item.pendingCount++;
-    });
-
-    return Array.from(map.values());
-  }, [data, submissions, selectedUnitFilter]);
+  // استبعاد الطلاب الذين لم يحلوا أي سؤال مقالي إطلاقاً (كل المقالي فارغ أو مسحوب)
+  // هؤلاء الطلاب لا يظهرون في تصحيح المقالي بل ينتقلون مباشرة لتبويب اعتماد النتائج
+  const essayEligibleSubmissions = useMemo(() => {
+    return submissions.filter(s => hasWrittenEssayAnswers(s));
+  }, [submissions]);
 
   // إيجاد الوحدة التابع لها الامتحان
   const findUnitForQuiz = (lessonId: string, quizTitle: string) => {
@@ -499,121 +587,149 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     return 'عام';
   };
 
-  // تجميع التسليمات حسب الامتحان لإنشاء بطاقات الامتحانات
-  const quizGroups = useMemo(() => {
+  // استخراج قائمة الوحدات المتاحة مع تتبع تفصيلي لحالات التصحيح
+  const availableUnits = useMemo(() => {
     const map = new Map<string, {
-      quizTitle: string;
-      lessonId: string;
-      unitTitle: string;
-      submissions: StudentEssaySubmission[];
-      totalCount: number;
-      approvedCount: number;
+      id: string;
+      title: string;
+      count: number;
       pendingCount: number;
       draftCount: number;
-      onlineCount: number;
-      centerCount: number;
-      isFullyApproved: boolean;
+      approvedCount: number;
     }>();
 
-    submissions.forEach(sub => {
-      const key = sub.quizTitle || sub.lessonId || 'اختبار';
-      if (!map.has(key)) {
-        map.set(key, {
-          quizTitle: sub.quizTitle || key,
-          lessonId: sub.lessonId,
-          unitTitle: findUnitForQuiz(sub.lessonId, sub.quizTitle),
-          submissions: [],
-          totalCount: 0,
-          approvedCount: 0,
+    if (data && data.length > 0) {
+      data.forEach(u => {
+        map.set(u.title, {
+          id: u.id,
+          title: u.title,
+          count: 0,
           pendingCount: 0,
           draftCount: 0,
-          onlineCount: 0,
-          centerCount: 0,
-          isFullyApproved: true,
+          approvedCount: 0,
+        });
+      });
+    }
+
+    essayEligibleSubmissions.forEach(sub => {
+      let uTitle = 'عام';
+      let uId = 'general';
+      if (data && data.length > 0) {
+        const found = data.find(u => u.lessons.some(l => l.id === sub.lessonId || l.title === sub.quizTitle));
+        if (found) {
+          uTitle = found.title;
+          uId = found.id;
+        }
+      }
+      if (!map.has(uTitle)) {
+        map.set(uTitle, {
+          id: uId,
+          title: uTitle,
+          count: 0,
+          pendingCount: 0,
+          draftCount: 0,
+          approvedCount: 0,
         });
       }
-
-      const grp = map.get(key)!;
-      grp.submissions.push(sub);
-      grp.totalCount++;
-
+      const item = map.get(uTitle)!;
+      item.count++;
       if (sub.isFullyApproved) {
-        grp.approvedCount++;
+        item.approvedCount++;
+      } else if (sub.isTeacherReviewed) {
+        item.draftCount++;
       } else {
-        grp.pendingCount++;
-        const hasDraft = sub.questions.some(q => q.teacherScore !== undefined);
-        if (hasDraft) grp.draftCount++;
+        item.pendingCount++;
       }
+    });
 
-      if (isSubOnline(sub)) {
-        grp.onlineCount++;
+    const list = Array.from(map.values()).filter(u => u.count > 0);
+
+    // ترتيب الوحدات: التي تحتوي على إجابات معلقة تنتظر التصحيح تأتي في الصدارة
+    return list.sort((a, b) => {
+      if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
+      if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
+      if (a.pendingCount !== b.pendingCount) return b.pendingCount - a.pendingCount;
+      if (a.draftCount > 0 && b.draftCount === 0) return -1;
+      if (a.draftCount === 0 && b.draftCount > 0) return 1;
+      return b.count - a.count;
+    });
+  }, [data, essayEligibleSubmissions]);
+
+  // استخراج قائمة الامتحانات المتاحة بناءً على الوحدة المحددة مع تتبع تفصيلي لحالات التصحيح
+  const availableQuizzes = useMemo(() => {
+    const map = new Map<string, {
+      title: string;
+      unitTitle: string;
+      count: number;
+      pendingCount: number;
+      draftCount: number;
+      approvedCount: number;
+    }>();
+
+    let allowedLessonTitles: string[] | null = null;
+    if (selectedUnitFilter !== 'all' && data && data.length > 0) {
+      const matchedUnit = data.find(u => u.title === selectedUnitFilter || u.id === selectedUnitFilter);
+      if (matchedUnit) {
+        allowedLessonTitles = matchedUnit.lessons.map(l => l.title);
+      }
+    }
+
+    essayEligibleSubmissions.forEach(sub => {
+      const qTitle = sub.quizTitle || 'اختبار';
+      if (allowedLessonTitles && !allowedLessonTitles.includes(qTitle) && !qTitle.includes(selectedUnitFilter)) {
+        return;
+      }
+      const uTitle = findUnitForQuiz(sub.lessonId, sub.quizTitle);
+
+      if (!map.has(qTitle)) {
+        map.set(qTitle, {
+          title: qTitle,
+          unitTitle: uTitle,
+          count: 0,
+          pendingCount: 0,
+          draftCount: 0,
+          approvedCount: 0,
+        });
+      }
+      const item = map.get(qTitle)!;
+      item.count++;
+      if (sub.isFullyApproved) {
+        item.approvedCount++;
+      } else if (sub.isTeacherReviewed) {
+        item.draftCount++;
       } else {
-        grp.centerCount++;
+        item.pendingCount++;
       }
     });
 
     const list = Array.from(map.values());
-    list.forEach(g => {
-      g.isFullyApproved = g.totalCount > 0 && g.pendingCount === 0;
-    });
-
+    // ترتيب: الامتحانات المعلقة أولاً، ثم التي بها مسودات، ثم المعتمدة
     return list.sort((a, b) => {
       if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
       if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
-      return b.pendingCount - a.pendingCount;
+      if (a.pendingCount !== b.pendingCount) return b.pendingCount - a.pendingCount;
+      if (a.draftCount > 0 && b.draftCount === 0) return -1;
+      if (a.draftCount === 0 && b.draftCount > 0) return 1;
+      return b.count - a.count;
     });
-  }, [submissions, data, onlineStudents]);
-
-  // الامتحانات المعلقة التي تنتظر التصحيح والاعتماد
-  const pendingQuizGroups = useMemo(() => {
-    return quizGroups.filter(g => !g.isFullyApproved);
-  }, [quizGroups]);
-
-  // الامتحانات المكتملة والمؤرشفة بالكامل
-  const archivedQuizGroups = useMemo(() => {
-    return quizGroups.filter(g => g.isFullyApproved);
-  }, [quizGroups]);
-
-  // فلترة المعلق بالبحث
-  const filteredPendingQuizGroups = useMemo(() => {
-    return pendingQuizGroups.filter(grp => {
-      if (quizSearchTerm.trim()) {
-        const term = quizSearchTerm.trim().toLowerCase();
-        const matchTitle = grp.quizTitle.toLowerCase().includes(term);
-        const matchUnit = grp.unitTitle.toLowerCase().includes(term);
-        if (!matchTitle && !matchUnit) return false;
-      }
-      return true;
-    });
-  }, [pendingQuizGroups, quizSearchTerm]);
-
-  // فلترة الأرشيف بالبحث
-  const filteredArchivedQuizGroups = useMemo(() => {
-    return archivedQuizGroups.filter(grp => {
-      if (quizSearchTerm.trim()) {
-        const term = quizSearchTerm.trim().toLowerCase();
-        const matchTitle = grp.quizTitle.toLowerCase().includes(term);
-        const matchUnit = grp.unitTitle.toLowerCase().includes(term);
-        if (!matchTitle && !matchUnit) return false;
-      }
-      return true;
-    });
-  }, [archivedQuizGroups, quizSearchTerm]);
+  }, [data, essayEligibleSubmissions, selectedUnitFilter]);
 
   // إحصائيات سريعة
   const stats = useMemo(() => {
-    const total = submissions.length;
-    const pending = submissions.filter(s => !s.isFullyApproved).length;
-    const approved = submissions.filter(s => s.isFullyApproved).length;
-    return { total, pending, approved };
-  }, [submissions]);
+    const total = essayEligibleSubmissions.length;
+    const pending = essayEligibleSubmissions.filter(s => !s.isFullyApproved && !s.isTeacherReviewed).length;
+    const reviewed = essayEligibleSubmissions.filter(s => !s.isFullyApproved && s.isTeacherReviewed).length;
+    const approved = essayEligibleSubmissions.filter(s => s.isFullyApproved).length;
+    return { total, pending, reviewed, approved };
+  }, [essayEligibleSubmissions]);
 
   // فلترة التسليمات
   const filteredSubmissions = useMemo(() => {
-    return submissions.filter(sub => {
+    return essayEligibleSubmissions.filter(sub => {
       const matchStatus = 
         statusFilter === 'all' ? true :
-        statusFilter === 'pending' ? !sub.isFullyApproved :
+        statusFilter === 'pending' ? (!sub.isFullyApproved && !sub.isTeacherReviewed) :
+        statusFilter === 'reviewed' ? (!sub.isFullyApproved && sub.isTeacherReviewed) :
         sub.isFullyApproved;
       
       const matchType = 
@@ -653,132 +769,26 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
 
       return matchStatus && matchType && matchUnit && matchQuiz && matchSearch;
     });
-  }, [submissions, statusFilter, studentTypeFilter, selectedUnitFilter, selectedQuizFilter, searchQuery, onlineStudents, data]);
+  }, [essayEligibleSubmissions, statusFilter, studentTypeFilter, selectedUnitFilter, selectedQuizFilter, searchQuery, onlineStudents, data]);
 
-  // البحث عن الطالب المعلق التالي في نفس الامتحان للانتقال السريع
+  // البحث عن الطالب التالي الذي ينتظر التصحيح الفعلي (لم يتم رصد درجاته بعد) للانتقال السلس
   const nextPendingSub = useMemo(() => {
     if (!selectedSubForReview) return null;
-    const sameQuizPending = submissions.filter(s => 
+    const sameQuizPending = essayEligibleSubmissions.filter(s => 
       (s.quizTitle === selectedSubForReview.quizTitle || s.lessonId === selectedSubForReview.lessonId) &&
       !s.isFullyApproved &&
+      !s.isTeacherReviewed &&
       s.id !== selectedSubForReview.id
     );
     if (sameQuizPending.length > 0) return sameQuizPending[0];
 
-    const anyPending = filteredSubmissions.filter(s => !s.isFullyApproved && s.id !== selectedSubForReview.id);
+    const anyPending = filteredSubmissions.filter(s => 
+      !s.isFullyApproved && 
+      !s.isTeacherReviewed && 
+      s.id !== selectedSubForReview.id
+    );
     return anyPending.length > 0 ? anyPending[0] : null;
-  }, [selectedSubForReview, submissions, filteredSubmissions]);
-
-  // اعتماد سريع لتسليم طالب باقتراح الذكاء الاصطناعي
-  const handleQuickApprove = (sub: StudentEssaySubmission) => {
-    let earnedEssay = 0;
-    const updatedQuestions = sub.questions.map(q => {
-      const approvedScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : q.maxScore);
-      earnedEssay += approvedScore;
-      return {
-        ...q,
-        teacherScore: approvedScore,
-        teacherFeedback: q.teacherFeedback || q.aiFeedback || 'تم اعتماد الإجابة بنجاح.',
-        isApproved: true,
-      };
-    });
-
-    const updatedSub: StudentEssaySubmission = {
-      ...sub,
-      questions: updatedQuestions,
-      isFullyApproved: true,
-      finalScore: earnedEssay,
-    };
-
-    savePendingEssaySubmission(updatedSub);
-    syncGradeToCloud(updatedSub);
-    refreshSubmissions();
-
-    if (onSaveResultToDB && sub.quizTitle) {
-      const maxPossible = sub.maxPossibleScore || 50;
-      const perc = Math.round((earnedEssay / maxPossible) * 100);
-      onSaveResultToDB({
-        quizName: sub.quizTitle,
-        score: `${perc}%`,
-        studentName: sub.studentName,
-        studentPhone: sub.studentPhone,
-      });
-    }
-
-    showToast(`✅ تم اعتماد درجات الطالب: ${sub.studentName}`);
-  };
-
-  // اعتماد جماعي لجميع التسليمات المعلقة بنقرة واحدة (Bulk Approve)
-  const handleBulkApproveAll = () => {
-    const pendingList = submissions.filter(s => !s.isFullyApproved);
-    if (pendingList.length === 0) return;
-
-    if (!window.confirm(`هل أنت متأكد من اعتماد جميع الإجابات المعلقة (عددها ${pendingList.length}) باقتراحات الذكاء الاصطناعي فوراً؟`)) {
-      return;
-    }
-
-    pendingList.forEach(sub => {
-      handleQuickApprove(sub);
-    });
-
-    showToast(`🎉 تم اعتماد جميع التسليمات المعلقة بنجاح!`);
-  };
-
-  // اعتماد وإعلان نتائج امتحان بالكامل دفعة واحدة بنقرة واحدة مع تأكيد إتاحة بنك الأخطاء
-  const handleApproveQuizBatch = (grp: { quizTitle: string; pendingCount: number; submissions: StudentEssaySubmission[] }) => {
-    const pendingList = grp.submissions.filter(s => !s.isFullyApproved);
-    if (pendingList.length === 0) {
-      showToast('جميع درجات هذا الامتحان معتمدة بالفعل.');
-      return;
-    }
-    setBatchApproveDialog({ grp });
-  };
-
-  const executeBatchApprove = (releaseMistakes: boolean) => {
-    if (!batchApproveDialog) return;
-    const { grp } = batchApproveDialog;
-    const pendingList = grp.submissions.filter(s => !s.isFullyApproved);
-    setBatchApproveDialog(null);
-
-    pendingList.forEach(sub => {
-      let earnedEssay = 0;
-      const updatedQuestions = sub.questions.map(q => {
-        const approvedScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : q.maxScore);
-        earnedEssay += approvedScore;
-        return {
-          ...q,
-          teacherScore: approvedScore,
-          teacherFeedback: q.teacherFeedback || q.aiFeedback || 'تم اعتماد الإجابة بنجاح.',
-          isApproved: true,
-        };
-      });
-
-      const updatedSub: StudentEssaySubmission = {
-        ...sub,
-        questions: updatedQuestions,
-        isFullyApproved: true,
-        isMistakesBankReleased: releaseMistakes,
-        finalScore: earnedEssay,
-      };
-
-      savePendingEssaySubmission(updatedSub);
-      syncGradeToCloud(updatedSub);
-
-      if (onSaveResultToDB && sub.quizTitle) {
-        const maxPossible = sub.maxPossibleScore || 50;
-        const perc = Math.round((earnedEssay / Math.max(1, maxPossible)) * 100);
-        onSaveResultToDB({
-          quizName: sub.quizTitle,
-          score: `${perc}%`,
-          studentName: sub.studentName,
-          studentPhone: sub.studentPhone,
-        });
-      }
-    });
-
-    refreshSubmissions();
-    showToast(`🎉 تم اعتماد نتائج امتحان "${grp.quizTitle}" (${releaseMistakes ? 'مع إتاحة بنك الأخطاء للطلاب' : 'مع حجب بنك الأخطاء'}) بنجاح!`);
-  };
+  }, [selectedSubForReview, essayEligibleSubmissions, filteredSubmissions]);
 
   // حذف تسليم
   const handleDeleteSubmission = (id: string) => {
@@ -887,520 +897,207 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     <>
       <div className={`bg-white rounded-2xl shadow-md overflow-hidden animate-fade-in ${selectedSubForReview ? 'hidden' : ''}`} dir="rtl">
       {/* رأس التبويب */}
-      <div className="bg-gradient-to-l from-amber-50/90 via-white to-orange-50/60 p-4 sm:p-5 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+      <div className="bg-gradient-to-l from-amber-50/90 via-white to-orange-50/60 p-3 sm:p-5 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h2 className="text-xl font-black text-primary flex items-center gap-2">
-            <i className="fas fa-feather-alt text-amber-500"></i> تصحيح واعتماد الأسئلة المقالية
+          <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-2">
+            <i className="fas fa-feather-alt text-amber-500"></i> تصحيح الأسئلة المقالية ✍️
           </h2>
-          <p className="text-xs text-gray-500 font-bold mt-1">
-            استعرض إجابات الطلاب على الأسئلة المقالية، واعتمد اقتراحات الذكاء الاصطناعي بنقرة واحدة أو عدّلها بحرية.
-          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
             onClick={() => fetchCloudSubmissions(true)}
             disabled={isLoadingCloud}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-            title="تحديث وجلب كافة إجابات الطلاب المقالية من السحابة فوراً"
+            className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            title="تحديث وجلب كافة إجابات الطلاب المقالية من السحابة"
           >
             <i className={isLoadingCloud ? "fas fa-spinner fa-spin" : "fas fa-cloud-arrow-down"}></i>
-            <span>{isLoadingCloud ? "جاري التحديث..." : "تحديث من السحابة 🔄"}</span>
+            <span>{isLoadingCloud ? "جاري التحديث..." : "تحديث السحابة 🔄"}</span>
           </button>
 
           {onNavigateToApproval && (
             <button
               type="button"
               onClick={onNavigateToApproval}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer relative"
+              title="الانتقال لاعتماد نتائج الطلاب ونشرها"
             >
-              <i className="fas fa-bullhorn text-yellow-300"></i>
-              اعتماد وإعلان النتائج 📢
-            </button>
-          )}
-
-          {stats.pending > 0 && (
-            <button
-              type="button"
-              onClick={handleBulkApproveAll}
-              className="bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <i className="fas fa-bolt text-yellow-300"></i>
-              اعتماد كل المعلق ({stats.pending})
+              <i className="fas fa-stamp text-yellow-300"></i>
+              <span>اعتماد النتائج 🎯</span>
+              {stats.reviewed > 0 && (
+                <span className="bg-white text-emerald-800 text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full shadow-2xs">
+                  {toEasternArabic(stats.reviewed)}
+                </span>
+              )}
             </button>
           )}
         </div>
       </div>
 
-      <div className="p-4 sm:p-6 space-y-6">
+      <div className="p-3 sm:p-5 space-y-3.5 sm:space-y-4">
         
         {/* إشعار عائم للتأكيد */}
         {toastMessage && (
-          <div className="p-3 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs sm:text-sm font-black flex items-center gap-2 animate-fade-in">
+          <div className="p-2.5 sm:p-3 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs sm:text-sm font-black flex items-center gap-2 animate-fade-in">
             <i className="fas fa-check-circle text-emerald-600"></i>
             {toastMessage}
           </div>
         )}
 
-        {/* كروت الإحصائيات السريعة */}
-        <div className="grid grid-cols-3 gap-3">
+        {/* لوحة المؤشرات الذكية والفلاتر السريعة بنقرة واحدة */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+          {/* 1. بانتظار التصحيح */}
           <div 
-            onClick={() => {
-              setMainView('pending');
-              setSelectedQuizFilter('all');
-            }}
-            className={`p-3.5 rounded-2xl border-2 text-center cursor-pointer transition-all ${
-              mainView === 'pending' ? 'border-amber-400 bg-amber-50 shadow-sm' : 'border-gray-200 bg-gray-50/60 hover:bg-gray-100'
+            onClick={() => setStatusFilter('pending')}
+            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+              statusFilter === 'pending'
+                ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-400/40 shadow-xs'
+                : 'border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50/20'
             }`}
+            title="انقر لعرض الطلاب بانتظار التصحيح فقط"
           >
-            <span className="text-xs font-bold text-amber-700 block mb-1">⏳ بانتظار الاعتماد</span>
-            <span className="text-2xl font-black text-amber-900">{toEasternArabic(stats.pending)} طالب</span>
-          </div>
-
-          <div 
-            onClick={() => {
-              setMainView('archive');
-              setSelectedQuizFilter('all');
-            }}
-            className={`p-3.5 rounded-2xl border-2 text-center cursor-pointer transition-all ${
-              mainView === 'archive' ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-gray-200 bg-gray-50/60 hover:bg-gray-100'
-            }`}
-          >
-            <span className="text-xs font-bold text-emerald-700 block mb-1">🗄️ أرشيف المقالي</span>
-            <span className="text-2xl font-black text-emerald-900">{toEasternArabic(archivedQuizGroups.length)} امتحان</span>
-          </div>
-
-          <div 
-            onClick={() => {
-              setMainView('students');
-              setStatusFilter('all');
-            }}
-            className={`p-3.5 rounded-2xl border-2 text-center cursor-pointer transition-all ${
-              mainView === 'students' ? 'border-primary bg-primary/5 shadow-sm' : 'border-gray-200 bg-gray-50/60 hover:bg-gray-100'
-            }`}
-          >
-            <span className="text-xs font-bold text-primary block mb-1">📁 إجمالي تسليمات الطلاب</span>
-            <span className="text-2xl font-black text-primary">{toEasternArabic(stats.total)} تسليم</span>
-          </div>
-        </div>
-
-        {/* شريط التبديل بين الأقسام: بانتظار الاعتماد | أرشيف المقالي | تسليمات الطلاب */}
-        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-2xl border border-gray-200 overflow-x-auto">
-          {/* تبويب بانتظار الاعتماد */}
-          <button
-            type="button"
-            onClick={() => {
-              setMainView('pending');
-              setSelectedQuizFilter('all');
-            }}
-            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              mainView === 'pending'
-                ? 'bg-amber-500 text-white shadow-md'
-                : 'text-gray-700 hover:bg-white/60'
-            }`}
-          >
-            <i className="fas fa-clock"></i>
-            <span>امتحانات بانتظار الاعتماد</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-              mainView === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-900'
-            }`}>
-              {toEasternArabic(pendingQuizGroups.length)}
-            </span>
-          </button>
-
-          {/* تبويب أرشيف المقالي المعتمد */}
-          <button
-            type="button"
-            onClick={() => {
-              setMainView('archive');
-              setSelectedQuizFilter('all');
-            }}
-            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              mainView === 'archive'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-gray-700 hover:bg-white/60'
-            }`}
-          >
-            <i className="fas fa-archive"></i>
-            <span>أرشيف المقالي المعتمد</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-              mainView === 'archive' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-900'
-            }`}>
-              {toEasternArabic(archivedQuizGroups.length)}
-            </span>
-          </button>
-
-          {/* تبويب قائمة جميع تسليمات الطلاب */}
-          <button
-            type="button"
-            onClick={() => {
-              setMainView('students');
-              setStatusFilter('all');
-            }}
-            className={`flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              mainView === 'students'
-                ? 'bg-slate-900 text-white shadow-md'
-                : 'text-gray-700 hover:bg-white/60'
-            }`}
-          >
-            <i className="fas fa-user-graduate"></i>
-            <span>سجل تسليمات الطلاب</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-              mainView === 'students' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'
-            }`}>
-              {toEasternArabic(submissions.length)}
-            </span>
-          </button>
-        </div>
-
-        {/* ========================================================= */}
-        {/* العرض الأول: بطاقات الامتحانات المعلقة التي تنتظر الاعتماد */}
-        {/* ========================================================= */}
-        {mainView === 'pending' && (
-          <div className="space-y-4">
-            {/* شريط البحث إن كان هناك امتحانات معلقة */}
-            {pendingQuizGroups.length > 0 && (
-              <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-2xl border border-gray-200">
-                <div className="relative flex-1 w-full">
-                  <i className="fas fa-search absolute right-3.5 top-3 text-gray-400 text-xs"></i>
-                  <input
-                    type="text"
-                    placeholder="ابحث باسم الامتحان أو الوحدة..."
-                    value={quizSearchTerm}
-                    onChange={e => setQuizSearchTerm(e.target.value)}
-                    className="w-full pr-9 pl-3 py-2 text-xs font-bold border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary outline-none bg-white"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* الحالة: لا توجد امتحانات بانتظار الاعتماد */}
-            {filteredPendingQuizGroups.length === 0 ? (
-              <div className="text-center py-12 px-4 bg-emerald-50/50 rounded-3xl border-2 border-dashed border-emerald-200">
-                <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-3 shadow-xs">
-                  <i className="fas fa-check-circle"></i>
-                </div>
-                <h3 className="text-lg font-black text-emerald-900 mb-1">
-                  ممتاز يا أستاذ إسلام! لا توجد امتحانات بانتظار الاعتماد حالياً 🎉
-                </h3>
-                <p className="text-xs font-bold text-emerald-700/80 max-w-md mx-auto mb-4">
-                  تم تصحيح واعتماد جميع إجابات الطلاب المقالية بنجاح، ونُقلت الامتحانات بالكامل إلى الأرشيف.
-                </p>
-                {archivedQuizGroups.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setMainView('archive')}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl text-xs sm:text-sm shadow-sm transition-all active:scale-95 inline-flex items-center gap-2 cursor-pointer"
-                  >
-                    <i className="fas fa-archive"></i>
-                    <span>استعراض أرشيف المقالي المعتمد ({toEasternArabic(archivedQuizGroups.length)}) 🗄️</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {filteredPendingQuizGroups.map(grp => {
-                  const progressPerc = grp.totalCount > 0 ? Math.round((grp.approvedCount / grp.totalCount) * 100) : 0;
-
-                  return (
-                    <div
-                      key={grp.quizTitle}
-                      className="rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50/50 via-white to-orange-50/30 p-4 sm:p-5 flex flex-col justify-between gap-4 shadow-sm hover:shadow-md transition-all"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold text-gray-600 bg-gray-100 px-2.5 py-0.5 rounded-md border border-gray-200">
-                              📁 {grp.unitTitle}
-                            </span>
-                            <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full border bg-amber-100 text-amber-900 border-amber-300 flex items-center gap-1">
-                              <i className="fas fa-hourglass-half"></i>
-                              <span>متبقي {toEasternArabic(grp.pendingCount)} تسليم معلق</span>
-                            </span>
-                          </div>
-
-                          <span className="text-xs font-black text-gray-700 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shrink-0">
-                            {toEasternArabic(grp.totalCount)} طالب
-                          </span>
-                        </div>
-
-                        <h3 className="text-base sm:text-lg font-black text-gray-900 mb-2 leading-snug">
-                          {grp.quizTitle}
-                        </h3>
-
-                        {/* شريط التقدم المرئي */}
-                        <div className="space-y-1 mb-3">
-                          <div className="flex justify-between text-[11px] font-bold text-gray-600">
-                            <span>نسبة تصحيح واعتماد الإجابات</span>
-                            <span className="font-mono font-black text-primary">{toEasternArabic(progressPerc)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div
-                              className="h-full bg-gradient-to-r from-amber-500 to-primary transition-all duration-500"
-                              style={{ width: `${progressPerc}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* شارات تفصيلية */}
-                        <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-bold">
-                          <span className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-                            <i className="fas fa-clock text-amber-600"></i> {toEasternArabic(grp.pendingCount)} معلق
-                          </span>
-                          {grp.draftCount > 0 && (
-                            <span className="bg-purple-50 text-purple-900 border border-purple-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-                              <i className="fas fa-bookmark text-purple-600"></i> {toEasternArabic(grp.draftCount)} مسودة
-                            </span>
-                          )}
-                          {grp.approvedCount > 0 && (
-                            <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-                              <i className="fas fa-check text-emerald-600"></i> {toEasternArabic(grp.approvedCount)} معتمد
-                            </span>
-                          )}
-                          <span className="bg-blue-50 text-blue-900 border border-blue-200 px-2 py-0.5 rounded-md">
-                            🏫 {toEasternArabic(grp.centerCount)} سنتر
-                          </span>
-                          <span className="bg-teal-50 text-teal-900 border border-teal-200 px-2 py-0.5 rounded-md">
-                            🌐 {toEasternArabic(grp.onlineCount)} أونلاين
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* أزرار الإجراءات */}
-                      <div className="flex items-center gap-2 pt-3 border-t border-gray-100 flex-wrap sm:flex-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedQuizFilter(grp.quizTitle);
-                            setSelectedUnitFilter('all');
-                            setStatusFilter('all');
-                            setSearchQuery('');
-                            setPreviousQuizView('pending');
-                            setMainView('students');
-                            if (grp.submissions && grp.submissions.length === 1) {
-                              setSelectedSubForReview(grp.submissions[0]);
-                            }
-                          }}
-                          className="flex-1 bg-primary hover:bg-primary-dark text-white font-black py-2.5 px-3 rounded-xl text-xs sm:text-sm shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <i className="fas fa-pen-nib"></i>
-                          <span>
-                            {grp.totalCount === 1 
-                              ? 'تصحيح إجابات وسجل الطالب (١)' 
-                              : `تصحيح طلاب هذا الامتحان (${toEasternArabic(grp.totalCount)})`}
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleApproveQuizBatch(grp)}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-3.5 rounded-xl text-xs sm:text-sm shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                          title="اعتماد درجات جميع طلاب هذا الامتحان دفعة واحدة"
-                        >
-                          <i className="fas fa-check-double"></i>
-                          <span>اعتماد النتيجة دفعة واحدة</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ========================================================= */}
-        {/* العرض الثاني: أرشيف المقالي المعتمد بالكامل              */}
-        {/* ========================================================= */}
-        {mainView === 'archive' && (
-          <div className="space-y-4">
-            {/* شريط البحث للأرشيف */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-emerald-50/50 p-3.5 rounded-2xl border border-emerald-200">
-              <div className="relative flex-1 w-full">
-                <i className="fas fa-search absolute right-3.5 top-3 text-emerald-600/70 text-xs"></i>
-                <input
-                  type="text"
-                  placeholder="ابحث في أرشيف المقالي باسم الامتحان أو الوحدة..."
-                  value={quizSearchTerm}
-                  onChange={e => setQuizSearchTerm(e.target.value)}
-                  className="w-full pr-9 pl-3 py-2 text-xs font-bold border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-                />
-              </div>
-              <div className="text-xs font-black text-emerald-900 bg-white px-3.5 py-2 rounded-xl border border-emerald-200 shadow-2xs shrink-0 flex items-center gap-1.5">
-                <i className="fas fa-archive text-emerald-600"></i>
-                <span>المؤرشف: {toEasternArabic(archivedQuizGroups.length)} امتحان معتمد</span>
-              </div>
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <span className={`w-2 h-2 rounded-full bg-amber-500 ${stats.pending > 0 ? 'animate-ping' : ''}`}></span>
+              <span className="text-[11px] sm:text-xs font-black text-amber-800">⏳ بانتظار التصحيح</span>
             </div>
-
-            {filteredArchivedQuizGroups.length === 0 ? (
-              <div className="text-center py-12 px-4 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
-                <i className="fas fa-archive text-4xl text-gray-300 mb-2 block"></i>
-                <p className="text-sm font-bold text-gray-500">لا توجد امتحانات مؤرشفة مطابقة لمعايير البحث الحالية.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {filteredArchivedQuizGroups.map(grp => (
-                  <div
-                    key={grp.quizTitle}
-                    className="rounded-2xl border-2 border-emerald-200 bg-white p-4 sm:p-5 flex flex-col justify-between gap-4 shadow-xs hover:shadow-md transition-all"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-bold text-gray-600 bg-gray-100 px-2.5 py-0.5 rounded-md border border-gray-200">
-                            📁 {grp.unitTitle}
-                          </span>
-                          <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full border bg-emerald-100 text-emerald-800 border-emerald-300 flex items-center gap-1">
-                            <i className="fas fa-check-circle"></i>
-                            <span>مؤرشف ومعلن للطلاب 100%</span>
-                          </span>
-                        </div>
-
-                        <span className="text-xs font-black text-gray-700 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shrink-0">
-                          {toEasternArabic(grp.totalCount)} طالب
-                        </span>
-                      </div>
-
-                      <h3 className="text-base sm:text-lg font-black text-gray-900 mb-2 leading-snug">
-                        {grp.quizTitle}
-                      </h3>
-
-                      {/* شريط التقدم 100% مكتمل */}
-                      <div className="space-y-1 mb-3">
-                        <div className="flex justify-between text-[11px] font-bold text-emerald-800">
-                          <span>نسبة اعتماد الإجابات</span>
-                          <span className="font-mono font-black">١٠٠%</span>
-                        </div>
-                        <div className="w-full bg-emerald-100 rounded-full h-2 overflow-hidden">
-                          <div className="h-full bg-emerald-500 w-full" />
-                        </div>
-                      </div>
-
-                      {/* الشارات الإحصائية */}
-                      <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-bold">
-                        <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-                          <i className="fas fa-check text-emerald-600"></i> {toEasternArabic(grp.approvedCount)} معتمد
-                        </span>
-                        <span className="bg-blue-50 text-blue-900 border border-blue-200 px-2 py-0.5 rounded-md">
-                          🏫 {toEasternArabic(grp.centerCount)} سنتر
-                        </span>
-                        <span className="bg-teal-50 text-teal-900 border border-teal-200 px-2 py-0.5 rounded-md">
-                          🌐 {toEasternArabic(grp.onlineCount)} أونلاين
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* أزرار الإجراءات في الأرشيف */}
-                    <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedQuizFilter(grp.quizTitle);
-                          setSelectedUnitFilter('all');
-                          setStatusFilter('all');
-                          setSearchQuery('');
-                          setPreviousQuizView('archive');
-                          setMainView('students');
-                          if (grp.submissions && grp.submissions.length === 1) {
-                            setSelectedSubForReview(grp.submissions[0]);
-                          }
-                        }}
-                        className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-black py-2.5 px-3 rounded-xl text-xs sm:text-sm shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <i className="fas fa-eye"></i>
-                        <span>
-                          {grp.totalCount === 1 
-                            ? 'معاينة إجابات وسجل الطالب (١)' 
-                            : `استعراض سجل طلاب هذا الامتحان (${toEasternArabic(grp.totalCount)})`}
-                        </span>
-                      </button>
-                      <span className="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 py-2 px-3 rounded-xl flex items-center gap-1 shrink-0">
-                        <i className="fas fa-check-circle"></i> معلن للطلاب
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <span className="text-lg sm:text-2xl font-black text-amber-950 block">
+              {toEasternArabic(stats.pending)} طالب
+            </span>
           </div>
-        )}
 
-        {/* ========================================================= */}
-        {/* العرض الثاني: قائمة تسليمات الطلاب                       */}
-        {/* ========================================================= */}
-        {mainView === 'students' && (
-          <div className="space-y-4 animate-fade-in">
+          {/* 2. مسودات مصححة */}
+          <div 
+            onClick={() => setStatusFilter('reviewed')}
+            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+              statusFilter === 'reviewed'
+                ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-400/40 shadow-xs'
+                : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/20'
+            }`}
+            title="انقر لعرض المسودات المصححة الجاهزة للاعتماد"
+          >
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <span className="text-[11px] sm:text-xs font-black text-purple-800">💾 مسودات مصححة</span>
+            </div>
+            <span className="text-lg sm:text-2xl font-black text-purple-950 block">
+              {toEasternArabic(stats.reviewed)} طالب
+            </span>
+          </div>
+
+          {/* 3. معتمد ومؤرشف */}
+          <div 
+            onClick={() => setStatusFilter('approved')}
+            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+              statusFilter === 'approved'
+                ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-400/40 shadow-xs'
+                : 'border-gray-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/20'
+            }`}
+            title="انقر لعرض الطلاب والامتحانات المعتمدة والمؤرشفة"
+          >
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <span className="text-[11px] sm:text-xs font-black text-emerald-800">✅ معتمد ومؤرشف</span>
+            </div>
+            <span className="text-lg sm:text-2xl font-black text-emerald-950 block">
+              {toEasternArabic(stats.approved)} طالب
+            </span>
+          </div>
+
+          {/* 4. إجمالي التسليمات */}
+          <div 
+            onClick={() => setStatusFilter('all')}
+            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+              statusFilter === 'all'
+                ? 'border-slate-800 bg-slate-100 ring-2 ring-slate-400/40 shadow-xs'
+                : 'border-gray-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+            }`}
+            title="انقر لعرض كافة الطلاب بلا استثناء"
+          >
+            <div className="flex items-center justify-center gap-1.5 mb-1">
+              <span className="text-[11px] sm:text-xs font-black text-slate-800">📁 إجمالي التسليمات</span>
+            </div>
+            <span className="text-lg sm:text-2xl font-black text-slate-900 block">
+              {toEasternArabic(stats.total)} تسليم
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-4 animate-fade-in">
             {/* شريط وضع التركيز إن كان هناك امتحان محدد */}
             {selectedQuizFilter !== 'all' && (
-              <div className="bg-gradient-to-r from-indigo-950 via-primary to-slate-900 text-white p-4 rounded-2xl shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center text-lg font-black shrink-0 shadow-sm">
+              <div className="bg-gradient-to-r from-indigo-950 via-primary to-slate-900 text-white p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl shadow-md flex items-center justify-between gap-2.5 animate-fade-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-amber-400 text-slate-950 flex items-center justify-center text-xs sm:text-sm font-black shrink-0 shadow-2xs">
                     <i className="fas fa-bullseye"></i>
                   </div>
-                  <div>
-                    <span className="text-[11px] text-amber-300 font-bold block">وضع التركيز على تصحيح امتحان محدد:</span>
-                    <h3 className="text-base sm:text-lg font-black">{selectedQuizFilter}</h3>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-amber-300 font-bold block">الامتحان المحدد:</span>
+                    <h3 className="text-xs sm:text-sm font-black truncate">{selectedQuizFilter}</h3>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 flex-wrap">
-                  {(() => {
-                    const currentGrp = quizGroups.find(g => g.quizTitle === selectedQuizFilter || g.lessonId === selectedQuizFilter);
-                    if (currentGrp && currentGrp.pendingCount > 0) {
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => handleApproveQuizBatch(currentGrp)}
-                          className="flex-1 sm:flex-none bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black px-3.5 py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
-                        >
-                          <i className="fas fa-check-double"></i> اعتماد كل طلاب هذا الامتحان ({toEasternArabic(currentGrp.pendingCount)})
-                        </button>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedQuizFilter('all');
-                      setMainView(previousQuizView);
-                    }}
-                    className="flex-1 sm:flex-none bg-white/15 hover:bg-white/25 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 border border-white/20 active:scale-95 cursor-pointer"
-                  >
-                    <i className="fas fa-arrow-right"></i> {previousQuizView === 'archive' ? 'العودة لأرشيف المقالي 🗄️' : 'العودة للامتحانات المعلقة ⏳'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedQuizFilter('all')}
+                  className="bg-white/15 hover:bg-white/25 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition-all flex items-center justify-center gap-1 border border-white/20 active:scale-95 cursor-pointer shrink-0"
+                  title="عرض كافة الامتحانات"
+                >
+                  <i className="fas fa-times"></i>
+                  <span>كافة الامتحانات</span>
+                </button>
               </div>
             )}
 
-            {/* القوائم المنسدلة لاختيار الوحدة والدرس للتصحيح الموجه */}
-            <div className="bg-slate-50 border-2 border-slate-200 p-3.5 sm:p-4 rounded-2xl space-y-3">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
-                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                  <i className="fas fa-layer-group text-primary"></i>
-                  تحديد الامتحان المستهدف للتصحيح (فلترة موجهة):
-                </span>
-                {(selectedUnitFilter !== 'all' || selectedQuizFilter !== 'all') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedUnitFilter('all');
-                      setSelectedQuizFilter('all');
-                    }}
-                    className="text-[11px] font-black text-primary hover:underline cursor-pointer flex items-center gap-1"
-                  >
-                    <i className="fas fa-times-circle"></i> إعادة ضبط الفلترة
-                  </button>
-                )}
+            {/* لوحة تحديد الامتحان والوحدة المستهدفة للتصحيح بإظهار لوني ذكي */}
+            <div className="bg-white border-2 border-slate-200 p-3 sm:p-4 rounded-xl sm:rounded-2xl space-y-3 shadow-xs">
+              
+              {/* ترويسة اللوحة ودليل الألوان السريع والموجز */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-xs sm:text-sm font-black shrink-0">
+                    <i className="fas fa-layer-group"></i>
+                  </span>
+                  <h3 className="text-xs sm:text-sm font-black text-slate-900">
+                    تحديد الوحدة والامتحان
+                  </h3>
+                </div>
+
+                {/* دليل دلالة الألوان المصغر وزر الإلغاء */}
+                <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-bold">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span>⏳ معلق</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 text-purple-900 border border-purple-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                    <span>💾 مسودة</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-900 border border-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    <span>✅ معتمد</span>
+                  </span>
+                  {(selectedUnitFilter !== 'all' || selectedQuizFilter !== 'all') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedUnitFilter('all');
+                        setSelectedQuizFilter('all');
+                      }}
+                      className="font-black text-rose-600 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded-md border border-rose-200 cursor-pointer flex items-center gap-1"
+                      title="إلغاء الفلترة والعودة لعرض كافة الوحدات"
+                    >
+                      <i className="fas fa-times"></i>
+                      <span>إلغاء</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* القائمة المنسدلة 1: الوحدة الدراسية */}
+              {/* القوائم المنسدلة لاختيار الوحدة والدرس */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. اختيار الوحدة الدراسية */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    📂 1. اختيار الوحدة الدراسية:
+                  <label className="block text-[11px] sm:text-xs font-black text-slate-700 mb-1">
+                    📂 الوحدة الدراسية:
                   </label>
                   <select
                     value={selectedUnitFilter}
@@ -1408,104 +1105,336 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                       setSelectedUnitFilter(e.target.value);
                       setSelectedQuizFilter('all');
                     }}
-                    className="w-full p-2.5 text-xs sm:text-sm font-bold border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary outline-none bg-white shadow-2xs"
+                    className="w-full p-2 sm:p-2.5 text-xs sm:text-sm font-bold border border-slate-300 rounded-xl focus:border-primary outline-none bg-slate-50 text-slate-900 shadow-2xs"
                   >
-                    <option value="all">🌟 جميع الوحدات الدراسية ({toEasternArabic(stats.total)} تسليم)</option>
-                    {availableUnits.map(u => (
-                      <option key={u.id} value={u.title}>
-                        📁 {u.title} ({toEasternArabic(u.count)} تسليم)
-                      </option>
-                    ))}
+                    <option value="all">🌟 جميع الوحدات ({toEasternArabic(stats.total)} تسليم)</option>
+                    {availableUnits.map(u => {
+                      const tag = u.pendingCount > 0 
+                        ? `⏳ [مطلوب: ${toEasternArabic(u.pendingCount)}]`
+                        : u.draftCount > 0
+                        ? `💾 [مسودات: ${toEasternArabic(u.draftCount)}]`
+                        : `✅ [معتمدة]`;
+                      return (
+                        <option key={u.id} value={u.title}>
+                          {tag} {u.title} ({toEasternArabic(u.count)})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
-                {/* القائمة المنسدلة 2: الدرس / الامتحان */}
+                {/* 2. اختيار الدرس / الامتحان */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    📝 2. اختيار الدرس / الامتحان المراد تصحيحه:
+                  <label className="block text-[11px] sm:text-xs font-black text-slate-700 mb-1">
+                    📝 الامتحان المستهدف:
                   </label>
                   <select
                     value={selectedQuizFilter}
                     onChange={e => setSelectedQuizFilter(e.target.value)}
-                    className="w-full p-2.5 text-xs sm:text-sm font-bold border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary outline-none bg-white shadow-2xs"
+                    className="w-full p-2 sm:p-2.5 text-xs sm:text-sm font-bold border border-slate-300 rounded-xl focus:border-primary outline-none bg-slate-50 text-slate-900 shadow-2xs"
                   >
                     <option value="all">
-                      📖 جميع الامتحانات والدروس ({toEasternArabic(availableQuizzes.reduce((s, q) => s + q.count, 0))} تسليم)
+                      📖 جميع الامتحانات ({toEasternArabic(availableQuizzes.reduce((s, q) => s + q.count, 0))} تسليم)
                     </option>
-                    {availableQuizzes.map(q => (
-                      <option key={q.title} value={q.title}>
-                        {q.title} ({toEasternArabic(q.count)} طالب {q.pendingCount > 0 ? `• ⏳ ${toEasternArabic(q.pendingCount)} معلق` : '• ✅ معتمد'})
-                      </option>
-                    ))}
+                    {availableQuizzes.map(q => {
+                      const tag = q.pendingCount > 0
+                        ? `⏳ [معلق: ${toEasternArabic(q.pendingCount)}]`
+                        : q.draftCount > 0
+                        ? `💾 [مسودات: ${toEasternArabic(q.draftCount)}]`
+                        : `✅ [معتمد]`;
+                      return (
+                        <option key={q.title} value={q.title}>
+                          {tag} {q.title} ({toEasternArabic(q.count)})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
+
+              {/* أزرار الوحدات السريعة بالتمرير الأفقي */}
+              {availableUnits.length > 0 && (
+                <div className="space-y-1 pt-0.5">
+                  <span className="text-[11px] font-black text-slate-600 block">
+                    الوحدات الدراسية:
+                  </span>
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex-nowrap scroll-smooth">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedUnitFilter('all');
+                        setSelectedQuizFilter('all');
+                      }}
+                      className={`text-xs font-black px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                        selectedUnitFilter === 'all'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                      }`}
+                    >
+                      <span>🌟 الكل</span>
+                      <span className="bg-white/20 px-1 py-0.2 rounded text-[10px]">
+                        {toEasternArabic(stats.total)}
+                      </span>
+                    </button>
+
+                    {availableUnits.map(u => {
+                      const isPending = u.pendingCount > 0;
+                      const isDraft = !isPending && u.draftCount > 0;
+                      const isSelected = selectedUnitFilter === u.title;
+
+                      let btnClass = '';
+                      if (isSelected) {
+                        btnClass = isPending 
+                          ? 'bg-amber-500 text-white shadow-xs ring-2 ring-amber-400 font-black' 
+                          : isDraft 
+                          ? 'bg-purple-600 text-white shadow-xs ring-2 ring-purple-400 font-black'
+                          : 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400 font-black';
+                      } else {
+                        btnClass = isPending
+                          ? 'bg-amber-50 text-amber-950 border border-amber-300 hover:bg-amber-100'
+                          : isDraft
+                          ? 'bg-purple-50 text-purple-950 border border-purple-300 hover:bg-purple-100'
+                          : 'bg-emerald-50 text-emerald-950 border border-emerald-300 hover:bg-emerald-100';
+                      }
+
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedUnitFilter(u.title);
+                            setSelectedQuizFilter('all');
+                          }}
+                          className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${btnClass}`}
+                        >
+                          <span>{isPending ? '⏳' : isDraft ? '💾' : '✅'}</span>
+                          <span>{u.title}</span>
+                          <span className={`px-1 py-0.2 rounded text-[10px] font-mono ${
+                            isSelected ? 'bg-white/25 text-white font-black' : 'bg-black/5 text-gray-700'
+                          }`}>
+                            {isPending ? `${toEasternArabic(u.pendingCount)}` : `${toEasternArabic(u.count)}`}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* بطاقات / أزرار الامتحانات المستهدفة الملونة */}
+              {availableQuizzes.length > 0 && (
+                <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-black text-slate-700">
+                      الامتحانات المستهدفة ({toEasternArabic(availableQuizzes.length)}):
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[220px] overflow-y-auto p-0.5">
+                    {/* خيار عرض كافة الامتحانات */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQuizFilter('all')}
+                      className={`p-2 rounded-xl border-2 text-right transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                        selectedQuizFilter === 'all'
+                          ? 'border-slate-800 bg-slate-900 text-white shadow-xs'
+                          : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-sm shrink-0">🌟</span>
+                        <div className="text-xs font-black truncate">كافة الامتحانات والدروس</div>
+                      </div>
+                      <span className={`text-[11px] font-mono font-black px-1.5 py-0.2 rounded-md shrink-0 ${
+                        selectedQuizFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {toEasternArabic(availableQuizzes.reduce((s, q) => s + q.count, 0))}
+                      </span>
+                    </button>
+
+                    {/* قائمة الامتحانات الملونة */}
+                    {availableQuizzes.map(q => {
+                      const isPending = q.pendingCount > 0;
+                      const isDraft = !isPending && q.draftCount > 0;
+                      const isSelected = selectedQuizFilter === q.title;
+
+                      let cardStyle = '';
+                      let badgeStyle = '';
+                      let badgeText = '';
+
+                      if (isPending) {
+                        badgeText = `⏳ معلق: ${toEasternArabic(q.pendingCount)}`;
+                        if (isSelected) {
+                          cardStyle = 'border-amber-500 bg-amber-100 ring-2 ring-amber-400/50 shadow-2xs';
+                          badgeStyle = 'bg-amber-500 text-white';
+                        } else {
+                          cardStyle = 'border-amber-300 bg-amber-50/70 hover:bg-amber-100/80';
+                          badgeStyle = 'bg-amber-200/80 text-amber-950 border border-amber-300';
+                        }
+                      } else if (isDraft) {
+                        badgeText = `💾 مسودات: ${toEasternArabic(q.draftCount)}`;
+                        if (isSelected) {
+                          cardStyle = 'border-purple-500 bg-purple-100 ring-2 ring-purple-400/50 shadow-2xs';
+                          badgeStyle = 'bg-purple-600 text-white';
+                        } else {
+                          cardStyle = 'border-purple-300 bg-purple-50/70 hover:bg-purple-100/80';
+                          badgeStyle = 'bg-purple-200/80 text-purple-950 border border-purple-300';
+                        }
+                      } else {
+                        badgeText = `✅ معتمد (${toEasternArabic(q.approvedCount)})`;
+                        if (isSelected) {
+                          cardStyle = 'border-emerald-500 bg-emerald-100 ring-2 ring-emerald-400/50 shadow-2xs';
+                          badgeStyle = 'bg-emerald-600 text-white';
+                        } else {
+                          cardStyle = 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-100/70';
+                          badgeStyle = 'bg-emerald-100 text-emerald-900 border border-emerald-200';
+                        }
+                      }
+
+                      return (
+                        <button
+                          key={q.title}
+                          type="button"
+                          onClick={() => setSelectedQuizFilter(q.title)}
+                          className={`p-2 rounded-xl border-2 text-right transition-all cursor-pointer flex flex-col justify-between gap-1 ${cardStyle}`}
+                          title={q.title}
+                        >
+                          <div className="flex items-start justify-between gap-1.5 w-full">
+                            <span className="text-xs font-black text-slate-900 line-clamp-1 flex-1 leading-snug">
+                              {q.title}
+                            </span>
+                            <span className="text-[10px] font-mono font-bold bg-white/70 px-1 py-0.2 rounded border border-slate-200 text-slate-700 shrink-0">
+                              {toEasternArabic(q.count)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 w-full text-[10px]">
+                            <span className={`px-1.5 py-0.2 rounded font-black shrink-0 ${badgeStyle}`}>
+                              {badgeText}
+                            </span>
+                            <span className="text-slate-500 font-bold truncate">
+                              {q.unitTitle}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* حقل البحث والتصفية */}
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <div className="relative flex-1 w-full">
-                <i className="fas fa-search absolute right-3.5 top-3.5 text-gray-400 text-sm"></i>
-                <input
-                  type="text"
-                  placeholder="ابحث باسم الطالب، رقم الهاتف، أو اسم الاختبار..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pr-10 pl-4 py-2.5 text-xs sm:text-sm font-bold border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary outline-none"
-                />
+            {/* شريط البحث المطور وأدوات الفلترة السريعة */}
+            <div className="bg-white border-2 border-slate-200 p-3 sm:p-4 rounded-2xl space-y-2.5 sm:space-y-3 shadow-xs">
+              {/* السطر 1: حقل البحث العريض والبارز مع زر البحث ومسح البحث متوافق مع الموبايل في صف واحد */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 min-w-0">
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-primary flex items-center pointer-events-none">
+                    <i className="fas fa-search text-sm"></i>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="ابحث بالطالب، الهاتف، أو الامتحان..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pr-10 pl-9 py-2.5 sm:py-3 text-xs sm:text-sm font-bold border-2 border-slate-200 rounded-xl focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none bg-slate-50 transition-all text-slate-900 placeholder:text-gray-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-700 flex items-center justify-center text-[10px] sm:text-xs transition-all cursor-pointer"
+                      title="مسح البحث"
+                    >
+                      <i className="fas fa-times"></i>
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="px-3.5 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-primary hover:bg-primary/95 text-white font-black text-xs sm:text-sm shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer shrink-0"
+                >
+                  <i className="fas fa-magnifying-glass"></i>
+                  <span>بحث</span>
+                  {searchQuery.trim() && (
+                    <span className="bg-white/25 px-1.5 py-0.2 rounded-md text-[10px] sm:text-xs font-mono">
+                      {toEasternArabic(filteredSubmissions.length)}
+                    </span>
+                  )}
+                </button>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 justify-between w-full sm:w-auto">
-                {/* فلتر حالة الاعتماد */}
-                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl shrink-0">
+              {/* السطر 2: أدوات الفرز والتصفية الموزعة بأناقة بدون أي تكدس مع شريط تمرير أفقي للموبايل */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                {/* 1. فلاتر الحالة السريعة */}
+                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex-nowrap scroll-smooth">
                   <button
+                    type="button"
                     onClick={() => setStatusFilter('pending')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
-                      statusFilter === 'pending' ? 'bg-white text-amber-900 shadow-sm font-black' : 'text-gray-600'
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      statusFilter === 'pending' ? 'bg-white text-amber-900 shadow-xs font-black ring-1 ring-amber-300' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
-                    المعلق
+                    <span>⏳ معلق</span>
+                    <span className="font-mono text-[11px]">({toEasternArabic(stats.pending)})</span>
                   </button>
                   <button
+                    type="button"
+                    onClick={() => setStatusFilter('reviewed')}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      statusFilter === 'reviewed' ? 'bg-white text-purple-900 shadow-xs font-black ring-1 ring-purple-300' : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <span>💾 مسودة</span>
+                    <span className="font-mono text-[11px]">({toEasternArabic(stats.reviewed)})</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setStatusFilter('approved')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
-                      statusFilter === 'approved' ? 'bg-white text-emerald-900 shadow-sm font-black' : 'text-gray-600'
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      statusFilter === 'approved' ? 'bg-white text-emerald-900 shadow-xs font-black ring-1 ring-emerald-300' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
-                    المعتمد
+                    <span>✅ معتمد</span>
+                    <span className="font-mono text-[11px]">({toEasternArabic(stats.approved)})</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => setStatusFilter('all')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
-                      statusFilter === 'all' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600'
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all shrink-0 cursor-pointer flex items-center gap-1 ${
+                      statusFilter === 'all' ? 'bg-white text-primary shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <span>📁 الكل</span>
+                  </button>
+                </div>
+
+                {/* 2. تصفية نوع الطالب سنتر / أونلاين */}
+                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl shrink-0 self-start sm:self-auto overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <button
+                    type="button"
+                    onClick={() => setStudentTypeFilter('all')}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                      studentTypeFilter === 'all' ? 'bg-primary text-white shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     الكل
                   </button>
-                </div>
-
-                {/* فلتر سنتر / أونلاين */}
-                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl shrink-0">
                   <button
-                    onClick={() => setStudentTypeFilter('all')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
-                      studentTypeFilter === 'all' ? 'bg-primary text-white shadow-sm font-black' : 'text-gray-600'
-                    }`}
-                  >
-                    الجميع
-                  </button>
-                  <button
+                    type="button"
                     onClick={() => setStudentTypeFilter('center')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-                      studentTypeFilter === 'center' ? 'bg-blue-600 text-white shadow-sm font-black' : 'text-blue-700 hover:bg-blue-50'
+                    className={`text-xs font-bold px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                      studentTypeFilter === 'center' ? 'bg-blue-600 text-white shadow-xs font-black' : 'text-blue-700 hover:bg-blue-50'
                     }`}
                   >
                     🏫 سنتر
                   </button>
                   <button
+                    type="button"
                     onClick={() => setStudentTypeFilter('online')}
-                    className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 ${
-                      studentTypeFilter === 'online' ? 'bg-emerald-600 text-white shadow-sm font-black' : 'text-emerald-700 hover:bg-emerald-50'
+                    className={`text-xs font-bold px-2 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+                      studentTypeFilter === 'online' ? 'bg-emerald-600 text-white shadow-xs font-black' : 'text-emerald-700 hover:bg-emerald-50'
                     }`}
                   >
                     🌐 أونلاين
@@ -1513,6 +1442,35 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* شريط الإجراء السريع: بدء التصحيح المتتابع فوراً */}
+            {(() => {
+              const pendingInCurrentView = filteredSubmissions.filter(s => !s.isFullyApproved && !s.isTeacherReviewed && hasWrittenEssayAnswers(s));
+              if (pendingInCurrentView.length === 0) return null;
+              return (
+                <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 p-3 rounded-2xl border-2 border-amber-300 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shadow-xs animate-fade-in">
+                  <div className="flex items-center gap-2 text-right">
+                    <span className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm shrink-0 shadow-xs">
+                      ⚡
+                    </span>
+                    <h4 className="text-xs sm:text-sm font-black text-amber-950">
+                      ({toEasternArabic(pendingInCurrentView.length)}) طالب بانتظار تصحيح إجاباتهم المقالية
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const first = pendingInCurrentView[0] || filteredSubmissions[0];
+                      if (first) setSelectedSubForReview(first);
+                    }}
+                    className="w-full sm:w-auto px-4 sm:px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-black text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                  >
+                    <i className="fas fa-bolt text-yellow-200"></i>
+                    <span>بدء التصحيح المتتابع ({toEasternArabic(pendingInCurrentView.length)})</span>
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* قائمة التسليمات */}
             {filteredSubmissions.length === 0 ? (
@@ -1531,7 +1489,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                   return (
                     <div
                       key={sub.id}
-                      className={`p-4 rounded-2xl border-2 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                      className={`p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 ${
                         isApproved 
                           ? 'bg-white border-gray-200 hover:border-emerald-300' 
                           : 'bg-amber-50/40 border-amber-300 shadow-xs hover:border-amber-400'
@@ -1539,87 +1497,81 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                     >
                       {/* بيانات الطالب والاختبار */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="font-black text-base text-gray-900">{sub.studentName}</span>
-                          <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md" dir="ltr">
+                        <div className="flex items-center gap-1.5 sm:gap-2 mb-1 flex-wrap">
+                          <span className="font-black text-sm sm:text-base text-gray-900">{sub.studentName}</span>
+                          <span className="text-[11px] sm:text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md" dir="ltr">
                             {sub.studentPhone}
                           </span>
                           {subIsOnline ? (
-                            <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                              <i className="fas fa-globe text-emerald-600"></i> أونلاين
+                            <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                              🌐 أونلاين
                             </span>
                           ) : (
-                            <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
-                              <i className="fas fa-school text-blue-600"></i> سنتر
+                            <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
+                              🏫 سنتر
                             </span>
                           )}
                           {(() => {
-                            const hasDraftScores = !sub.isFullyApproved && sub.questions.some(q => q.teacherScore !== undefined);
+                            const hasDraftScores = !sub.isFullyApproved && (sub.isTeacherReviewed || sub.questions.some(q => q.teacherScore !== undefined));
                             if (isApproved) {
                               return (
-                                <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                  ✅ معتمد ومنشور
+                                <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  ✅ معتمد
                                 </span>
                               );
                             }
                             if (hasDraftScores) {
                               return (
-                                <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-300">
-                                  💾 مسودة مصححة (محجوبة عن الطالب)
+                                <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-300">
+                                  💾 مسودة
                                 </span>
                               );
                             }
                             return (
-                              <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
-                                ⏳ بانتظار التصحيح
+                              <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                                ⏳ معلق
                               </span>
                             );
                           })()}
+                          {(sub.isAutoTerminated || sub.terminationReason || sub.questions.some(q => q.teacherFeedback?.includes('سحب') || q.studentText?.includes('سحبت') || q.teacherFeedback?.includes('مخالفات'))) && (
+                            <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-900 border border-rose-300 flex items-center gap-1 shadow-xs">
+                              <i className="fas fa-shield-halved text-rose-600"></i> سُحبت لمخالفات
+                            </span>
+                          )}
                         </div>
 
-                        <div className="flex items-center gap-3 text-xs text-gray-500 font-bold flex-wrap mt-1">
-                          <span className="text-primary font-black">
+                        <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-gray-500 font-bold flex-wrap mt-1">
+                          <span className="text-primary font-black truncate max-w-[200px] sm:max-w-none">
                             <i className="fas fa-book-open ml-1"></i> {sub.quizTitle}
                           </span>
                           <span>
                             <i className="fas fa-calendar-alt ml-1"></i> {sub.submissionDate}
                           </span>
                           <span>
-                            <i className="fas fa-pen-nib ml-1"></i> {toEasternArabic(sub.questions.length)} أسئلة مقالية
+                            <i className="fas fa-pen-nib ml-1"></i> {toEasternArabic(sub.questions.length)} أسئلة
                           </span>
                         </div>
                       </div>
 
-                      {/* أزرار الإجراءات */}
-                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                        {!isApproved && (
-                          <button
-                            type="button"
-                            onClick={() => handleQuickApprove(sub)}
-                            className="text-xs font-black px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-                            title="اعتماد درجات الذكاء الاصطناعي المقترحة فوراً"
-                          >
-                            <i className="fas fa-check-double"></i> اعتماد فوري
-                          </button>
-                        )}
-
+                      {/* أزرار الإجراءات متجاوبة ومريحة للموبايل */}
+                      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                         <button
                           type="button"
                           onClick={() => setSelectedSubForReview(sub)}
-                          className={`text-xs font-black px-3.5 sm:px-4 py-2 rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer ${
+                          className={`flex-1 sm:flex-none text-xs font-black px-3.5 sm:px-4 py-2.5 sm:py-2 rounded-xl shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${
                             isApproved
                               ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
                               : 'bg-primary hover:bg-primary-dark text-white'
                           }`}
                         >
-                          <i className={`fas ${isApproved ? 'fa-pen-to-square' : 'fa-eye'}`}></i>
-                          <span>{isApproved ? 'معاينة وتعديل الدرجات' : 'فحص واعتماد الإجابات'}</span>
+                          <i className={`fas ${isApproved ? 'fa-pen-to-square' : 'fa-feather-alt'}`}></i>
+                          <span>{isApproved ? 'تعديل الدرجات ✏️' : 'تصحيح المقالي ✍️'}</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => setRetakeModalSub(sub)}
-                          className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-rose-100 text-gray-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer"
+                          className="w-9 h-9 sm:w-8 sm:h-8 rounded-xl bg-gray-100 hover:bg-rose-100 text-gray-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                           title="خيارات الحذف وتصفير وإعادة الامتحان للطالب"
                         >
                           <i className="fas fa-trash-alt text-xs"></i>
@@ -1631,7 +1583,6 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
               </div>
             )}
           </div>
-        )}
 
       </div>
     </div>
@@ -1651,7 +1602,6 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           onSaveApprovedAndNext={(updated) => {
             savePendingEssaySubmission(updated);
             syncGradeToCloud(updated);
-            refreshSubmissions();
             if (onSaveResultToDB && updated.quizTitle) {
               const maxPossible = updated.maxPossibleScore || 50;
               const perc = Math.round(((updated.finalScore || 0) / Math.max(1, maxPossible)) * 100);
@@ -1662,9 +1612,27 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                 studentPhone: updated.studentPhone,
               });
             }
-            if (nextPendingSub) {
+
+            const allFresh = getPendingEssaySubmissions();
+            const nextInSameQuiz = allFresh.find(s => 
+              s.id !== updated.id &&
+              (s.quizTitle === updated.quizTitle || s.lessonId === updated.lessonId) &&
+              !s.isFullyApproved &&
+              !s.isTeacherReviewed &&
+              hasWrittenEssayAnswers(s)
+            );
+            const nextTarget = nextInSameQuiz || allFresh.find(s => 
+              s.id !== updated.id &&
+              !s.isFullyApproved &&
+              !s.isTeacherReviewed &&
+              hasWrittenEssayAnswers(s)
+            );
+
+            refreshSubmissions();
+
+            if (nextTarget) {
               showToast(`✅ تم اعتماد درجات: ${updated.studentName} والانتقال للطالب التالي`);
-              setSelectedSubForReview(nextPendingSub);
+              setSelectedSubForReview(nextTarget);
             } else {
               setSelectedSubForReview(null);
               showToast(`🎉 تم اعتماد درجات: ${updated.studentName}، واكتمل تصحيح كافة الطلاب!`);
@@ -1689,91 +1657,43 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           }}
           onSaveDraft={(updated) => {
             savePendingEssaySubmission(updated);
+            syncDraftToCloud(updated);
             refreshSubmissions();
             setSelectedSubForReview(null);
             showToast(`💾 تم حفظ درجات ${updated.studentName} كمسودة بنجاح (النتيجة محجوبة لحين الاعتماد النهائي)`);
           }}
           onSaveDraftAndNext={(updated) => {
             savePendingEssaySubmission(updated);
+            syncDraftToCloud(updated);
+
+            const allFresh = getPendingEssaySubmissions();
+            const nextInSameQuiz = allFresh.find(s => 
+              s.id !== updated.id &&
+              (s.quizTitle === updated.quizTitle || s.lessonId === updated.lessonId) &&
+              !s.isFullyApproved &&
+              !s.isTeacherReviewed &&
+              hasWrittenEssayAnswers(s)
+            );
+            const nextTarget = nextInSameQuiz || allFresh.find(s => 
+              s.id !== updated.id &&
+              !s.isFullyApproved &&
+              !s.isTeacherReviewed &&
+              hasWrittenEssayAnswers(s)
+            );
+
             refreshSubmissions();
-            if (nextPendingSub) {
+
+            if (nextTarget) {
               showToast(`💾 تم حفظ درجات: ${updated.studentName} كمسودة والانتقال للطالب التالي`);
-              setSelectedSubForReview(nextPendingSub);
+              setSelectedSubForReview(nextTarget);
             } else {
               setSelectedSubForReview(null);
-              showToast(`💾 تم حفظ درجات: ${updated.studentName} كمسودة، واكتمل استعراض كافة الطلاب!`);
+              showToast(`🎉 تم الانتهاء من تصحيح كافة طلاب هذا الامتحان بنجاح! انتقل الآن لتبويب "اعتماد النتائج 🎯" لإعلانها.`);
             }
           }}
           isDarkMode={isDarkMode}
+          onNavigateToApproval={onNavigateToApproval}
         />
-      )}
-
-      {/* نافذة تأكيد اعتماد النتيجة وتحديد إتاحة بنك الأخطاء للامتحان دفعة واحدة */}
-      {batchApproveDialog && (
-        <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border-t-8 border-primary text-right animate-fade-in space-y-4">
-            <div className="flex items-center gap-3 border-b pb-3 dark:border-gray-700">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center text-2xl shrink-0">
-                🎯
-              </div>
-              <div>
-                <h3 className="text-lg sm:text-xl font-black text-gray-900 dark:text-gray-100">
-                  تأكيد اعتماد نتائج امتحان دفعة واحدة
-                </h3>
-                <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
-                  {batchApproveDialog.grp.quizTitle} • {toEasternArabic(batchApproveDialog.grp.pendingCount)} طالب معلق
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 text-xs sm:text-sm font-bold text-amber-900 dark:text-amber-200 leading-relaxed">
-              <i className="fas fa-circle-info text-amber-600 ml-1.5"></i>
-              <span>
-                أنت على وشك اعتماد وإعلان درجات جميع طلاب هذا الامتحان المعلقين ({toEasternArabic(batchApproveDialog.grp.pendingCount)} طالب). يرجى تحديد ما إذا كنت ترغب في <strong>إتاحة أسئلة هذا الاختبار في بنك الأخطاء</strong> للطلاب:
-              </span>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <button
-                type="button"
-                onClick={() => executeBatchApprove(true)}
-                className="w-full p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">✅</span>
-                  <div className="text-right">
-                    <div>اعتماد النتيجة لجميع الطلاب + إتاحة بنك الأخطاء 🎯</div>
-                    <div className="text-[11px] font-normal text-emerald-100">تظهر أخطاء هذا الامتحان لجميع الطلاب في بنك الأخطاء للتدرب فوراً</div>
-                  </div>
-                </div>
-                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => executeBatchApprove(false)}
-                className="w-full p-4 rounded-2xl bg-slate-700 hover:bg-slate-800 text-white font-black text-sm flex items-center justify-between shadow-md active:scale-[0.99] transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center text-lg">🔒</span>
-                  <div className="text-right">
-                    <div>اعتماد النتيجة فقط (حجب بنك الأخطاء عن الطلاب) 🔒</div>
-                    <div className="text-[11px] font-normal text-slate-300">تُعتمد الدرجات وتُعلن للطلاب، ولكن تُحجب الأخطاء من بنك الأخطاء</div>
-                  </div>
-                </div>
-                <i className="fas fa-chevron-left text-xs opacity-70 group-hover:translate-x-[-3px] transition-transform"></i>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setBatchApproveDialog(null)}
-                className="w-full py-2.5 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              >
-                إلغاء التراجع
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* نافذة خيارات الحذف وإعادة المحاولة للطالب (كامل أو مقالي فقط) */}
@@ -1923,7 +1843,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
 // نافذة فحص ومراجعة إجابات الطالب الواحد (Modal)
 // -------------------------------------------------------------
 
-interface StudentEssayReviewModalProps {
+export interface StudentEssayReviewModalProps {
   submission: StudentEssaySubmission;
   data?: Unit[];
   onClose: () => void;
@@ -1932,11 +1852,12 @@ interface StudentEssayReviewModalProps {
   onSaveApprovedAndNext?: (updated: StudentEssaySubmission) => void;
   onSaveDraftAndNext?: (updated: StudentEssaySubmission) => void;
   onRequestRetake?: (submission: StudentEssaySubmission) => void;
+  onNavigateToApproval?: () => void;
   hasNextPending?: boolean;
   isDarkMode?: boolean;
 }
 
-const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
+export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
   submission,
   data = [],
   onClose,
@@ -1945,11 +1866,13 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
   onSaveApprovedAndNext,
   onSaveDraftAndNext,
   onRequestRetake,
+  onNavigateToApproval,
   hasNextPending = false,
   isDarkMode = false,
 }) => {
   const [questions, setQuestions] = useState<EssayReviewQuestionItem[]>(() => {
-    return submission.questions.map((q, qIdx) => {
+    const completeSub = ensureCompleteEssayQuestions(submission, data);
+    return completeSub.questions.map((q, qIdx) => {
       let resolvedModelAnswer = q.modelAnswer || '';
       let resolvedMaxScore = q.maxScore || 2;
 
@@ -1973,7 +1896,7 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
           : (q.aiScore !== undefined 
               ? q.aiScore 
               : (hasNoText ? 0 : resolvedMaxScore)),
-        teacherFeedback: q.teacherFeedback || q.aiFeedback || (hasNoText ? 'لم يكتب الطالب إجابة لهذا السؤال.' : ''),
+        teacherFeedback: q.teacherFeedback || q.aiFeedback || (hasNoText ? 'لم يتم الإجابة على هذا السؤال.' : ''),
       };
     });
   });
@@ -2013,21 +1936,26 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
 
   // تشغيل المقارنة الذكية تلقائياً فور توفر الإجابة ونموذج الإجابة (للأسئلة المقالية فقط)
   useEffect(() => {
+    const hasAiKey = Boolean(getGeminiApiKey().trim() || getGroqApiKey().trim());
     questions.forEach((q, idx) => {
       if (q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ') return;
       const hasNoText = !q.studentText || q.studentText.trim() === '' || q.studentText.includes('لم يكتب') || q.studentText.includes('لم يتم الإجابة');
       const hasModelAns = q.modelAnswer && q.modelAnswer.trim() !== '' && !q.modelAnswer.includes('لا يوجد');
       
-      const needsDiff = !hasNoText && (!diffComparisons[idx] || (diffComparisons[idx].suggestedScore === 0 && hasModelAns && diffComparisons[idx].provider === 'heuristic'));
+      // إذا لم يتوفر تقييم سابق، أو كان التقييم محلياً وتوفر الآن مفتاح ذكاء اصطناعي (Gemini أو Groq)
+      const needsDiff = !hasNoText && (!diffComparisons[idx] || (hasAiKey && diffComparisons[idx].provider === 'heuristic'));
       
       if (needsDiff && !diffLoading[idx]) {
+        const studentGender = detectArabicGender(submission?.studentName || '') === 'female' ? 'female' : 'male';
         setDiffLoading(prev => ({ ...prev, [idx]: true }));
         compareStudentWithModelAnswer(
           q.questionText,
           q.modelAnswer,
           q.studentText,
           q.maxScore,
-          q.essayType
+          q.essayType,
+          q.concept,
+          studentGender
         ).then(res => {
           setDiffComparisons(prev => ({ ...prev, [idx]: res }));
         }).catch(e => {
@@ -2039,15 +1967,11 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
     });
   }, [questions]);
 
-  const handleTriggerDiff = async (idx: number, q: EssayReviewQuestionItem) => {
-    if (diffOpen[idx]) {
-      setDiffOpen(prev => ({ ...prev, [idx]: false }));
-      return;
-    }
+  const [isGlobalAiLoading, setIsGlobalAiLoading] = useState<boolean>(false);
 
-    setDiffOpen(prev => ({ ...prev, [idx]: true }));
-    if (diffComparisons[idx]) return;
-
+  // إعادة الفحص الفردي المباشر للسؤال بنماذج الذكاء الاصطناعي (Gemini / Groq)
+  const handleForceReCompare = async (idx: number, q: EssayReviewQuestionItem) => {
+    const studentGender = detectArabicGender(submission?.studentName || '') === 'female' ? 'female' : 'male';
     setDiffLoading(prev => ({ ...prev, [idx]: true }));
     try {
       const res = await compareStudentWithModelAnswer(
@@ -2055,7 +1979,72 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
         q.modelAnswer,
         q.studentText,
         q.maxScore,
-        q.essayType
+        q.essayType,
+        q.concept,
+        studentGender
+      );
+      setDiffComparisons(prev => ({ ...prev, [idx]: res }));
+      setDiffOpen(prev => ({ ...prev, [idx]: true }));
+    } catch (e) {
+      console.error("AI Diff error on force recompare:", e);
+    } finally {
+      setDiffLoading(prev => ({ ...prev, [idx]: false }));
+    }
+  };
+
+  // إعادة فحص كافة أسئلة الامتحان المقالية بنماذج الذكاء الاصطناعي بنقرة واحدة
+  const handleReCompareAllWithAi = async () => {
+    setIsGlobalAiLoading(true);
+    const studentGender = detectArabicGender(submission?.studentName || '') === 'female' ? 'female' : 'male';
+    for (let idx = 0; idx < questions.length; idx++) {
+      const q = questions[idx];
+      if (q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ') continue;
+      const hasNoText = !q.studentText || q.studentText.trim() === '' || q.studentText.includes('لم يكتب') || q.studentText.includes('لم يتم الإجابة');
+      if (hasNoText) continue;
+
+      setDiffLoading(prev => ({ ...prev, [idx]: true }));
+      try {
+        const res = await compareStudentWithModelAnswer(
+          q.questionText,
+          q.modelAnswer,
+          q.studentText,
+          q.maxScore,
+          q.essayType,
+          q.concept,
+          studentGender
+        );
+        setDiffComparisons(prev => ({ ...prev, [idx]: res }));
+      } catch (e) {
+        console.error("Batch AI Diff error for q" + idx, e);
+      } finally {
+        setDiffLoading(prev => ({ ...prev, [idx]: false }));
+      }
+    }
+    setIsGlobalAiLoading(false);
+  };
+
+  const handleTriggerDiff = async (idx: number, q: EssayReviewQuestionItem) => {
+    if (diffOpen[idx]) {
+      setDiffOpen(prev => ({ ...prev, [idx]: false }));
+      return;
+    }
+
+    setDiffOpen(prev => ({ ...prev, [idx]: true }));
+    const hasAiKey = Boolean(getGeminiApiKey().trim() || getGroqApiKey().trim());
+    // إذا كان التقييم موجوداً بنموذج الذكاء الاصطناعي لا داعي لتكرار الطلب
+    if (diffComparisons[idx] && (!hasAiKey || diffComparisons[idx].provider !== 'heuristic')) return;
+
+    setDiffLoading(prev => ({ ...prev, [idx]: true }));
+    try {
+      const studentGender = detectArabicGender(submission?.studentName || '') === 'female' ? 'female' : 'male';
+      const res = await compareStudentWithModelAnswer(
+        q.questionText,
+        q.modelAnswer,
+        q.studentText,
+        q.maxScore,
+        q.essayType,
+        q.concept,
+        studentGender
       );
       setDiffComparisons(prev => ({ ...prev, [idx]: res }));
     } catch (e) {
@@ -2079,8 +2068,13 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
     const maxScore = q?.maxScore || 2;
     const score = diff.suggestedScore;
 
+    const isFemale = detectArabicGender(submission?.studentName || '') === 'female';
+    const praiseMsg = isFemale
+      ? '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتِ وبارك الله فيكِ! 🌟'
+      : '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتَ وبارك الله فيك! 🌟';
+
     if (score >= maxScore * 0.9 || validMissing.length === 0) {
-      feedbackText = '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنت وبارك الله فيك يا بطل! 🌟';
+      feedbackText = praiseMsg;
     } else if (score >= maxScore * 0.4) {
       const missingListStr = validMissing.slice(0, 2).join('، ');
       feedbackText = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
@@ -2089,6 +2083,12 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
       feedbackText = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
     } else {
       feedbackText = diff.studentFeedback || `${diff.verdictSummary}`;
+    }
+
+    // فحص ذكي: إذا كانت إجابة الطالب تفتقر لترقيم وتنسيق الفقرات، نطلب منه ترقيمها وتنسيقها
+    const needsFormat = checkNeedsFormattingGuidance(q?.studentText || '');
+    if (needsFormat && score > 0) {
+      feedbackText += '\n📌 ملحوظة لتفوقك: برجاء الحرص دائماً على تنسيق الفقرات وترقيم العناصر (1، 2، ...) لتسهيل قراءتها وضمان كامل الدرجة في الامتحانات الرسمية.';
     }
 
     handleFeedbackChange(idx, feedbackText);
@@ -2171,6 +2171,7 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
       ...submission,
       questions: questions.map(q => ({ ...q, isApproved: false })),
       isFullyApproved: false,
+      isTeacherReviewed: true,
       finalScore: totalEarnedScore,
     };
     if (onSaveDraft) {
@@ -2185,6 +2186,7 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
       ...submission,
       questions: questions.map(q => ({ ...q, isApproved: false })),
       isFullyApproved: false,
+      isTeacherReviewed: true,
       finalScore: totalEarnedScore,
     };
     if (onSaveDraftAndNext) {
@@ -2211,53 +2213,58 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
     <div className={`fixed inset-0 z-[99999] flex flex-col w-screen h-screen ${
       isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-slate-100 text-gray-800'
     } overflow-hidden select-text`} dir="rtl">
-      {/* 1. رأس الشاشة (شريط ملاحة علوي ثابت بكامل العرض) */}
-      <header className={`px-4 sm:px-6 py-3.5 border-b shadow-xs shrink-0 flex items-center justify-between gap-4 ${
+      {/* 1. رأس الشاشة (شريط ملاحة علوي رشيق ومناسب للموبايل والشاشات الكبيرة) */}
+      <header className={`px-2.5 sm:px-6 py-2 sm:py-3 border-b shadow-xs shrink-0 flex items-center justify-between gap-2 sm:gap-4 ${
         isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
       }`}>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs sm:text-sm font-black flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95"
+            className="h-8 sm:h-9 px-2 sm:px-3 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
             title="الرجوع إلى قائمة التسليمات"
           >
-            <i className="fas fa-arrow-right text-sm"></i>
-            <span>العودة لقائمة التسليمات</span>
+            <i className="fas fa-arrow-right text-xs"></i>
+            <span className="hidden sm:inline">العودة</span>
           </button>
 
-          <div className="h-6 w-[1px] bg-gray-300 dark:bg-gray-700 hidden sm:block"></div>
+          <div className="h-5 w-[1px] bg-gray-300 dark:bg-gray-700 hidden sm:block"></div>
 
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-base sm:text-lg md:text-xl font-black text-primary">
-                مراجعة وتصحيح: {submission.studentName}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h2 className="text-xs sm:text-base font-black text-primary truncate max-w-[130px] sm:max-w-xs">
+                {submission.studentName}
               </h2>
-              <span className="text-xs font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-2.5 py-0.5 rounded-md border border-gray-200 dark:border-gray-700" dir="ltr">
+              <span className="text-[10px] font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700" dir="ltr">
                 {submission.studentPhone}
               </span>
-              <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-md border ${
+              <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${
                 submission.studentType === 'أونلاين'
                   ? 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300'
                   : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300'
               }`}>
                 {submission.studentType || 'سنتر'}
               </span>
+              {(submission.isAutoTerminated || submission.terminationReason || submission.questions.some(q => q.teacherFeedback?.includes('سحب') || q.studentText?.includes('سحبت') || q.teacherFeedback?.includes('مخالفات'))) && (
+                <span className="text-[9px] sm:text-[11px] font-black px-1.5 py-0.5 rounded bg-rose-100 text-rose-900 border border-rose-300 dark:bg-rose-950/70 dark:text-rose-200 dark:border-rose-800 flex items-center gap-1 shrink-0">
+                  <i className="fas fa-shield-halved text-rose-600"></i> <span className="hidden sm:inline">سُحبت لمخالفات</span><span className="sm:hidden">سُحبت</span>
+                </span>
+              )}
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-bold mt-0.5">
-              📖 {submission.quizTitle} • تاريخ التسليم: {submission.submissionDate}
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 font-bold truncate max-w-[190px] sm:max-w-md mt-0.5">
+              📖 {submission.quizTitle}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden md:flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/50 px-3.5 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-900 dark:text-indigo-300">
-            <i className="fas fa-file-pen text-sm"></i>
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="hidden md:flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-900 dark:text-indigo-300">
+            <i className="fas fa-file-pen text-xs"></i>
             <span>
               {hasMixedQuestions ? (
                 <>مقالي: <strong>{essayQuestions.length}</strong> • موضوعي: <strong>{questions.length - essayQuestions.length}</strong></>
               ) : (
-                <>عدد الأسئلة المقالية: <strong>{questions.length}</strong></>
+                <>أسئلة المقالي: <strong>{questions.length}</strong></>
               )}
             </span>
           </div>
@@ -2266,89 +2273,125 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
             <button
               type="button"
               onClick={() => onRequestRetake(submission)}
-              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-amber-300 dark:border-amber-700 cursor-pointer shadow-xs active:scale-95"
-              title="إتاحة إعادة المحاولة للطالب (كامل أو مقالي فقط)"
+              className="h-8 sm:h-9 px-2 sm:px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center gap-1 transition-colors border border-amber-300 dark:border-amber-700 cursor-pointer shadow-xs active:scale-95"
+              title="إتاحة إعادة المحاولة للطالب"
             >
-              <i className="fas fa-redo-alt"></i>
-              <span className="hidden sm:inline">إعادة المحاولة للطالب 🔄</span>
-              <span className="sm:hidden">إعادة 🔄</span>
+              <i className="fas fa-redo-alt text-xs"></i>
+              <span className="hidden sm:inline">إعادة المحاولة</span>
             </button>
           )}
 
           <button 
             onClick={onClose}
-            className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-900/50 text-gray-500 flex items-center justify-center transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-rose-100 hover:text-rose-600 dark:hover:bg-rose-900/50 text-gray-500 flex items-center justify-center transition-colors cursor-pointer"
             title="إغلاق الشاشة والعودة"
           >
-            <i className="fas fa-times text-base"></i>
+            <i className="fas fa-times text-sm"></i>
           </button>
         </div>
       </header>
 
-      {/* 2. شريط حالة الاعتماد والتعديل */}
-      <div className={`px-4 sm:px-6 py-2.5 border-b flex items-center justify-between gap-2 text-xs font-bold shrink-0 ${
+      {/* تنبيه إذا كانت الورقة مسحوبة تلقائياً لمخالفات أمنية */}
+      {(submission.isAutoTerminated || submission.terminationReason || submission.questions.some(q => q.teacherFeedback?.includes('سحب') || q.studentText?.includes('سحبت') || q.teacherFeedback?.includes('مخالفات'))) && (
+        <div className="bg-rose-50 dark:bg-rose-950/40 border-b border-rose-200 dark:border-rose-800 px-3 sm:px-6 py-1.5 sm:py-2 flex items-center justify-between gap-2 text-[11px] sm:text-xs font-bold text-rose-900 dark:text-rose-200 shrink-0">
+          <div className="flex items-center gap-1.5 truncate">
+            <i className="fas fa-triangle-exclamation text-rose-600 text-xs shrink-0"></i>
+            <span className="truncate">
+              <strong>تنبيه:</strong> سُحبت الورقة لمخالفات أمنية وتم رصد (0) للأسئلة المتبقية.
+            </span>
+          </div>
+          {onRequestRetake && (
+            <button
+              type="button"
+              onClick={() => onRequestRetake(submission)}
+              className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] shrink-0 flex items-center gap-1 cursor-pointer active:scale-95"
+            >
+              منح إعادة
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 2. شريط حالة الاعتماد والتعديل (مختصر ونحيف) */}
+      <div className={`px-3 sm:px-6 py-1.5 border-b flex items-center justify-between gap-2 text-[11px] sm:text-xs font-bold shrink-0 ${
         submission.isFullyApproved
           ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
           : 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-300 border-amber-200 dark:border-amber-800'
       }`}>
-        <div className="flex items-center gap-2">
-          <i className={`fas ${submission.isFullyApproved ? 'fa-check-circle text-emerald-600' : 'fa-hourglass-half text-amber-600'} text-sm`}></i>
-          <span>
+        <div className="flex items-center gap-1.5 truncate">
+          <i className={`fas ${submission.isFullyApproved ? 'fa-check-circle text-emerald-600' : 'fa-hourglass-half text-amber-600'} text-xs shrink-0`}></i>
+          <span className="truncate">
             {submission.isFullyApproved
-              ? 'هذه النتيجة معتمدة مسبقاً. يمكنك في أي وقت تعديل الدرجات (إضافة درجات بونص أو خصمها)، وتحديث الملاحظات وحفظ التعديلات فوراً.'
-              : 'هذا الاختبار بانتظار الاعتماد. يقوم النظام بمقارنة إجابات الطالب بنموذج الإجابة واقتراح الدرجة العادلة تلقائياً.'}
+              ? 'النتيجة معتمدة (يمكنك تعديل الدرجات وحفظها).'
+              : 'بانتظار الاعتماد (يمكنك تعديل الدرجات والملاحظات بالأسفل).'}
           </span>
         </div>
-        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black shrink-0 ${
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black shrink-0 ${
           submission.isFullyApproved ? 'bg-emerald-200 text-emerald-950 dark:bg-emerald-800 dark:text-emerald-100' : 'bg-amber-200 text-amber-950 dark:bg-amber-800 dark:text-amber-100'
         }`}>
-          {submission.isFullyApproved ? 'وضع المراجعة والتعديل ✏️' : 'اعتماد جديد 🚀'}
+          {submission.isFullyApproved ? 'معتمد ✅' : 'قيد المراجعة ⏳'}
         </span>
       </div>
 
       {/* 3. مساحة العمل ومحتوى الأسئلة والإجابات (شاشة كاملة برحابة) */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6">
-        <div className="max-w-5xl mx-auto space-y-6 pb-28">
+      <main className="flex-1 overflow-y-auto p-2.5 sm:p-5 md:p-6 space-y-3 sm:space-y-4">
+        <div className="max-w-4xl mx-auto space-y-3 sm:space-y-4 pb-8 sm:pb-16">
           {hasMixedQuestions && (
-            <div className="flex items-center gap-2 p-1.5 bg-gray-100 dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-1 sm:gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setReviewFilter('essay')}
-                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
                   reviewFilter === 'essay'
-                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
                     : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
                 }`}
               >
-                <span>✍️ الأسئلة المقالية (المطلوب تصحيحها)</span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-bold">{essayQuestions.length}</span>
+                <span>✍️ مقالي</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 font-bold">{essayQuestions.length}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setReviewFilter('mcq')}
-                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
                   reviewFilter === 'mcq'
-                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
                     : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
                 }`}
               >
-                <span>🔘 الأسئلة الموضوعية (تصحيح آلي)</span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold">{questions.length - essayQuestions.length}</span>
+                <span>🔘 موضوعي</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold">{questions.length - essayQuestions.length}</span>
               </button>
               <button
                 type="button"
                 onClick={() => setReviewFilter('all')}
-                className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
                   reviewFilter === 'all'
-                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                    ? 'bg-white dark:bg-gray-700 text-indigo-700 dark:text-indigo-300 shadow-xs'
                     : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
                 }`}
               >
-                <span>📋 كل أسئلة الاختبار</span>
-                <span className="px-2 py-0.5 rounded-full text-[11px] bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold">{questions.length}</span>
+                <span>📋 الكل</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 font-bold">{questions.length}</span>
               </button>
             </div>
           )}
+
+          <div className="flex items-center justify-between flex-wrap gap-2 pt-1 pb-1">
+            <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+              💡 تحليل ومقارنة إجابات الطالب بنموذج الإجابة:
+            </span>
+            <button
+              type="button"
+              onClick={handleReCompareAllWithAi}
+              disabled={isGlobalAiLoading}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-amber-600 hover:from-indigo-700 hover:to-amber-700 text-white rounded-xl text-xs font-black shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="إعادة فحص كافة الأسئلة المقالية بنماذج الذكاء الاصطناعي (Gemini / Groq)"
+            >
+              <i className={`fas ${isGlobalAiLoading ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles text-amber-300'}`}></i>
+              <span>{isGlobalAiLoading ? 'جاري الفحص بالذكاء الاصطناعي...' : 'فحص كافة المقالي بالـ AI ⚡ (Gemini & Groq)'}</span>
+            </button>
+          </div>
 
           {questions.map((q, idx) => {
             const isMcq = q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ';
@@ -2361,33 +2404,33 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
             const isDiffExpanded = !!diffOpen[idx];
 
             return (
-              <div key={idx} className={`p-5 sm:p-6 rounded-2xl border-2 space-y-4 transition-all shadow-sm ${
+              <div key={idx} className={`p-3 sm:p-5 rounded-2xl border-2 space-y-3 transition-all shadow-xs ${
                 isDarkMode ? 'bg-gray-900 border-gray-800 text-gray-100' : 'bg-white border-gray-200 text-gray-800'
               }`}>
                 {/* رأس السؤال */}
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 dark:border-gray-800 pb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-700">
+                <div className="flex items-center justify-between gap-2 border-b border-gray-200 dark:border-gray-800 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-black text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-700">
                       🏷️ {q.essayType}
                     </span>
-                    <span className="font-black text-gray-800 dark:text-gray-200 text-sm">سؤال #{idx + 1}</span>
+                    <span className="font-black text-gray-800 dark:text-gray-200 text-xs sm:text-sm">سؤال #{idx + 1}</span>
                   </div>
-                  <span className="text-xs font-black text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-lg border border-gray-200 dark:border-gray-700">
-                    الدرجة العظمى: {q.maxScore} درجات
+                  <span className="text-[11px] font-black text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-700">
+                    العظمى: {q.maxScore} درجات
                   </span>
                 </div>
 
                 {/* رأس السؤال المطلوب */}
-                <div className="bg-gradient-to-r from-indigo-50/70 via-blue-50/40 to-slate-50 dark:from-indigo-950/40 dark:via-blue-950/20 dark:to-gray-900 border-2 border-indigo-200 dark:border-indigo-800 rounded-xl p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
-                  <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-indigo-100 dark:border-indigo-900/60">
-                    <span className="font-black text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                      <span className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center text-[10px] shadow-xs">
+                <div className="bg-gradient-to-r from-indigo-50/70 via-blue-50/40 to-slate-50 dark:from-indigo-950/40 dark:via-blue-950/20 dark:to-gray-900 border-2 border-indigo-200 dark:border-indigo-800 rounded-xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
+                  <div className="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-indigo-100 dark:border-indigo-900/60">
+                    <span className="font-black text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5 text-xs">
+                      <span className="w-4 h-4 rounded bg-indigo-600 text-white flex items-center justify-center text-[9px] shadow-xs">
                         <i className="fas fa-question"></i>
                       </span>
                       <span>نص السؤال المطلوب من الطالب:</span>
                     </span>
                     {q.essayType && (
-                      <span className="text-[11px] font-black text-indigo-800 dark:text-indigo-300 bg-indigo-100/90 dark:bg-indigo-900/60 px-2.5 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800">
+                      <span className="text-[10px] font-black text-indigo-800 dark:text-indigo-300 bg-indigo-100/90 dark:bg-indigo-900/60 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800">
                         🎯 {q.essayType}
                       </span>
                     )}
@@ -2397,10 +2440,34 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                   </div>
                 </div>
 
+                {/* ما كتبه الطالب نصاً (واضح ومميز للقراءة براحة على الموبايل) */}
+                <div className="bg-amber-50/60 dark:bg-amber-950/20 border-2 border-amber-300 dark:border-amber-700/80 rounded-xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
+                  <div className="flex items-center justify-between gap-2 mb-2 border-b border-amber-200 dark:border-amber-800/60 pb-1.5">
+                    <span className="font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5 text-xs sm:text-sm">
+                      <i className="fas fa-pen-fancy text-amber-600 text-xs"></i>
+                      <span>ما كتبه الطالب نصاً:</span>
+                    </span>
+                    {!hasNoText && (
+                      <span className="text-[10px] sm:text-[11px] font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded">
+                        {studentWordCount} كلمة • {q.studentText.length} حرف
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-black text-gray-950 dark:text-gray-100 whitespace-pre-line leading-relaxed text-sm sm:text-base select-text">
+                    {!hasNoText ? (
+                      q.studentText
+                    ) : (
+                      <span className="text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800 inline-block text-xs">
+                        ⚠️ لم يكتب الطالب إجابة لهذا السؤال (ترك السؤال فارغاً)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
                 {/* نموذج الإجابة المعتمد */}
-                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3.5 text-xs sm:text-sm leading-relaxed">
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 sm:p-3.5 text-xs sm:text-sm leading-relaxed">
                   <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-                    <span className="font-black text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
+                    <span className="font-black text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5 text-xs">
                       <i className="fas fa-clipboard-check text-emerald-600 dark:text-emerald-400"></i> نموذج الإجابة المعتمد:
                     </span>
 
@@ -2446,11 +2513,11 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                           setEditingModelAnswerIdx(idx);
                           setCustomModelAnswerDraft(q.modelAnswer && !q.modelAnswer.includes('لا يوجد') ? q.modelAnswer : '');
                         }}
-                        className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 bg-white dark:bg-gray-800 px-2.5 py-1 rounded-md border border-emerald-300 dark:border-emerald-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1 active:scale-95"
+                        className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 bg-white dark:bg-gray-800 px-2 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 transition-all cursor-pointer shadow-2xs flex items-center gap-1 active:scale-95"
                         title="تعديل أو كتابة نموذج الإجابة لهذا السؤال"
                       >
-                        <i className="fas fa-pen-to-square text-[10px]"></i>
-                        <span>{q.modelAnswer && !q.modelAnswer.includes('لا يوجد') ? 'تعديل النموذج ✏️' : 'كتابة نموذج إجابة ➕'}</span>
+                        <i className="fas fa-pen-to-square text-[9px]"></i>
+                        <span>{q.modelAnswer && !q.modelAnswer.includes('لا يوجد') ? 'تعديل ✏️' : 'كتابة نموذج ➕'}</span>
                       </button>
                     )}
                   </div>
@@ -2464,38 +2531,15 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                         placeholder="اكتب أو الصق نموذج الإجابة المعتمد لهذا السؤال هنا..."
                         className="w-full p-2.5 text-xs sm:text-sm font-bold border-2 border-emerald-400 dark:border-emerald-600 rounded-xl outline-none focus:ring-2 focus:ring-emerald-200 bg-white dark:bg-gray-800 text-emerald-950 dark:text-emerald-100 resize-none transition-all shadow-inner"
                       />
-                      <p className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold">
-                        💡 بمجرد حفظ النموذج، سيقوم النظام تلقائياً بإعادة المقارنة الذكية لإجابة الطالب واقتراح الدرجة العادلة بدقة.
+                      <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-bold">
+                        💡 بمجرد حفظ النموذج، سيقوم النظام تلقائياً بإعادة المقارنة الذكية لاقتراح الدرجة العادلة بدقة.
                       </p>
                     </div>
                   ) : (
-                    <div className="font-bold text-emerald-900 dark:text-emerald-300 whitespace-pre-line leading-relaxed">
+                    <div className="font-bold text-emerald-900 dark:text-emerald-300 whitespace-pre-line leading-relaxed text-xs sm:text-sm">
                       <HighlightText text={q.modelAnswer || 'لا يوجد نموذج إجابة مسجل لهذا السؤال'} isDarkMode={isDarkMode} />
                     </div>
                   )}
-                </div>
-
-                {/* ما كتبه الطالب */}
-                <div className="bg-white dark:bg-gray-800/80 border-2 border-indigo-200 dark:border-indigo-800/70 rounded-xl p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
-                  <div className="flex items-center justify-between gap-2 mb-2 border-b border-indigo-50 dark:border-gray-700 pb-1.5">
-                    <span className="font-black text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                      <i className="fas fa-user-edit text-indigo-600 dark:text-indigo-400"></i> ما كتبه الطالب نصاً:
-                    </span>
-                    {!hasNoText && (
-                      <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
-                        {studentWordCount} كلمة • {q.studentText.length} حرف
-                      </span>
-                    )}
-                  </div>
-                  <div className="font-bold text-gray-800 dark:text-gray-200 whitespace-pre-line leading-relaxed text-sm">
-                    {!hasNoText ? (
-                      q.studentText
-                    ) : (
-                      <span className="text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/40 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800 inline-block">
-                        ⚠️ لم يكتب الطالب إجابة لهذا السؤال (ترك السؤال فارغاً)
-                      </span>
-                    )}
-                  </div>
                 </div>
 
                 {/* شريط حالة المقارنة والدرجة المقترحة */}
@@ -2540,8 +2584,18 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                               الدرجة المقترحة: {diffComparisons[idx].suggestedScore} من {q.maxScore}
                             </span>
                             {diffComparisons[idx].provider && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300">
-                                {diffComparisons[idx].provider === 'gemini' ? 'Google Gemini AI ⚡' : 'المحلل الذكي المدمج 🧠'}
+                              <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border shadow-xs ${
+                                diffComparisons[idx].provider === 'gemini'
+                                  ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-700'
+                                  : diffComparisons[idx].provider === 'groq'
+                                  ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-950 dark:text-amber-200 border-amber-300 dark:border-amber-700'
+                                  : 'bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 dark:border-indigo-700'
+                              }`}>
+                                {diffComparisons[idx].provider === 'gemini' 
+                                  ? 'Google Gemini AI ⚡' 
+                                  : diffComparisons[idx].provider === 'groq'
+                                  ? 'Groq AI (Llama 3.3) 🚀'
+                                  : 'المحلل الذكي المدمج 🧠'}
                               </span>
                             )}
                           </div>
@@ -2555,6 +2609,16 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                             >
                               <i className="fas fa-wand-magic-sparkles"></i>
                               تطبيق الدرجة والملاحظة ⚡
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleForceReCompare(idx, q)}
+                              disabled={diffLoading[idx]}
+                              className="px-3 py-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+                              title="إعادة فحص السؤال الآن عبر Gemini أو Groq AI"
+                            >
+                              <i className={`fas fa-rotate ${diffLoading[idx] ? 'fa-spin text-amber-600' : 'text-amber-600'}`}></i>
+                              <span>{diffLoading[idx] ? 'جاري الفحص...' : 'فحص بالـ AI 🔄'}</span>
                             </button>
                             <button
                               type="button"
@@ -2753,8 +2817,23 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
                     {/* قوالب توجيه سريعة */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
                       <span className="text-[11px] font-black text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                        <i className="fas fa-bolt text-amber-500"></i> قوالب توجيه جاهزة (اضغط للإدراج فوراً):
+                        <i className="fas fa-bolt text-amber-500"></i> قوالب وتوجيهات سريعة:
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = q.teacherFeedback || '';
+                          const note = 'برجاء الحرص على تنسيق الفقرات وترقيم العناصر (1، 2، ...) لضمان الدرجة النهائية 📝';
+                          if (!current.includes('ترقيم العناصر')) {
+                            handleFeedbackChange(idx, (current ? current.trim() + '\n' : '') + note);
+                          }
+                        }}
+                        className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 transition-all cursor-pointer active:scale-95 shadow-xs flex items-center gap-1"
+                        title="إدراج توجيه ترقيم وتنسيق الفقرات"
+                      >
+                        <i className="fas fa-list-ol text-purple-600"></i>
+                        <span>+ برجاء تنسيق الفقرات وترقيمها 📝</span>
+                      </button>
                       {diffComparisons[idx]?.studentFeedback && (
                         <button
                           type="button"
@@ -2793,108 +2872,211 @@ const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = ({
         </div>
       </main>
 
-      {/* 4. شريط الأزرار والاعتماد الثابت أسفل الشاشة */}
-      <footer className={`p-4 sm:px-8 border-t flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-lg ${
+      {/* 4. شريط الأزرار والاعتماد الثابت أسفل الشاشة (متجاوب ومريح للموبايل) */}
+      <footer className={`px-3 sm:px-6 py-2 sm:py-3 border-t shadow-lg shrink-0 ${
         isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
       }`}>
-        <div className="flex items-center gap-3 flex-wrap">
-          {hasMixedQuestions ? (
-            <>
-              <div className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs sm:text-sm font-bold text-indigo-900 dark:text-indigo-300">
-                <span>المقالي:</span>
-                <strong className="text-sm font-black">{essayEarnedScore} من {essayMaxScore}</strong>
-              </div>
-              <div className="flex items-center gap-1.5 bg-primary/10 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-primary">
-                <span>إجمالي درجات الاختبار:</span>
-                <strong className="text-base sm:text-lg font-black">{totalEarnedScore} من {totalMaxScore} ({perc}%)</strong>
-              </div>
-            </>
-          ) : (
-            <>
-              <span className="text-xs sm:text-sm font-black text-gray-600 dark:text-gray-300">مجموع درجات المقالي المعتمدة:</span>
-              <span className="text-base sm:text-xl font-black text-primary bg-primary/10 px-3.5 py-1 rounded-xl">
-                {totalEarnedScore} من {totalMaxScore} درجة
-              </span>
-            </>
-          )}
+        {/* تصميم الموبايل (< sm): منظم في صفين نحيفين بدون أي تراكم أزرار */}
+        <div className="sm:hidden space-y-2">
+          {/* الصف الأول: النتيجة + واتساب + إلغاء */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 bg-primary/10 px-2.5 py-1 rounded-lg text-primary text-xs font-black">
+              <span>المقالي:</span>
+              <strong className="text-xs font-black">{totalEarnedScore} / {totalMaxScore} ({perc}%)</strong>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {submission.studentPhone && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const phone = String(submission.studentPhone || '').replace(/[^\d]/g, '');
+                    const intlPhone = phone.startsWith('0') ? `+20${phone.slice(1)}` : `+20${phone}`;
+                    const percVal = Math.round((totalEarnedScore / Math.max(1, totalMaxScore)) * 100);
+                    const msg = encodeURIComponent(
+                      `مرحباً بك يا بطل (${submission.studentName}) 🌟\n` +
+                      `معك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
+                      `✅ تم مراجعة واعتماد اختبارك: *${submission.quizTitle}*\n` +
+                      `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n` +
+                      `تمنياتي لك بالتوفيق والنجاح دائماً! ❤️`
+                    );
+                    window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
+                  }}
+                  className="w-8 h-8 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center text-sm shadow-xs active:scale-95 transition-all"
+                  title="مراسلة واتساب"
+                >
+                  <i className="fab fa-whatsapp"></i>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-bold text-xs"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+
+          {/* الصف الثاني: الأزرار الأساسية (متجاورة بشكل متناسق ومريح) */}
+          <div className="flex items-center gap-2">
+            {!submission.isFullyApproved && (
+              <>
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveDraftAndNext}
+                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-arrow-left text-xs"></i>
+                    <span>حفظ والتالي ⬅️</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSaveAsDraft}
+                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-check text-xs"></i>
+                    <span>حفظ وإنهاء 💾</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveAsDraft();
+                    if (onNavigateToApproval) {
+                      onNavigateToApproval();
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <i className="fas fa-stamp text-xs"></i>
+                  <span>الانتقال للاعتماد 🎯</span>
+                </button>
+              </>
+            )}
+
+            {submission.isFullyApproved && (
+              <button
+                type="button"
+                onClick={handleApproveAndPublish}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i className="fas fa-save text-xs"></i>
+                <span>حفظ التعديل</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 mr-auto flex-wrap">
-          {submission.studentPhone && (
+        {/* تصميم الشاشات الكبيرة (sm فما فوق): شريط أفقي واحد واسع */}
+        <div className="hidden sm:flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {hasMixedQuestions ? (
+              <>
+                <div className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs sm:text-sm font-bold text-indigo-900 dark:text-indigo-300">
+                  <span>المقالي:</span>
+                  <strong className="text-sm font-black">{essayEarnedScore} من {essayMaxScore}</strong>
+                </div>
+                <div className="flex items-center gap-1.5 bg-primary/10 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-primary">
+                  <span>إجمالي درجات الاختبار:</span>
+                  <strong className="text-base sm:text-lg font-black">{totalEarnedScore} من {totalMaxScore} ({perc}%)</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="text-xs sm:text-sm font-black text-gray-600 dark:text-gray-300">مجموع درجات المقالي المعتمدة:</span>
+                <span className="text-base sm:text-lg font-black text-primary bg-primary/10 px-3.5 py-1 rounded-xl">
+                  {totalEarnedScore} من {totalMaxScore} درجة ({perc}%)
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {submission.studentPhone && (
+              <button
+                type="button"
+                onClick={() => {
+                  const phone = String(submission.studentPhone || '').replace(/[^\d]/g, '');
+                  const intlPhone = phone.startsWith('0') ? `+20${phone.slice(1)}` : `+20${phone}`;
+                  const percVal = Math.round((totalEarnedScore / Math.max(1, totalMaxScore)) * 100);
+                  const msg = encodeURIComponent(
+                    `مرحباً بك يا بطل (${submission.studentName}) 🌟\n` +
+                    `معك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
+                    `✅ تم مراجعة واعتماد اختبارك: *${submission.quizTitle}*\n` +
+                    `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n` +
+                    `تمنياتي لك بالتوفيق والنجاح دائماً! ❤️`
+                  );
+                  window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
+                }}
+                className="px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                title="إرسال رسالة التهنئة والنتيجة إلى واتساب الطالب"
+              >
+                <i className="fab fa-whatsapp text-sm"></i>
+                <span>واتساب</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => {
-                const phone = String(submission.studentPhone || '').replace(/[^\d]/g, '');
-                const intlPhone = phone.startsWith('0') ? `+20${phone.slice(1)}` : `+20${phone}`;
-                const perc = Math.round((totalEarnedScore / Math.max(1, totalMaxScore)) * 100);
-                const msg = encodeURIComponent(
-                  `مرحباً بك يا بطل (${submission.studentName}) 🌟\n` +
-                  `معك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
-                  `✅ تم مراجعة واعتماد اختبارك: *${submission.quizTitle}*\n` +
-                  `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${perc}%)\n\n` +
-                  `تمنياتي لك بالتوفيق والنجاح دائماً! ❤️`
-                );
-                window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
-              }}
-              className="px-3.5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-sm active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-              title="إرسال رسالة التهنئة والنتيجة إلى واتساب الطالب"
+              onClick={onClose}
+              className="px-3.5 py-2 rounded-xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 text-gray-700 dark:text-gray-200 font-bold text-xs cursor-pointer transition-colors"
             >
-              <i className="fab fa-whatsapp text-base"></i> واتساب 📲
+              إلغاء
             </button>
-          )}
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold text-xs sm:text-sm cursor-pointer transition-colors"
-          >
-            إلغاء
-          </button>
+            {!submission.isFullyApproved && (
+              <>
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveDraftAndNext}
+                    className="px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-arrow-left text-xs"></i>
+                    <span>حفظ ومتابعة التالي ⬅️</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSaveAsDraft}
+                    className="px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-check text-xs"></i>
+                    <span>حفظ وإنهاء 💾</span>
+                  </button>
+                )}
 
-          {!submission.isFullyApproved && hasNextPending && (
-            <button
-              type="button"
-              onClick={handleSaveDraftAndNext}
-              className="px-3.5 sm:px-4 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-              title="حفظ درجات هذا الطالب كمسودة والانتقال المباشر للطالب التالي دون إعلان النتيجة الآن"
-            >
-              <i className="fas fa-bookmark text-purple-300"></i>
-              <span>حفظ كمسودة والانتقال للتالي ⬅️</span>
-            </button>
-          )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveAsDraft();
+                    if (onNavigateToApproval) {
+                      onNavigateToApproval();
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <i className="fas fa-stamp text-xs"></i>
+                  <span>الانتقال للاعتماد 🎯</span>
+                </button>
+              </>
+            )}
 
-          {!submission.isFullyApproved && (
-            <button
-              type="button"
-              onClick={handleSaveAsDraft}
-              className="px-3.5 sm:px-4 py-2.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 font-black text-xs sm:text-sm shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-              title="حفظ الدرجات والملاحظات كمسودة والرجوع للقائمة دون إعلان النتيجة للطالب الآن"
-            >
-              <i className="fas fa-bookmark text-purple-600"></i>
-              <span>{hasNextPending ? 'حفظ كمسودة وإنهاء 💾' : 'حفظ كمسودة 💾'}</span>
-            </button>
-          )}
-
-          {hasNextPending && (
-            <button
-              type="button"
-              onClick={handleApproveAndNext}
-              className="px-4 sm:px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
-              title="اعتماد درجات هذا الطالب والانتقال المباشر للطالب التالي دون إغلاق الشاشة"
-            >
-              <i className="fas fa-forward-step"></i>
-              <span>اعتماد والانتقال للتالي ⬅️</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleApproveAndPublish}
-            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <i className={`fas ${submission.isFullyApproved ? 'fa-save' : 'fa-check-circle'}`}></i>
-            {submission.isFullyApproved ? 'حفظ التعديلات وتحديث درجات الطالب 💾' : 'اعتماد وإنهاء 🚀'}
-          </button>
+            {submission.isFullyApproved && (
+              <button
+                type="button"
+                onClick={handleApproveAndPublish}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <i className="fas fa-save text-xs"></i>
+                <span>حفظ التعديل</span>
+              </button>
+            )}
+          </div>
         </div>
       </footer>
 

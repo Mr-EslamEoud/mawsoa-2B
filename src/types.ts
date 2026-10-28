@@ -180,6 +180,9 @@ export interface StudentEssaySubmission {
   maxPossibleScore?: number;
   studentType?: string;
   isMistakesBankReleased?: boolean;
+  isAutoTerminated?: boolean;
+  terminationReason?: string;
+  isTeacherReviewed?: boolean;
 }
 
 export interface PermanentMistakeItem {
