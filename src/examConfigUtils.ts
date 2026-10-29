@@ -292,8 +292,61 @@ export const savePendingEssaySubmission = (sub: StudentEssaySubmission): void =>
       all.unshift(sub);
     }
     localStorage.setItem(PENDING_ESSAYS_STORAGE_KEY, JSON.stringify(all));
+    notifyPendingEssaysChanged();
   } catch (e) {
     console.error("Error saving pending essay submission:", e);
+  }
+};
+
+export const notifyPendingEssaysChanged = (): void => {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('kanz_pending_essays_changed'));
+    }
+  } catch (e) {}
+};
+
+/**
+ * الدالة المركزية الموحدة لاحتساب شارات الإدارة (بانتظار التصحيح + بانتظار الاعتماد)
+ * لضمان تطابق تام 100% بين الشريط الجانبي والأرقام المعروضة داخل تبويب تصحيح المقالي واعتماد النتائج
+ */
+export const calculateAdminBadgeCounts = (): { needsGradingCount: number; readyToApproveCount: number } => {
+  try {
+    const allSubs = getPendingEssaySubmissions();
+    let needsGrading = 0;
+    let readyToApprove = 0;
+
+    allSubs.forEach(s => {
+      // 1. استبعاد التسليمات المعتمدة والمؤرشفة بالكامل
+      if (s.isFullyApproved) return;
+
+      // 2. استبعاد الطلاب الممنوحين إذن إعادة امتحان نشط
+      const retakeDirective = getActiveRetakeDirectiveForLesson(s.studentPhone, s.quizTitle);
+      if (retakeDirective) return;
+
+      // 3. فحص ما إذا كان الطالب مؤهلاً لتصحيح المقالي (كتب إجابة مقالية فعلية)
+      const hasWritten = hasWrittenEssayAnswers(s);
+      if (!hasWritten || s.isAutoTerminated) {
+        // ليس لديه مقالي يحتاج تصحيح المعلم -> يذهب مباشرة لاعتماد النتائج
+        readyToApprove++;
+        return;
+      }
+
+      // 4. هل تم تصحيحه كمسودة بالفعل أم لا يزال بانتظار تصحيح المعلم؟
+      const essayQs = (s.questions || []).filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+      const hasAllScores = essayQs.length > 0 && essayQs.every(q => q.teacherScore !== undefined && q.teacherScore !== null);
+      const isReviewed = Boolean(s.isTeacherReviewed || (s as any).hasGradedStatus || hasAllScores);
+
+      if (isReviewed) {
+        readyToApprove++;
+      } else {
+        needsGrading++;
+      }
+    });
+
+    return { needsGradingCount: needsGrading, readyToApproveCount: readyToApprove };
+  } catch (e) {
+    return { needsGradingCount: 0, readyToApproveCount: 0 };
   }
 };
 
@@ -683,8 +736,8 @@ export const findLessonForQuizInUnits = (quizTitle: string, lessonId?: string, a
 };
 
 /**
- * إكمال الأسئلة المقالية الناقصة للتسليم (حل مشكلة ترك الطالب لسؤال مقالي وظهوره بسؤال واحد)
- * يضمن ظهور كافة أسئلة الامتحان المقالية في شاشة التصحيح والاعتماد مع رصد (0) للسؤال المتروك
+ * إكمال الأسئلة المقالية والموضوعية للتسليم وربط درجات الاختبار بالكامل
+ * يضمن ظهور كافة أسئلة الامتحان المقالية والموضوعية في شاشات التصحيح والاعتماد وحماية درجات الطلاب من التدني
  */
 export const ensureCompleteEssayQuestions = (sub: StudentEssaySubmission, allData?: Unit[]): StudentEssaySubmission => {
   if (!sub) return sub;
@@ -693,22 +746,129 @@ export const ensureCompleteEssayQuestions = (sub: StudentEssaySubmission, allDat
     return sub;
   }
 
+  const examCfg = getExamConfig(lesson.id);
+  const structure = calculateExamStructure(lesson.questions, examCfg);
+  const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
   const lessonEssayQs = lesson.questions.filter((q: any) => q.type === 'essay');
-  if (lessonEssayQs.length === 0) return sub;
+  const lessonObjectiveQs = lesson.questions.filter((q: any) => q.type !== 'essay');
 
-  const currentQuestions = [...(sub.questions || [])];
-  let hasMissing = false;
+  // دوال التحقق من نوع السؤال في المنهج الأصلي لاستبعاد الاختياري والصح/خطأ من المقالي
+  const isLessonObjectiveQuestion = (text: string): boolean => {
+    if (!text) return false;
+    const clean = normTextHelper(text);
+    return lessonObjectiveQs.some((lq: any) => {
+      const normLq = normTextHelper(lq.q);
+      return normLq === clean || (clean.length > 15 && (normLq.includes(clean) || clean.includes(normLq)));
+    });
+  };
 
+  const isLessonEssayQuestion = (text: string): boolean => {
+    if (!text) return false;
+    const clean = normTextHelper(text);
+    return lessonEssayQs.some((lq: any) => {
+      const normLq = normTextHelper(lq.q);
+      return normLq === clean || (clean.length > 15 && (normLq.includes(clean) || clean.includes(normLq)));
+    });
+  };
+
+  let earnedFromObjectiveRows = 0;
+  let hasExtractedObjectiveRows = false;
+  const cleanedQuestions: EssayReviewQuestionItem[] = [];
+
+  (sub.questions || []).forEach(q => {
+    const isMcqSummary = q.qIndex === -1 || 
+                         q.questionText.includes('الأسئلة الموضوعية') || 
+                         q.questionText.includes('الاختياري والصح/خطأ');
+
+    if (isMcqSummary) {
+      cleanedQuestions.push(q);
+      return;
+    }
+
+    // هل هذا السؤال هو في الأصل سؤال موضوعي (اختياري أو صح/خطأ) في المنهج؟
+    if (isLessonObjectiveQuestion(q.questionText)) {
+      hasExtractedObjectiveRows = true;
+      const s = Number(q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0));
+      if (!isNaN(s) && s > 0) {
+        earnedFromObjectiveRows += s;
+      }
+      // استبعاد السؤال من المقالي لأنه موضوعي
+      return;
+    }
+
+    // هل هذا السؤال هو سؤال مقالي حقيقي في المنهج؟
+    if (isLessonEssayQuestion(q.questionText)) {
+      cleanedQuestions.push(q);
+      return;
+    }
+
+    // إذا كان المنهج يحتوي على أسئلة مقالية ولم يطابق أي منها:
+    if (lessonEssayQs.length > 0) {
+      hasExtractedObjectiveRows = true;
+      const s = Number(q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0));
+      if (!isNaN(s) && s > 0) earnedFromObjectiveRows += s;
+      return;
+    }
+
+    cleanedQuestions.push(q);
+  });
+
+  // 1. فحص وضمان وجود عنصر ملخص الأسئلة الموضوعية (الاختياري والصح/خطأ)
+  if (mcqMax > 0) {
+    const existingMcqIdx = cleanedQuestions.findIndex(sq => 
+      sq.qIndex === -1 || 
+      sq.questionText.includes('الأسئلة الموضوعية') || 
+      sq.questionText.includes('الاختياري والصح/خطأ')
+    );
+
+    if (existingMcqIdx === -1) {
+      const existingEssayEarned = cleanedQuestions
+        .filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ')
+        .reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
+      
+      const inferredMcq = Math.max(0, Math.min(mcqMax, (sub.finalScore || 0) - existingEssayEarned));
+      const finalMcqEarned = hasExtractedObjectiveRows ? Math.min(mcqMax, earnedFromObjectiveRows) : (inferredMcq > 0 ? inferredMcq : mcqMax);
+
+      cleanedQuestions.unshift({
+        qIndex: -1,
+        questionText: 'الأسئلة الموضوعية (الاختياري والصح/خطأ)',
+        essayType: 'اختر من متعدد',
+        modelAnswer: `الدرجة العظمى: ${mcqMax}`,
+        studentText: `حصل الطالب على ${finalMcqEarned} من أصل ${mcqMax}`,
+        maxScore: mcqMax,
+        teacherScore: finalMcqEarned,
+        aiScore: finalMcqEarned,
+        teacherFeedback: `نتيجة الأسئلة الموضوعية المرصودة آلياً: ${finalMcqEarned} / ${mcqMax}`,
+        isApproved: true
+      });
+    } else {
+      const mcqItem = cleanedQuestions[existingMcqIdx];
+      mcqItem.essayType = 'اختر من متعدد';
+      mcqItem.maxScore = mcqMax;
+      
+      let parsedEarned = 0;
+      const match = (mcqItem.studentText || '').match(/حصل الطالب على\s*([\d.]+)/);
+      if (match && match[1]) {
+        parsedEarned = parseFloat(match[1]) || 0;
+      }
+      
+      const bestScore = Math.min(mcqMax, Math.max(parsedEarned, earnedFromObjectiveRows, Number(mcqItem.teacherScore) || 0));
+      mcqItem.teacherScore = bestScore;
+      mcqItem.aiScore = bestScore;
+      mcqItem.studentText = `حصل الطالب على ${bestScore} من أصل ${mcqMax}`;
+    }
+  }
+
+  // 2. فحص وضمان اكتمال الأسئلة المقالية الحقيقية من المنهج
   lessonEssayQs.forEach((lq: any, lqi: number) => {
     const normLq = normTextHelper(lq.q);
-    const existing = currentQuestions.find(sq => 
+    const existing = cleanedQuestions.find(sq => 
       sq.questionText.trim() === lq.q.trim() || 
       normTextHelper(sq.questionText) === normLq
     );
 
     if (!existing) {
-      hasMissing = true;
-      currentQuestions.push({
+      cleanedQuestions.push({
         qIndex: lqi,
         questionText: lq.q.trim(),
         essayType: lq.essayType || detectEssayType(lq.q).label,
@@ -721,19 +881,109 @@ export const ensureCompleteEssayQuestions = (sub: StudentEssaySubmission, allDat
         aiFeedback: 'لم يتم الإجابة على هذا السؤال (0 من 2)',
         isApproved: false
       });
+    } else {
+      if (!existing.modelAnswer || existing.modelAnswer.trim() === '') {
+        existing.modelAnswer = lq.answer || lq.reason || (lq as any).modelAnswer || '';
+      }
+      if (lq.maxScore) existing.maxScore = lq.maxScore;
+      if (lq.essayType) existing.essayType = lq.essayType;
     }
   });
 
-  if (!hasMissing) return sub;
+  // حماية صارمة لمنع تضخم درجات المقالي عن الدرجة العظمى المحددة
+  const essayQs = cleanedQuestions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+  const maxEssayPossible = structure ? structure.essayTotalScore : essayQs.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+  essayQs.forEach(q => {
+    const qMax = q.maxScore || 2;
+    if (q.teacherScore !== undefined && q.teacherScore > qMax) {
+      q.teacherScore = qMax;
+    }
+  });
 
-  const earned = currentQuestions.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
-  const totalMax = currentQuestions.reduce((sum, q) => sum + (Number(q.maxScore) || 2), 0);
+  const mcqQs = cleanedQuestions.filter(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+  const mcqEarned = mcqQs.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
+  const rawEssayEarned = essayQs.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
+  const essayEarned = Math.min(maxEssayPossible, rawEssayEarned);
+  const earned = Math.min(structure ? structure.examTotalScore : (mcqEarned + essayEarned), mcqEarned + essayEarned);
+  const totalMax = structure ? structure.examTotalScore : (sub.maxPossibleScore || 50);
 
   return {
     ...sub,
-    questions: currentQuestions,
+    questions: cleanedQuestions,
     finalScore: earned,
-    maxPossibleScore: Math.max(sub.maxPossibleScore || 0, totalMax)
+    maxPossibleScore: totalMax
+  };
+};
+
+export interface SubScoresBreakdown {
+  mcqEarned: number;
+  mcqMax: number;
+  essayEarned: number;
+  essayMax: number;
+  totalEarned: number;
+  totalMax: number;
+  perc: number;
+}
+
+/**
+ * احتساب دقيق ومفصل لدرجات الطالب (موضوعي + مقالي + المجموع الكلي والنسبة)
+ */
+export const calculateSubScores = (sub: StudentEssaySubmission, data: Unit[] = []): SubScoresBreakdown => {
+  const matchedLesson = data.flatMap(u => u.lessons).find(l => 
+    l.id === sub.lessonId || l.title === sub.quizTitle || (sub.quizTitle && sub.quizTitle.includes(l.title))
+  );
+  const cfg = matchedLesson ? getExamConfig(matchedLesson.id) : null;
+  const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, cfg) : null;
+
+  const essayQs = (sub.questions || []).filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+  const mcqQs = (sub.questions || []).filter(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+
+  const essayMax = structure ? structure.essayTotalScore : essayQs.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+  const mcqMax = structure ? (structure.mcqTotalScore + structure.tfTotalScore) : Math.max(0, (sub.maxPossibleScore || 50) - essayMax);
+
+  // درجة المقالي
+  const essayEarned = essayQs.reduce((sum, q) => {
+    const sc = q.teacherScore !== undefined && q.teacherScore !== null ? Number(q.teacherScore) : (q.aiScore !== undefined ? Number(q.aiScore) : 0);
+    return sum + (isNaN(sc) ? 0 : sc);
+  }, 0);
+
+  // درجة الموضوعي
+  let mcqEarned = 0;
+  const mcqSummary = (sub.questions || []).find(q => q.qIndex === -1 || q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ'));
+  if (mcqSummary) {
+    if (mcqSummary.teacherScore !== undefined && mcqSummary.teacherScore !== null && !isNaN(Number(mcqSummary.teacherScore))) {
+      mcqEarned = Number(mcqSummary.teacherScore);
+    } else if (mcqSummary.aiScore !== undefined && !isNaN(Number(mcqSummary.aiScore))) {
+      mcqEarned = Number(mcqSummary.aiScore);
+    } else {
+      const match = (mcqSummary.studentText || '').match(/حصل الطالب على\s*([\d.]+)/);
+      if (match && match[1]) {
+        mcqEarned = parseFloat(match[1]);
+      }
+    }
+  } else if (mcqQs.length > 0) {
+    mcqEarned = mcqQs.reduce((sum, q) => {
+      const sc = q.teacherScore !== undefined && q.teacherScore !== null ? Number(q.teacherScore) : (q.aiScore !== undefined ? Number(q.aiScore) : 0);
+      return sum + (isNaN(sc) ? 0 : sc);
+    }, 0);
+  } else if (sub.finalScore !== undefined && sub.finalScore > 0) {
+    mcqEarned = Math.max(0, sub.finalScore - essayEarned);
+  }
+
+  if (mcqMax > 0) mcqEarned = Math.min(mcqMax, mcqEarned);
+
+  const totalEarned = Math.round((mcqEarned + essayEarned) * 100) / 100;
+  const totalMax = structure ? structure.examTotalScore : (mcqMax + essayMax) || sub.maxPossibleScore || 50;
+  const perc = totalMax > 0 ? Math.min(100, Math.round((totalEarned / totalMax) * 100)) : 0;
+
+  return {
+    mcqEarned,
+    mcqMax,
+    essayEarned,
+    essayMax,
+    totalEarned,
+    totalMax,
+    perc
   };
 };
 

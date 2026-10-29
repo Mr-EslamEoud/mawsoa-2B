@@ -5,6 +5,17 @@ import { HighlightText } from './HighlightText';
 import { FormatQuestionText } from './FormatQuestionText';
 import defaultQuestionsData from '../defaultQuestions.json';
 import { normalizeTextForMatching } from './AdminEssayReviewTab';
+import { calculateExamStructure, getExamConfig, getPendingEssaySubmissions } from '../examConfigUtils';
+
+export const isMcqSummaryItem = (q: { qIndex?: number; questionText?: string; essayType?: string }) => {
+  if (!q) return false;
+  if (q.qIndex === -1) return true;
+  const text = q.questionText || '';
+  return text.includes('الأسئلة الموضوعية') || 
+         text.includes('الاختياري والصح/خطأ') || 
+         text.includes('نتيجة الأسئلة الموضوعية') ||
+         text.includes('الأسئلة الاختيارية');
+};
 
 interface StudentApprovedEssayModalProps {
   isOpen: boolean;
@@ -60,46 +71,88 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
     return null;
   }, [submission, data]);
 
-  // استرجاع ودمج كامل أسئلة الاختبار (المقالية والاختيارية) مع دمج الفقرات
+  // استرجاع ودمج كامل أسئلة الاختبار مع معالجة ملخص الأسئلة الموضوعية بدقة
   const allResolvedQuestions = useMemo(() => {
     if (!submission) return [];
-    let list: EssayReviewQuestionItem[] = (submission.questions || []).map(item => {
-      if (item.paragraph) return item;
-      const matchQ = matchedLesson?.questions?.find((mq: any) => normalizeTextForMatching(mq.q) === normalizeTextForMatching(item.questionText));
+
+    // فحص هل توجد إجابات تفصيلية مسجلة محلياً لهذا الاختبار على هذا الجهاز
+    let sourceQuestions: EssayReviewQuestionItem[] = [];
+    try {
+      const localSubs = getPendingEssaySubmissions();
+      const cleanPhone = (submission.studentPhone || '').trim().replace(/[^\d]/g, '');
+      const normQuiz = normalizeTextForMatching(submission.quizTitle || '');
+
+      const localMatch = localSubs.find(ls => {
+        const lsCleanPhone = (ls.studentPhone || '').trim().replace(/[^\d]/g, '');
+        const lsNormQuiz = normalizeTextForMatching(ls.quizTitle || '');
+        const isPhoneMatch = lsCleanPhone === cleanPhone || (lsCleanPhone.length >= 8 && cleanPhone.length >= 8 && (lsCleanPhone.endsWith(cleanPhone) || cleanPhone.endsWith(lsCleanPhone)));
+        const isQuizMatch = lsNormQuiz === normQuiz || (submission.lessonId && ls.lessonId === submission.lessonId);
+        return isPhoneMatch && isQuizMatch && Array.isArray(ls.questions) && ls.questions.length > (submission.questions?.length || 0);
+      });
+
+      if (localMatch && localMatch.questions && localMatch.questions.length > 0) {
+        sourceQuestions = localMatch.questions.map(lq => {
+          const cloudQ = submission.questions?.find(cq => normalizeTextForMatching(cq.questionText) === normalizeTextForMatching(lq.questionText));
+          return {
+            ...lq,
+            isApproved: true,
+            teacherScore: cloudQ && cloudQ.teacherScore !== undefined ? cloudQ.teacherScore : lq.teacherScore,
+            teacherFeedback: cloudQ && cloudQ.teacherFeedback ? cloudQ.teacherFeedback : lq.teacherFeedback
+          };
+        });
+      } else {
+        sourceQuestions = [...(submission.questions || [])];
+      }
+    } catch (e) {
+      sourceQuestions = [...(submission.questions || [])];
+    }
+
+    // حساب الدرجة العظمى للموضوعي من بنية الدرس إن وجدت
+    const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+    const structureMcqMax = structure ? (structure.mcqTotalScore + structure.tfTotalScore) : 0;
+
+    let list: EssayReviewQuestionItem[] = sourceQuestions.map(item => {
+      const isSummary = isMcqSummaryItem(item);
+      const matchQ = !isSummary ? matchedLesson?.questions?.find((mq: any) => normalizeTextForMatching(mq.q) === normalizeTextForMatching(item.questionText)) : null;
+
+      let resolvedMax = Number(item.maxScore) || 2;
+      let resolvedTeacherScore = item.teacherScore;
+
+      if (isSummary) {
+        // استخراج الدرجة العظمى الحقيقية للأسئلة الموضوعية
+        let parsedMax = 0;
+        const studentMatch = (item.studentText || '').match(/(?:من أصل|الدرجة العظمى:?)\s*([\d.]+)/);
+        if (studentMatch && studentMatch[1]) parsedMax = parseFloat(studentMatch[1]);
+        const modelMatch = (item.modelAnswer || '').match(/([\d.]+)/);
+        if (!parsedMax && modelMatch && modelMatch[1]) parsedMax = parseFloat(modelMatch[1]);
+
+        resolvedMax = structureMcqMax > 0 
+          ? structureMcqMax 
+          : (parsedMax > 0 ? parsedMax : Math.max(resolvedMax, Number(resolvedTeacherScore) || 0, 50));
+
+        // استخراج ما حصل عليه الطالب بالفعل إن لم يكن محدداً
+        if (resolvedTeacherScore === undefined || resolvedTeacherScore === null) {
+          const earnedMatch = (item.studentText || '').match(/حصل الطالب على\s*([\d.]+)/);
+          if (earnedMatch && earnedMatch[1]) resolvedTeacherScore = parseFloat(earnedMatch[1]);
+        }
+
+        return {
+          ...item,
+          essayType: 'اختر من متعدد',
+          maxScore: resolvedMax,
+          teacherScore: resolvedTeacherScore !== undefined ? resolvedTeacherScore : resolvedMax,
+          aiScore: resolvedTeacherScore !== undefined ? resolvedTeacherScore : resolvedMax,
+          paragraph: '',
+          concept: ''
+        };
+      }
+
       return {
         ...item,
-        paragraph: matchQ?.paragraph || matchQ?.concept || item.concept || ''
+        paragraph: item.paragraph || matchQ?.paragraph || matchQ?.concept || item.concept || '',
+        maxScore: resolvedMax
       };
     });
-
-    // إذا وُجد الدرس في المنهج ولديه أسئلة أكثر مما هو مسجل في submission (مثل أسئلة الاختيار من متعدد)
-    if (matchedLesson && matchedLesson.questions && matchedLesson.questions.length > list.length) {
-      const existingTexts = new Set(list.map(q => normalizeTextForMatching(q.questionText)));
-      matchedLesson.questions.forEach((lq: any, lqIdx: number) => {
-        const normLq = normalizeTextForMatching(lq.q);
-        if (!existingTexts.has(normLq)) {
-          const isTf = lq.type === 'tf' || lq.type === 't/f' || lq.type === 'true_false' || 
-                       (Array.isArray(lq.options) && lq.options.length === 2 && (lq.options.includes('صح') || lq.options.includes('خطأ')));
-          const qMax = lq.maxScore || 1;
-          
-          list.push({
-            qIndex: lqIdx,
-            questionText: lq.q,
-            essayType: lq.type === 'essay' ? 'سؤال مقالي' : (isTf ? 'صح وخطأ' : 'اختر من متعدد'),
-            modelAnswer: lq.correct || lq.answer || lq.reason || '',
-            studentText: 'لم يُسجل حل لهذا السؤال في هذا التسليم',
-            maxScore: qMax,
-            teacherScore: 0,
-            aiScore: 0,
-            teacherFeedback: lq.reason || 'راجع نموذج الإجابة المعتمد لهذا السؤال.',
-            isApproved: true,
-            paragraph: lq.paragraph || lq.concept || '',
-            concept: lq.concept || ''
-          });
-          existingTexts.add(normLq);
-        }
-      });
-    }
 
     return list.sort((a, b) => a.qIndex - b.qIndex);
   }, [submission, matchedLesson]);
@@ -108,6 +161,7 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
   const wrongParagraphs = useMemo(() => {
     const set = new Set<string>();
     allResolvedQuestions.forEach(q => {
+      if (isMcqSummaryItem(q)) return; // ملخص الموضوعي ليس فقرة منهجية
       const finalQScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
       const isPassing = finalQScore >= Math.max(1, (q.maxScore || 1) * 0.6);
       if (!isPassing) {
@@ -122,26 +176,26 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
 
   const maxScore = useMemo(() => {
     if (!submission) return 50;
-    const sumAllResolvedMax = allResolvedQuestions.reduce((sum, q) => sum + (Number(q.maxScore) || 1), 0);
-    // الدرجة العظمى تمثل إجمالي الدرجات لكافة أسئلة الامتحان المعروضة (مثلاً 60 سؤالاً = 60 أو 62 درجة)
-    if (sumAllResolvedMax > 0) {
-      return Math.max(sumAllResolvedMax, submission.maxPossibleScore || 0);
+    const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+    if (structure && structure.examTotalScore > 0) {
+      return structure.examTotalScore;
     }
-    return submission.maxPossibleScore || 50;
-  }, [submission, allResolvedQuestions]);
+    if (submission.maxPossibleScore && submission.maxPossibleScore > 0) {
+      return submission.maxPossibleScore;
+    }
+    const sumAllResolvedMax = allResolvedQuestions.reduce((sum, q) => sum + (Number(q.maxScore) || 1), 0);
+    return Math.max(sumAllResolvedMax, 50);
+  }, [submission, matchedLesson, allResolvedQuestions]);
 
   const earnedScore = useMemo(() => {
     if (!submission) return 0;
-    // مجموع ما حصل عليه الطالب بالفعل من درجات في الأسئلة المعروضة
+    if (submission.finalScore !== undefined && submission.finalScore !== null && submission.finalScore > 0) {
+      return Math.min(maxScore, submission.finalScore);
+    }
     const sumEarned = allResolvedQuestions.reduce((sum, q) => {
       const s = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
       return sum + s;
     }, 0);
-
-    // إذا كانت finalScore محددة في التسليم
-    if (submission.finalScore !== undefined && submission.finalScore !== null) {
-      return Math.min(maxScore, Math.max(sumEarned, Math.max(0, submission.finalScore)));
-    }
     return Math.min(maxScore, Math.max(0, sumEarned));
   }, [allResolvedQuestions, submission, maxScore]);
 
@@ -206,26 +260,44 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
 
   // إحصائيات أسئلة الامتحان والأخطاء المتناسقة بدقة مع الدرجة الفعلية
   const examStats = useMemo(() => {
-    const total = Math.max(allResolvedQuestions.length, maxScore);
-    const sumIndividual = allResolvedQuestions.reduce((s, q) => s + (q.teacherScore || 0), 0);
-
+    let total = 0;
     let correct = 0;
     let wrong = 0;
     let partial = 0;
 
-    if (sumIndividual === earnedScore && allResolvedQuestions.length > 0) {
-      allResolvedQuestions.forEach(q => {
-        const qScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
-        const qMax = q.maxScore || 1;
-        if (qScore >= qMax) {
-          correct++;
-        } else if (qScore === 0) {
-          wrong++;
-        } else {
-          partial++;
-        }
-      });
-    } else {
+    const mcqSummary = allResolvedQuestions.find(q => isMcqSummaryItem(q));
+    const individualQuestions = allResolvedQuestions.filter(q => !isMcqSummaryItem(q));
+
+    if (mcqSummary) {
+      // الأسئلة الموضوعية ملخصة في كارت موحد
+      const mcqMax = Number(mcqSummary.maxScore) || 1;
+      const mcqEarned = Number(mcqSummary.teacherScore !== undefined ? mcqSummary.teacherScore : mcqSummary.aiScore) || 0;
+      
+      const mcqCount = Math.round(mcqMax);
+      const mcqCorrect = Math.min(mcqCount, Math.round(mcqEarned));
+      const mcqWrong = Math.max(0, mcqCount - mcqCorrect);
+
+      total += mcqCount;
+      correct += mcqCorrect;
+      wrong += mcqWrong;
+    }
+
+    // فحص الأسئلة المفردة (المقالية وغيرها)
+    individualQuestions.forEach(q => {
+      total += 1;
+      const qScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
+      const qMax = q.maxScore || 1;
+      if (qScore >= qMax) {
+        correct++;
+      } else if (qScore <= 0) {
+        wrong++;
+      } else {
+        partial++;
+      }
+    });
+
+    if (total === 0) {
+      total = Math.max(1, maxScore);
       correct = Math.min(total, Math.round(earnedScore));
       wrong = Math.max(0, total - correct);
     }
@@ -236,15 +308,21 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
   // تصفية الأسئلة في شاشة المراجعة التفصيلية
   const filteredQuestions = useMemo(() => {
     return allResolvedQuestions.filter(q => {
+      const isMcqSumm = isMcqSummaryItem(q);
       const qScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
       const qMax = q.maxScore || 1;
-      const isEssay = q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ';
+      const isEssay = !isMcqSumm && q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ';
 
       if (detailsFilter === 'all') return true;
-      if (detailsFilter === 'wrong') return qScore < qMax;
-      if (detailsFilter === 'correct') return qScore >= qMax;
+      if (detailsFilter === 'wrong') {
+        if (isMcqSumm) return qScore < qMax;
+        return qScore <= 0;
+      }
+      if (detailsFilter === 'correct') {
+        return qScore >= qMax;
+      }
       if (detailsFilter === 'essay') return isEssay;
-      if (detailsFilter === 'mcq') return !isEssay;
+      if (detailsFilter === 'mcq') return isMcqSumm || !isEssay;
       return true;
     });
   }, [allResolvedQuestions, detailsFilter]);
@@ -413,8 +491,8 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 text-center">
                 <div className="bg-white dark:bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
                   <span className="block text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">الدرجة المستحقة</span>
-                  <span className="text-lg sm:text-2xl font-black text-indigo-700 dark:text-indigo-300" dir="ltr">
-                    {toEasternArabic(earnedScore)} / {toEasternArabic(maxScore)}
+                  <span className="text-lg sm:text-2xl font-black text-indigo-700 dark:text-indigo-300" dir="rtl">
+                    {toEasternArabic(earnedScore)} من {toEasternArabic(maxScore)}
                   </span>
                 </div>
 
@@ -626,16 +704,27 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
             {/* محتوى الأسئلة الكامل وملاحظات المعلم */}
             <div className="p-3.5 sm:p-5 overflow-y-auto space-y-3.5 flex-1">
               {filteredQuestions.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 dark:text-slate-500 font-bold">
-                  <i className="fas fa-inbox text-3xl mb-2 opacity-40"></i>
-                  <p>لا توجد أسئلة تطابق هذا الفلتر</p>
+                <div className="py-12 text-center font-bold">
+                  {detailsFilter === 'wrong' ? (
+                    <div className="text-emerald-600 dark:text-emerald-400">
+                      <i className="fas fa-check-circle text-4xl mb-2 text-emerald-500"></i>
+                      <p className="text-base font-black">ما شاء الله! لا توجد أي أخطاء مسجلة في هذا الاختبار 🏆</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">إجاباتك ممتازة ومطابقة للنموذج المعتمد.</p>
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 dark:text-slate-500">
+                      <i className="fas fa-inbox text-3xl mb-2 opacity-40"></i>
+                      <p>لا توجد أسئلة تطابق هذا الفلتر</p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 filteredQuestions.map((q, idx) => {
+                  const isMcqSumm = isMcqSummaryItem(q);
                   const finalQScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
-                  const isZero = finalQScore === 0;
+                  const isZero = !isMcqSumm && finalQScore === 0;
                   const isFull = finalQScore >= q.maxScore;
-                  const isEssay = q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ';
+                  const isEssay = !isMcqSumm && q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ';
 
                   return (
                     <div
@@ -651,14 +740,18 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
                       <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-slate-100 dark:border-slate-700/60 flex-wrap">
                         <div className="flex items-center gap-2">
                           <span className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-black text-xs flex items-center justify-center">
-                            {toEasternArabic(q.qIndex + 1)}
+                            {isMcqSumm ? '★' : toEasternArabic(q.qIndex + 1)}
                           </span>
-                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
-                            isEssay 
+                          <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md ${
+                            isMcqSumm
+                              ? 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200 border border-blue-200 dark:border-blue-800'
+                              : isEssay 
                               ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300' 
-                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                           }`}>
-                            {q.essayType || (isEssay ? 'سؤال مقالي' : 'اختر من متعدد')}
+                            {isMcqSumm 
+                              ? '📊 الأسئلة الموضوعية (الاختيارية والصح/خطأ)' 
+                              : (q.essayType || (isEssay ? 'سؤال مقالي' : 'اختر من متعدد'))}
                           </span>
                         </div>
 
@@ -668,9 +761,9 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
                             : isFull
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                             : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                        }`} dir="ltr">
-                          <span>{toEasternArabic(finalQScore)} / {toEasternArabic(q.maxScore)}</span>
-                          <span>{isZero ? '❌ خطأ' : (isFull ? '✅ صحيح' : '⚠️ جزئي')}</span>
+                        }`} dir="rtl">
+                          <span>{toEasternArabic(finalQScore)} من {toEasternArabic(q.maxScore)}</span>
+                          <span>{isZero ? '❌ خطأ' : (isFull ? '✅ ممتاز' : '⚠️ جزئي')}</span>
                         </div>
                       </div>
 

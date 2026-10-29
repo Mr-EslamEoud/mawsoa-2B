@@ -393,7 +393,32 @@ function doPost(e) {
         resultsSheet.appendRow(["التاريخ والوقت", "اسم الطالب", "رقم الهاتف", "الاختبار / الدرس", "النتيجة", "نوع الطالب"]);
       }
       var sType = payload.studentType || (payload.phone && String(payload.phone).indexOf('ESON') > -1 ? 'أونلاين' : 'سنتر');
-      resultsSheet.appendRow([payload.date, payload.name, payload.phone, payload.quiz, payload.score, sType]);
+      var targetPhone = cleanPhone(payload.phone);
+      var targetQuiz = String(payload.quiz || '').trim();
+      var isResetAction = targetQuiz.indexOf('تصفير') > -1 || targetQuiz.indexOf('فرصة جديدة') > -1 || String(payload.score).indexOf('تصفير') > -1;
+
+      // إذا كانت النتيجة عادية وليست تصفير، نتحقق إن كان للطالب سجل سابق لنفس الاختبار لتحديثه ومنع تكرار وتضخم الصفوف
+      var updated = false;
+      if (!isResetAction && targetPhone && targetQuiz) {
+        var rData = resultsSheet.getDataRange().getValues();
+        for (var ri = 1; ri < rData.length; ri++) {
+          var rowPhone = cleanPhone(rData[ri][2]);
+          var rowQuiz = String(rData[ri][3] || '').trim();
+          var isRowReset = rowQuiz.indexOf('تصفير') > -1 || rowQuiz.indexOf('فرصة جديدة') > -1 || String(rData[ri][4]).indexOf('تصفير') > -1;
+          if (rowPhone === targetPhone && !isRowReset && normTitle(rowQuiz) === normTitle(targetQuiz)) {
+            resultsSheet.getRange(ri + 1, 1).setValue(payload.date || new Date().toLocaleString('ar-EG'));
+            resultsSheet.getRange(ri + 1, 2).setValue(payload.name);
+            resultsSheet.getRange(ri + 1, 5).setValue(payload.score);
+            if (sType) resultsSheet.getRange(ri + 1, 6).setValue(sType);
+            updated = true;
+            break;
+          }
+        }
+      }
+
+      if (!updated) {
+        resultsSheet.appendRow([payload.date || new Date().toLocaleString('ar-EG'), payload.name, payload.phone, payload.quiz, payload.score, sType]);
+      }
       return respondJSON({status: 'success'});
     }
     
@@ -406,6 +431,19 @@ function doPost(e) {
       }
       var questions = payload.questions || [];
       var sType = payload.studentType || 'سنتر';
+      var targetPhone = cleanPhone(payload.studentPhone);
+      var targetQuiz = String(payload.quizTitle || '').trim();
+
+      // تنظيف الصفوف القديمة لنفس الطالب ونفس الاختبار لمنع تكرار وتضخم الصفوف
+      if (targetPhone && targetQuiz) {
+        var eData = essaySheet.getDataRange().getValues();
+        for (var di = eData.length - 1; di >= 1; di--) {
+          if (cleanPhone(eData[di][2]) === targetPhone && normTitle(eData[di][3]) === normTitle(targetQuiz)) {
+            essaySheet.deleteRow(di + 1);
+          }
+        }
+      }
+
       if (Array.isArray(questions)) {
         questions.forEach(function(q) {
           essaySheet.appendRow([
@@ -432,11 +470,17 @@ function doPost(e) {
         var eData = essaySheet.getDataRange().getValues();
         var targetPhone = cleanPhone(payload.studentPhone);
         var targetQuiz = String(payload.quizTitle || '').trim();
+        var targetQText = payload.questionText ? String(payload.questionText).trim() : null;
         for (var ei = 1; ei < eData.length; ei++) {
-          if (cleanPhone(eData[ei][2]) === targetPhone && (!targetQuiz || String(eData[ei][3]).trim() === targetQuiz)) {
-            if (payload.teacherScore !== undefined) essaySheet.getRange(ei + 1, 7).setValue(payload.teacherScore);
-            if (payload.teacherFeedback !== undefined) essaySheet.getRange(ei + 1, 8).setValue(payload.teacherFeedback);
-            essaySheet.getRange(ei + 1, 9).setValue(payload.isApproved ? "معتمد" : "قيد المراجعة");
+          if (cleanPhone(eData[ei][2]) === targetPhone && (!targetQuiz || normTitle(eData[ei][3]) === normTitle(targetQuiz))) {
+            var rowQText = String(eData[ei][4] || '').trim();
+            // إذا كان التحديث لسؤال محدد بالاسم أو تحديث الحالة العامة فقط دون مساس بالدرجات الفردية
+            if (!targetQText || rowQText === targetQText || normTitle(rowQText) === normTitle(targetQText)) {
+              if (payload.teacherScore !== undefined && targetQText) essaySheet.getRange(ei + 1, 7).setValue(payload.teacherScore);
+              if (payload.teacherFeedback !== undefined && targetQText) essaySheet.getRange(ei + 1, 8).setValue(payload.teacherFeedback);
+              if (payload.isApproved !== undefined) essaySheet.getRange(ei + 1, 9).setValue(payload.isApproved ? "معتمد" : "قيد المراجعة");
+              else if (payload.status) essaySheet.getRange(ei + 1, 9).setValue(payload.status);
+            }
           }
         }
         return respondJSON({status: 'success'});
@@ -1358,6 +1402,15 @@ function syncSingleOnlineStudentToMainSheet(studentsSheet, st) {
   }
 }
 
+function normTitle(t) {
+  if (!t) return "";
+  return String(t)
+    .replace(/[\u200E\u200F\u00A0]/g, '')
+    .replace(/\s*:\s*/g, ':')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function cleanPhone(phone) {
   if (!phone) return "";
   var str = String(phone);
@@ -1366,7 +1419,7 @@ function cleanPhone(phone) {
     var regex = new RegExp(arabicNumbers[i], 'g');
     str = str.replace(regex, i);
   }
-  str = str.replace(/[\\s\\+\\.\\-]/g, '');
+  str = str.replace(/[\s\+\.\-\u200E\u200F\u00A0]/g, '');
   if (str.startsWith('20') && str.length > 10) {
     str = str.substring(2);
   }

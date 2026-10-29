@@ -470,79 +470,543 @@ export const matchTokenWithSynonyms = (token: string, targetTokens: string[], ta
 };
 
 /**
- * تصنيف ذكي للمفاتيح التاريخية (شخصية، ثورة، حدث ومؤسسة، موقف وفكر، مقاومة، ظاهرة، تاريخ)
+ * سجل الكيانات والشخصيات والأعمال والمكتسبات الدستورية لتاريخ الثانوية العامة
+ * يضمن التقييم الصارم والربط بين الشخصية وعملها التاريخي الفعلي والمكتسبات الدستورية
+ */
+export interface HistoricalRegistryItem {
+  id: string;
+  name: string;
+  category: 'figure' | 'action' | 'outcome' | 'party' | 'date' | 'cause' | 'event';
+  icon: string;
+  aliases: string[];
+  actionKeywords?: string[];
+  desc: string;
+  gender?: 'male' | 'female';
+}
+
+export const HISTORICAL_REGISTRY: HistoricalRegistryItem[] = [
+  // --- الرموز والشخصيات الوطنية ---
+  {
+    id: 'mostafa_kamel',
+    name: 'مصطفى كامل',
+    category: 'figure',
+    icon: '👤',
+    gender: 'male',
+    aliases: ['مصطفى كامل', 'مصطفي كامل'],
+    actionKeywords: ['صحف', 'جريدة اللواء', 'جريده اللواء', 'اللواء', 'الحزب الوطني', 'احزاب', 'نشر الوعي', 'المؤيد', 'العالم الاسلامي', 'فاشودة', 'دنشواي'],
+    desc: 'تأسيس الصحف (جريدة اللواء) وإيقاظ الوعي الوطني وتأسيس الحزب الوطني'
+  },
+  {
+    id: 'mohamed_farid',
+    name: 'محمد فريد',
+    category: 'figure',
+    icon: '👤',
+    gender: 'male',
+    aliases: ['محمد فريد', 'فريد'],
+    actionKeywords: ['نقابة عمال', 'نقابه عمال', 'مدارس ليلية', 'مدارس ليليه', 'مدارس شعبية', 'مدارس شعبيه', 'احزاب', 'توسيع قاعدة'],
+    desc: 'تأسيس نقابات العمال والمدارس الشعبية الليلية وتوسيع قاعدة الحزب الوطني ونقابات الصنائع'
+  },
+  {
+    id: 'saad_zaghloul',
+    name: 'سعد زغلول',
+    category: 'figure',
+    icon: '👤',
+    gender: 'male',
+    aliases: ['سعد زغلول', 'سعد'],
+    actionKeywords: ['وفد', 'حزب الوفد', 'تعبئة جماهيرية', 'تعبئه جماهيريه', 'توكيلات', 'مؤتمر الصلح', 'ثورة 1919', 'وزارة الشعب', 'ونجت'],
+    desc: 'قيادة حزب الوفد والتعبئة الجماهيرية الشاملة في ثورة 1919 وجمع التوكيلات'
+  },
+  {
+    id: 'hoda_shaarawy',
+    name: 'هدى شعراوي',
+    category: 'figure',
+    icon: '👤',
+    gender: 'female',
+    aliases: ['هدى شعراوي', 'هدي شعراوي', 'شعراوي'],
+    actionKeywords: ['لجنة الوفد للسيدات', 'مظاهرات', 'خروج المراة', 'خروج المراه', 'حراك نسائي', 'متاريس'],
+    desc: 'قيادة الحركة النسائية ولجنة الوفد المركزية للسيدات في ثورة 1919'
+  },
+  {
+    id: 'safiya_zaghloul',
+    name: 'صفية زغلول',
+    category: 'figure',
+    icon: '👤',
+    gender: 'female',
+    aliases: ['صفية زغلول', 'صفيه زغلول', 'ام المصريين'],
+    actionKeywords: ['ام المصريين', 'مظاهرات', 'حراك نسائي', 'بيت الامة', 'بيت الامه'],
+    desc: 'رمز النضال النسائي (أم المصريين) ودعم الحراك الوطني وثورة 1919'
+  },
+  {
+    id: 'tahtawi',
+    name: 'رفاعة الطهطاوي',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['طهطاوي', 'رفاعة الطهطاوي', 'رفاعه الطهطاوي'],
+    actionKeywords: ['ترجمة', 'السن', 'تنوير', 'باريس', 'بعثة', 'مدارس'],
+    desc: 'رائد التنوير والترجمة وتأسيس مدرسة الألسن'
+  },
+  {
+    id: 'afghani',
+    name: 'جمال الدين الأفغاني',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['افغاني', 'جمال الدين الافغاني', 'الافغاني'],
+    actionKeywords: ['جامعة اسلامية', 'جامعه اسلاميه', 'تجديد', 'مقاومة', 'عروة وثقى'],
+    desc: 'الدعوة للجامعة الإسلامية ومقاومة الاستعمار وتجديد الفكر'
+  },
+  {
+    id: 'mohamed_abdo',
+    name: 'الشيخ محمد عبده',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['محمد عبده', 'الشيخ عبده', 'محمد عبده'],
+    actionKeywords: ['اصلاح', 'ازهر', 'تحرير العقل', 'عروة وثقى', 'تجديد الفكر', 'توفيق'],
+    desc: 'تحرير العقل من الجمود وتجديد الفكر الديني والإصلاح التدريجي'
+  },
+  {
+    id: 'arabi',
+    name: 'أحمد عرابي',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['عرابي', 'احمد عرابي'],
+    actionKeywords: ['مظاهرة عابدين', 'مطالب الجيش', 'ثورة عرابية', 'كفر الدوار', 'التل الكبير'],
+    desc: 'قيادة الثورة العرابية والمطالبة بالدستور والحقوق الوطنية'
+  },
+  {
+    id: 'omar_makram',
+    name: 'عمر مكرم',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['عمر مكرم'],
+    actionKeywords: ['زعامة شعبية', 'اختيار محمد علي', 'مقاومة خورشيد', 'دار المحكمة', 'حملة فريزر'],
+    desc: 'قيادة الزعامة الشعبية وفرض الإرادة الوطنية واختيار محمد علي 1805'
+  },
+  {
+    id: 'john_locke',
+    name: 'جون لوك',
+    category: 'figure',
+    icon: '👤',
+    aliases: ['جون لوك', 'لوك'],
+    actionKeywords: ['فلسفة', 'عقد اجتماعي', 'حقوق طبيعية', 'سيادة القانون', 'حكومة مدنية', 'تسامح'],
+    desc: 'نظرية العقد الاجتماعي والحقوق الطبيعية وتقييد سلطة الحاكم'
+  },
+  // --- الأحزاب والهيئات والمؤسسات ---
+  {
+    id: 'wafd_party',
+    name: 'حزب الوفد',
+    category: 'party',
+    icon: '🏛️',
+    aliases: ['حزب الوفد', 'الوفد'],
+    actionKeywords: ['تعبئة جماهيرية', 'سعد زغلول', 'توكيلات', 'كفاح شعبي', 'وزارة الشعب'],
+    desc: 'قيادة التعبئة الجماهيرية الشاملة للأمة المصرية في مواجهة الاحتلال'
+  },
+  {
+    id: 'national_party',
+    name: 'الحزب الوطني',
+    category: 'party',
+    icon: '🏛️',
+    aliases: ['الحزب الوطني'],
+    actionKeywords: ['مصطفى كامل', 'محمد فريد', 'نخبة', 'الصحف'],
+    desc: 'مرحلة نضال النخبة وتأسيس الصحف والأحزاب ومواجهة الاحتلال البريطاني'
+  },
+  // --- الأعمال والأدوات والممارسات التاريخية ---
+  {
+    id: 'press_and_parties',
+    name: 'تأسيس الصحف والأحزاب',
+    category: 'action',
+    icon: '📰',
+    aliases: ['تاسيس الصحف', 'الصحف والاحزاب', 'صحف واحزاب', 'جريدة اللواء', 'جريده اللواء', 'الصحافة', 'اصدار الصحف'],
+    actionKeywords: ['صحف', 'احزاب', 'صحافة', 'جرائد', 'اللواء'],
+    desc: 'تطور أدوات الحركة الوطنية من تأسيس الصحف والأحزاب في عهد النخبة'
+  },
+  {
+    id: 'mass_mobilization',
+    name: 'التعبئة الجماهيرية الشاملة',
+    category: 'action',
+    icon: '👥',
+    aliases: ['تعبئة جماهيرية', 'تعبئه جماهيريه', 'حراك شعبي', 'ثورة شعبية', 'ثوره شعبيه', 'توحدت فئات', 'توحد فئات الشعب', 'مشاركة الشعب بجميع فئاته'],
+    actionKeywords: ['شعبية', 'جماهيرية', 'فئات الشعب', 'مسلمين ومسيحيين', 'توحدت'],
+    desc: 'الانتقال إلى تعبئة جماهيرية شاملة بقيادة الوفد وتوحد فئات الأمة في ثورة 1919'
+  },
+  {
+    id: 'women_participation',
+    name: 'خروج المرأة وإقامة المتاريس',
+    category: 'action',
+    icon: '🛡️',
+    aliases: ['خروج المراة', 'خروج المراه', 'مظاهرات', 'متاريس', 'المتاريس', 'مشاركة المراة', 'مشاركه المراه', 'دور النساء', 'حراك نسائي'],
+    actionKeywords: ['متاريس', 'مظاهرات', 'بجانب الرجال', 'دور النساء', 'السيدات'],
+    desc: 'مشاركة المرأة المصرية في المظاهرات وإقامة المتاريس بجانب الرجال'
+  },
+  // --- المكتسبات والدلالات الدستورية والتاريخية ---
+  {
+    id: 'half_society_energy',
+    name: 'تفعيل نصف طاقة المجتمع',
+    category: 'outcome',
+    icon: '💡',
+    aliases: ['نصف طاقة المجتمع', 'نصف طاقه المجتمع', 'طاقة المجتمع', 'طاقه المجتمع'],
+    actionKeywords: ['نصف طاقة', 'حراك مجتمعي شامل', 'انتقال الوعي', 'تفعيل'],
+    desc: 'خروج المرأة كتفعيل حقيقي لنصف طاقة المجتمع وانتقال الوعي لحراك مجتمعي شامل'
+  },
+  {
+    id: 'constitutional_gains',
+    name: 'المكاسب الدستورية (تصريح 28 فبراير ودستور 1923)',
+    category: 'outcome',
+    icon: '📜',
+    aliases: ['تصريح 28 فبراير', '28 فبراير', 'دستور 1923', 'دستور ٢٣', 'دستور'],
+    actionKeywords: ['28 فبراير', 'دستور 1923', 'مكاسب', 'انتزاع مكاسب'],
+    desc: 'انتزاع مكاسب تاريخية وسياسية كـ تصريح 28 فبراير ودستور 1923'
+  }
+];
+
+/**
+ * تقسيم نموذج الإجابة إلى بنوده ومحاوره الذرية بدقة
+ */
+export const splitModelAnswerIntoClauses = (modelAnswer: string): string[] => {
+  if (!modelAnswer) return [];
+  const rawParts = modelAnswer
+    .split(/\n+|(?<=[.!?])\s+|(?=\b\d+[-.)])|(?=\b[-•*]\s+)|(?<=[:：])\s*(?=\S)|;\s*|؛\s*/)
+    .map(p => p.trim())
+    .filter(p => p.length > 5);
+
+  const clauses: string[] = [];
+  rawParts.forEach(part => {
+    const subParts = part.split(/(?<=[،,])\s*(?=إلى|الي|مما|وساهم|بقيادة|تفعيل|انتزاع|كما|فضلاً|بالإضافة)/i);
+    subParts.forEach(sp => {
+      const clean = sp.trim().replace(/^[-•*\d.)\s]+/, '').trim();
+      if (clean.length > 5) {
+        clauses.push(clean);
+      }
+    });
+  });
+
+  return clauses.length > 0 ? clauses : [modelAnswer.trim()];
+};
+
+/**
+ * فحص استطراد الطالب خارج العصر والقرن المطلوب (Off-topic stuffing)
+ */
+export const detectOffTopicEras = (
+  studentText: string,
+  modelAnswer: string
+): { isOffTopic: boolean; eraName: string; note: string; penalty: number } => {
+  const normStudent = normalizeArabic(studentText);
+  const normModel = normalizeArabic(modelAnswer);
+
+  const is20thCenturyQuestion = /1919|مصطفى كامل|محمد فريد|سعد زغلول|الاحتلال البريطاني|القرن العشرين|القرن 20/i.test(normModel);
+  if (is20thCenturyQuestion) {
+    const mentions18thCenturyMamluks = /مماليك|الشرقاوي|عبدالله الشرقاوي|مراد بك|ابراهيم بك|القرن 18|القرن الثامن عشر|الحمله الفرنسيه/i.test(normStudent);
+    if (mentions18thCenturyMamluks) {
+      return {
+        isOffTopic: true,
+        eraName: 'أواخر القرن الـ 18 والمماليك والشيخ عبدالله الشرقاوي',
+        note: 'استطردتَ في سرد أحداث من أواخر القرن الـ 18 (المماليك والشيخ عبدالله الشرقاوي) وهي خارج نطاق السؤال تماماً.',
+        penalty: 0.25
+      };
+    }
+  }
+
+  return { isOffTopic: false, eraName: '', note: '', penalty: 0 };
+};
+
+/**
+ * المحرك المركزي الصارم لتقييم مقالي الثانوية العامة (تاريخ وجغرافيا)
+ * يطبق ضوابط الوزارة الدقيقة: الاقتران (شخصية + عمل + مكتسب)، وحظر احتساب ما لم يذكره الطالب
+ */
+export const evaluateHighSchoolEssayEngine = (
+  studentText: string,
+  modelAnswer: string,
+  concept: string = '',
+  maxScore: number = 2,
+  gender: 'male' | 'female' = 'male',
+  dialectPolicy: DialectPolicy = 'encouraging'
+) => {
+  const cleanStudent = (studentText || '').trim();
+  if (isBlankOrTimeoutAnswer(cleanStudent)) {
+    return {
+      score: 0,
+      maxScore,
+      percentage: 0,
+      matchedPoints: [],
+      missingPoints: ['لم تقدم إجابة لهذا السؤال، وعناصر نموذج الإجابة مفقودة بالكامل.'],
+      styleNote: 'لا توجد إجابة مسجلة (انتهى الوقت أو تركت فارغة).',
+      suggestedScore: 0,
+      verdictSummary: `لم يتم تقديم إجابة للسؤال، والدرجة المقترحة: 0 من ${maxScore}.`,
+      studentFeedback: 'لم تقم بكتابة إجابة لهذا السؤال، يرجى مذاكرة الدرس جيداً والتدريب على كتابة الإجابات المقالية.',
+      feedback: 'لم تقم بكتابة إجابة لهذا السؤال، يرجى مذاكرة الدرس جيداً والتدريب على كتابة الإجابات المقالية.',
+      strengths: 'لا توجد إجابة مسجلة',
+      improvements: 'احرص على تنظيم وقتك ومحاولة كتابة كل ما تعرفه لضمان الدرجات.',
+      provider: 'heuristic' as const,
+    };
+  }
+
+  const isFemale = gender === 'female';
+  const ahsant = isFemale ? 'أحسنتِ' : 'أحسنتَ';
+  const wuffiqt = isFemale ? 'وفّقتِ' : 'وفّقتَ';
+  const aghfalt = isFemale ? 'أغفلتِ' : 'أغفلتَ';
+  const yanqusak = isFemale ? 'ينقصكِ' : 'ينقصكَ';
+  const kanYanbaghi = isFemale ? 'كان ينبغي عليكِ' : 'كان ينبغي عليكَ';
+
+  const normStudent = normalizeArabic(cleanStudent);
+  const normModel = normalizeArabic(modelAnswer);
+
+  // 1. فحص الاستطراد خارج العصر المطلوب
+  const offTopicCheck = detectOffTopicEras(cleanStudent, modelAnswer);
+
+  // 2. استخراج الكيانات التاريخية المرتبطة بنموذج الإجابة
+  const modelEntities = HISTORICAL_REGISTRY.filter(item => {
+    return item.aliases.some(a => normModel.includes(normalizeArabic(a))) ||
+           (item.actionKeywords && item.actionKeywords.some(k => normModel.includes(normalizeArabic(k))));
+  });
+
+  const matchedEntities: string[] = [];
+  const missingEntities: string[] = [];
+
+  modelEntities.forEach(item => {
+    const studentHasAlias = item.aliases.some(a => normStudent.includes(normalizeArabic(a)));
+    const studentHasAction = item.actionKeywords && item.actionKeywords.some(k => normStudent.includes(normalizeArabic(k)));
+    const figurePronoun = item.gender === 'female' ? 'دورها' : 'دوره';
+
+    if (item.category === 'figure') {
+      if (studentHasAlias && studentHasAction) {
+        matchedEntities.push(`${item.icon} [${item.name}]: ${ahsant} بذكر الشخصية وتوضيح ${figurePronoun} التاريخي بنجاح 👏.`);
+      } else if (studentHasAlias) {
+        matchedEntities.push(`${item.icon} [${item.name}]: ${wuffiqt} في الإشارة للشخصية، ولكن دون توضيح تفاصيل عملها.`);
+        missingEntities.push(`⚙️ [دور ${item.name}]: ${yanqusak} توضيح ${figurePronoun} وعملها التاريخي في: ${item.desc}.`);
+      } else {
+        missingEntities.push(`${item.icon} [${item.name}]: ${aghfalt} عن ذكر الشخصية وبيان ${figurePronoun} في: ${item.desc}.`);
+      }
+    } else if (item.category === 'cause') {
+      if (studentHasAlias || studentHasAction) {
+        matchedEntities.push(`${item.icon || '🎯'} [${item.name}]: ${ahsant} ببيان الأسباب والعوامل التاريخية بنجاح.`);
+      } else {
+        missingEntities.push(`${item.icon || '🎯'} [${item.name}]: ${aghfalt} عن ذكر وتوضيح الأسباب والدوافع في: ${item.desc}.`);
+      }
+    } else if (item.category === 'event') {
+      if (studentHasAlias || studentHasAction) {
+        matchedEntities.push(`${item.icon || '⚔️'} [${item.name}]: ${ahsant} بالإشارة إلى هذا الحدث التاريخي وسياقه بدقة.`);
+      } else {
+        missingEntities.push(`${item.icon || '⚔️'} [${item.name}]: ${aghfalt} عن ذكر هذا الحدث وتفاصيل مجرياته في: ${item.desc}.`);
+      }
+    } else if (item.category === 'action') {
+      if (studentHasAlias || studentHasAction) {
+        matchedEntities.push(`${item.icon} [${item.name}]: ${ahsant} بالإشارة إلى وسيلة الكفاح والعمل التاريخي بنجاح.`);
+      } else {
+        missingEntities.push(`${item.icon} [${item.name}]: ${yanqusak} توضيح وسيلة الكفاح والعمل التاريخي: ${item.desc}.`);
+      }
+    } else if (item.category === 'outcome') {
+      if (studentHasAlias || studentHasAction) {
+        matchedEntities.push(`${item.icon} [${item.name}]: ${wuffiqt} في استنتاج هذه الدلالة أو النتيجة التاريخية.`);
+      } else {
+        missingEntities.push(`${item.icon} [${item.name}]: ${aghfalt} عن بيان هذه النتيجة أو المكتسب التاريخي: ${item.desc}.`);
+      }
+    } else {
+      if (studentHasAlias || studentHasAction) {
+        matchedEntities.push(`${item.icon} [${item.name}]: ${ahsant} بالإشارة إليه وتوضيحه ضمن السياق التاريخي.`);
+      } else {
+        missingEntities.push(`${item.icon} [${item.name}]: ${kanYanbaghi} الإشارة إليه وتوضيح دوره في: ${item.desc}.`);
+      }
+    }
+  });
+
+  // 3. تقسيم نموذج الإجابة إلى أجزائه الرئيسية (Main Parts / Questions)
+  // لحساب درجة كل جزء بنظام الثانوية العامة (مثلاً: 1 درجة لتطور الحركة، 1 درجة لمشاركة المرأة)
+  const mainSections = modelAnswer
+    .split(/\n+|(?=تطور أدوات|الانعكاس الجذري|وجه الشبه|وجه الاختلاف|الدروس المستفادة|العلاقة بين|ما تقييمك|النتيجة المترتبة)/i)
+    .map(s => s.trim())
+    .filter(s => s.length > 10);
+
+  const sectionsToEvaluate = mainSections.length > 1 ? mainSections : [modelAnswer];
+  const sectionWeight = maxScore / sectionsToEvaluate.length;
+
+  let totalEarnedScore = 0;
+
+  sectionsToEvaluate.forEach(sectionStr => {
+    const normSec = normalizeArabic(sectionStr);
+    
+    const secEntities = modelEntities.filter(item => {
+      return item.aliases.some(a => normSec.includes(normalizeArabic(a))) ||
+             (item.actionKeywords && item.actionKeywords.some(k => normSec.includes(normalizeArabic(k))));
+    });
+
+    let secMatchedCount = 0;
+    const secTotalItems = Math.max(1, secEntities.length);
+
+    secEntities.forEach(item => {
+      const studentHasAlias = item.aliases.some(a => normStudent.includes(normalizeArabic(a)));
+      const studentHasAction = item.actionKeywords && item.actionKeywords.some(k => normStudent.includes(normalizeArabic(k)));
+      
+      if (item.category === 'figure') {
+        if (studentHasAlias && studentHasAction) secMatchedCount += 1.0;
+        else if (studentHasAlias) secMatchedCount += 0.5;
+      } else {
+        if (studentHasAlias || studentHasAction) secMatchedCount += 1.0;
+      }
+    });
+
+    const secTokens = normSec.split(' ').filter(w => w.length > 3);
+    let secTokenMatches = 0;
+    secTokens.forEach(st => {
+      if (normStudent.includes(st)) secTokenMatches++;
+    });
+    const secTokenRatio = secTokens.length > 0 ? (secTokenMatches / secTokens.length) : 0;
+    const secItemRatio = secMatchedCount / secTotalItems;
+    
+    let secRatio = 0;
+    if (secItemRatio >= 0.75 && secTokenRatio >= 0.4) {
+      secRatio = 1.0; // ممتاز ومكتمل
+    } else if (secItemRatio >= 0.4 || secTokenRatio >= 0.25 || secMatchedCount >= 1) {
+      secRatio = 0.5; // أورد جانباً أو فكرة عامة (نصف درجة الجزء)
+    } else if (secTokenRatio >= 0.12) {
+      secRatio = 0.25; // إشارة عابرة
+    } else {
+      secRatio = 0;
+    }
+
+    totalEarnedScore += (secRatio * sectionWeight);
+  });
+
+  // خصم الاستطراد خارج العصر المطلوب
+  if (offTopicCheck.penalty > 0) {
+    totalEarnedScore = Math.max(0.25, totalEarnedScore - offTopicCheck.penalty);
+  }
+
+  // فحص اللهجة العامية
+  const hasEgyptianColloquial = /(عشان|علشان|كده|كدة|عايز|خلوا|وقعوا|بقى|بقينا|عملوا|جابوا|خدوا)/i.test(cleanStudent);
+  if (hasEgyptianColloquial && dialectPolicy === 'strict') {
+    totalEarnedScore = Math.max(0.25, totalEarnedScore - 0.5);
+  }
+
+  // تقريب لأقرب ربع درجة
+  let suggestedScore = Math.round(totalEarnedScore * 4) / 4;
+  suggestedScore = Math.max(0, Math.min(maxScore, suggestedScore));
+
+  const perc = Math.round((suggestedScore / maxScore) * 100);
+
+  // إذا كانت الدرجة غير كاملة لكن جميع كيانات السجل التاريخي تم ذكرها:
+  // هذا يعني أن إجابة الطالب موجزة وتفتقر إلى التفاصيل والشرح الوارد بنموذج الإجابة
+  if (suggestedScore < maxScore * 0.85 && missingEntities.length === 0) {
+    const modelClauses = modelAnswer
+      .split(/[.\n;،:-]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 15);
+
+    const unmentioned = modelClauses.filter(clause => {
+      const normClause = normalizeArabic(clause);
+      const tokens = normClause.split(' ').filter(w => w.length > 3);
+      if (tokens.length === 0) return false;
+      const matched = tokens.filter(t => normStudent.includes(t));
+      return (matched.length / tokens.length) < 0.35;
+    });
+
+    if (unmentioned.length > 0) {
+      unmentioned.slice(0, 2).forEach(u => {
+        missingEntities.push(`💡 [تفاصيل مطلوبة من النموذج]: ${yanqusak} التوسع في توضيح: "${u}".`);
+      });
+    } else {
+      missingEntities.push(`📝 [عمق الشرح والتحليل]: أوردتَ الشخصيات المطلوبة، ولكن إجابتك جاءت موجزة؛ ${yanqusak} الاستفاضة في شرح وتفصيل أعمالها ونتائجها التاريخية لاستحقاق كامل الدرجة.`);
+    }
+  }
+
+  const missingFigures = missingEntities.filter(m => m.includes('👤') || m.includes('🧕') || m.includes('شخصية'));
+  const matchedFigures = matchedEntities.filter(m => m.includes('👤') || m.includes('🧕') || m.includes('شخصية'));
+  const missingCauses = missingEntities.filter(m => m.includes('سبب') || m.includes('أسباب') || m.includes('دوافع') || m.includes('عوامل') || m.includes('🎯'));
+  const missingResults = missingEntities.filter(m => m.includes('نتيجة') || m.includes('نتائج') || m.includes('أثر') || m.includes('مكتسب') || m.includes('📜') || m.includes('دلالة'));
+  const missingEvents = missingEntities.filter(m => m.includes('حدث') || m.includes('أحداث') || m.includes('معركة') || m.includes('ثورة') || m.includes('معاهدة') || m.includes('⚔️'));
+
+  let styleNote = '';
+  if (offTopicCheck.note) {
+    styleNote = `${offTopicCheck.note} نوصيك بتركيز إجابتك على الفترة الزمنية المطلوبة وتجنب الاستطراد في أحداث خارجة عن السؤال.`;
+  } else if (hasEgyptianColloquial) {
+    styleNote = 'لاحظتُ استخدام بعض التعبيرات العامية، واحرص دائماً على الاعتماد الكامل على الفصحى لضمان الدرجة النهائية في الثانوية العامة.';
+  } else if (suggestedScore >= maxScore * 0.85) {
+    styleNote = 'صياغة ممتازة ومنضبطة تاريخياً ولغوياً، والأفكار مترابطة وواضحة.';
+  } else if (matchedFigures.length > 0 && missingFigures.length === 0) {
+    styleNote = 'صياغة جيدة ومترابطة، ولكن يُفضل التوسع في السرد التحليلي وربط الأدوار بالنتائج لاستحقاق الدرجة النهائية.';
+  } else if (missingFigures.length > 0) {
+    styleNote = 'صياغتك مقبولة، ولكن ينقص إجابتك الدقة في ذكر الشخصيات القيادية المحددة ودور كل منها.';
+  } else {
+    styleNote = 'صياغتك مقبولة تاريخياً، ولكن ينقص إجابتك مزيد من التدقيق في التفاصيل والربط المنطقي بين الأحداث.';
+  }
+
+  let verdictSummary = '';
+  if (suggestedScore >= maxScore * 0.85) {
+    verdictSummary = `ما شاء الله! ${ahsant} إجابة نموذجية ومكتملة استوفيتَ فيها كافة المحاور والأحداث والنتائج المطلوبة بدقة (${suggestedScore} من ${maxScore}).`;
+  } else if (missingEntities.length === 0 || (matchedFigures.length > 0 && missingFigures.length === 0 && missingCauses.length === 0 && missingResults.length === 0)) {
+    verdictSummary = `${ahsant} في استيفاء المحاور والمفاهيم الأساسية، ولكن إجابتك موجزة وينقصها الاستفاضة في الشرح والتحليل التاريخي لنيل الدرجة الكاملة (${suggestedScore} من ${maxScore}).`;
+  } else if (missingCauses.length > 0 && missingResults.length > 0) {
+    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، لكنك ${aghfalt} عن استيفاء الأسباب والنتائج التاريخية المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+  } else if (missingCauses.length > 0) {
+    verdictSummary = `${ahsant} في سرد الأحداث، لكنك ${aghfalt} عن توضيح الأسباب والدوافع التاريخية المطلوبة (${suggestedScore} من ${maxScore}).`;
+  } else if (missingResults.length > 0) {
+    verdictSummary = `${ahsant} في توضيح المقدمات، لكنك ${aghfalt} عن استنتاج النتائج والآثار التاريخية المترتبة عليها (${suggestedScore} من ${maxScore}).`;
+  } else if (missingFigures.length > 0 && matchedFigures.length > 0) {
+    verdictSummary = `${ahsant} في الإشارة لبعض الشخصيات، لكنك ${aghfalt} عن ذكر شخصيات رئيسية أخرى وتوضيح دورها الوارد بالنموذج (${suggestedScore} من ${maxScore}).`;
+  } else if (missingFigures.length > 0 && matchedFigures.length === 0) {
+    verdictSummary = `أوردتَ فكرة عامة، لكنك ${aghfalt} عن ذكر الشخصيات التاريخية المحورية وأدوارها المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+  } else {
+    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، ولكن إجابتك غير مكتملة وتفتقر للحقائق والتفاصيل المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+  }
+
+  const validMissing = missingEntities
+    .map(p => p.replace(/^[^\s]+\s+/, '').replace(/^\[[^\]]+\]:\s*/, ''))
+    .filter(Boolean);
+
+  let studentFeedback = '';
+  if (suggestedScore >= maxScore * 0.85) {
+    studentFeedback = isFemale
+      ? '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتِ وبارك الله فيكِ! 🌟'
+      : '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتَ وبارك الله فيك! 🌟';
+  } else if (matchedFigures.length > 0 && missingFigures.length === 0) {
+    studentFeedback = isFemale
+      ? `👍 أحسنتِ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقصكِ التوسع في الشرح والتحليل التاريخي لتضمني الدرجة الكاملة (${suggestedScore} من ${maxScore}). 💡`
+      : `👍 أحسنتَ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقصكَ التوسع في الشرح والتحليل التاريخي لتضمن الدرجة الكاملة (${suggestedScore} من ${maxScore}). 💡`;
+  } else if (suggestedScore >= maxScore * 0.4) {
+    const missingClean = validMissing.slice(0, 2).join('، ');
+    studentFeedback = isFemale
+      ? `👍 أوردتِ فكرة عامة طيبة، ولكن ينقصكِ لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركّزي جيداً عليها لتضمني الدرجة الكاملة! 💡`
+      : `👍 أوردتَ فكرة عامة طيبة، ولكن ينقصكَ لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركّز جيداً عليها لتضمن الدرجة الكاملة! 💡`;
+  } else {
+    const missingClean = validMissing.slice(0, 2).join('، ');
+    studentFeedback = isFemale
+      ? `⚠️ إجابتكِ ناقصة وبحاجة لتركيز؛ حيث أغفلتِ عن توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`
+      : `⚠️ إجابتكَ ناقصة وبحاجة لتركيز؛ حيث أغفلتَ عن توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`;
+  }
+
+  return {
+    score: suggestedScore,
+    maxScore,
+    percentage: perc,
+    matchedPoints: matchedEntities.length > 0 ? matchedEntities : ['لم توفق بعد في استيفاء مفاهيم نموذج الإجابة الأساسية.'],
+    missingPoints: missingEntities.length > 0 
+      ? missingEntities 
+      : (suggestedScore >= maxScore * 0.85
+          ? ['🎉 إجابة شاملة ومكتملة، استوفيتَ جميع العناصر والنقاط المطلوبة في نموذج الإجابة بنجاح.']
+          : ['📝 إجابتك موجزة؛ ينقصك التوسع في الشرح والتحليل التاريخي لاستحقاق الدرجة الكاملة.']),
+    styleNote,
+    suggestedScore,
+    verdictSummary,
+    studentFeedback,
+    feedback: studentFeedback,
+    strengths: matchedEntities.length > 0 ? matchedEntities.slice(0, 2).join(' • ') : 'محاولة في الكتابة',
+    improvements: missingEntities.length > 0 ? missingEntities.slice(0, 2).join(' • ') : 'استمر على هذا الأداء الرائع',
+    provider: 'heuristic' as const,
+  };
+};
+
+/**
+ * دالة التوافق مع تصنيف المفاتيح القديمة
  */
 export const categorizeHistoricalKey = (clause: string): { category: string; icon: string; title: string } => {
   const norm = normalizeArabic(clause);
-  
-  if (/طهطاوي|افغاني|محمد عبده|عرابي|مصطفى كامل|محمد فريد|سعد زغلول|علي مبارك|نابليون|كليبر|مينو|محمد علي|اسماعيل|توفيق|كرومر|جورست|دوفيرين|عمر مكرم|جون لوك/i.test(norm)) {
-    let name = 'شخصية تاريخية';
-    if (/طهطاوي/i.test(norm)) name = 'رفاعة الطهطاوي';
-    else if (/افغاني/i.test(norm)) name = 'جمال الدين الأفغاني';
-    else if (/محمد عبده/i.test(norm)) name = 'الشيخ محمد عبده';
-    else if (/عرابي/i.test(norm)) name = 'أحمد عرابي';
-    else if (/مصطفى كامل/i.test(norm)) name = 'مصطفى كامل';
-    else if (/محمد فريد/i.test(norm)) name = 'محمد فريد';
-    else if (/سعد زغلول/i.test(norm)) name = 'سعد زغلول';
-    else if (/نابليون/i.test(norm)) name = 'نابليون بونابرت';
-    else if (/محمد علي/i.test(norm)) name = 'محمد علي باشا';
-    else if (/كرومر/i.test(norm)) name = 'اللورد كرومر';
-    else if (/جون لوك/i.test(norm)) name = 'جون لوك';
-    return { category: 'شخصية', icon: '👤', title: name };
+  const found = HISTORICAL_REGISTRY.find(item => item.aliases.some(a => norm.includes(normalizeArabic(a))));
+  if (found) {
+    return { category: found.category === 'figure' ? 'شخصية' : found.category === 'party' ? 'حزب وهيئة' : found.category === 'cause' ? 'سبب ودافع' : found.category === 'event' ? 'حدث تاريخي' : found.category === 'action' ? 'عمل تاريخي' : 'مكتسب ودلالة', icon: found.icon, title: found.name };
   }
-
-  if (/ثوره|ثورتي|انتفاضه|تمرد|عصيان/i.test(norm)) {
-    return { category: 'ثورة', icon: '⚔️', title: 'ثورة وانتفاضة' };
-  }
-
-  if (/مقاومه|كفاح|جهاد|موقف نضالي/i.test(norm)) {
-    return { category: 'مقاومة', icon: '🛡️', title: 'مقاومة وكفاح' };
-  }
-
-  if (/معركه|حادثه|مدرسه|جريده|صحيفه|جامعه|صندوق الدين|لجنه التحقيق|الالسن|العروه الوثقى/i.test(norm)) {
-    let sub = 'حدث ومؤسسة';
-    if (/الالسن/i.test(norm)) sub = 'مدرسة الألسن';
-    else if (/العروه/i.test(norm)) sub = 'جريدة العروة الوثقى';
-    else if (/دنشواي/i.test(norm)) sub = 'حادثة دنشواي';
-    return { category: 'حدث ومؤسسة', icon: '🏛️', title: sub };
-  }
-
-  if (/موقع بحري|دوله حبيسه|موقع فلكي|مضيق|قناه السويس|باب المندب|هرمز|جبل طارق|سبته|مليليه|كشمير/i.test(norm)) {
-    let sub = 'موقع وممر جغرافي';
-    if (/قناه السويس/i.test(norm)) sub = 'قناة السويس';
-    else if (/باب المندب/i.test(norm)) sub = 'مضيق باب المندب';
-    else if (/هرمز/i.test(norm)) sub = 'مضيق هرمز';
-    else if (/جبل طارق/i.test(norm)) sub = 'مضيق جبل طارق';
-    return { category: 'موقع وممر استراتيجي', icon: '🌍', title: sub };
-  }
-
-  if (/تكتل|كوميسا|اتحاد اوروبي|حلف|ناتو|وارسو|مجلس التعاون/i.test(norm)) {
-    return { category: 'تكتل وحلف سياسي', icon: '🤝', title: 'تكتل اقتصادي أو حلف عسكري' };
-  }
-
-  if (/موقف|راي|اتجاه|دلاله|فكر|تحرير العقل|تجديد|تحديث|هويه|اصلاح|الجامعه الاسلاميه/i.test(norm)) {
-    let sub = 'موقف ودلالة فكرية';
-    if (/الجامعه الاسلاميه/i.test(norm)) sub = 'فكرة الجامعة الإسلامية';
-    else if (/تحرير العقل/i.test(norm)) sub = 'تحرير العقل من الجمود';
-    else if (/تجديد/i.test(norm)) sub = 'تجديد الفكر الديني';
-    else if (/تحديث|هويه/i.test(norm)) sub = 'التحديث مع الحفاظ على الهوية';
-    return { category: 'موقف وفكر', icon: '💡', title: sub };
-  }
-
-  if (/استعمار|احتكار|تبعيه|امتيازات|حمايه|انتداب/i.test(norm)) {
-    return { category: 'ظاهرة تاريخية', icon: '🌐', title: 'ظاهرة تاريخية وسياسة' };
-  }
-
-  if (/\b(17\d\d|18\d\d|19\d\d|20\d\d)\b/.test(norm)) {
-    return { category: 'تاريخ وزمن', icon: '📅', title: 'تاريخ وحقبة زمنية' };
-  }
-
   return { category: 'محور إجابة', icon: '🎯', title: 'محور رئيسي' };
 };
 
 /**
  * محرك التقييم الذكي الاحتياطي (Semantic Heuristic Matcher)
- * يعمل تلقائياً وبدقة تامة مع دعم التطبيع العربي وتصحيح النقاط الجزئية
  */
 const evaluateHeuristically = (
   studentAnswer: string,
@@ -552,134 +1016,7 @@ const evaluateHeuristically = (
   essayTypeLabel: string,
   dialectPolicy: DialectPolicy = 'encouraging'
 ): EvaluationResult => {
-  const cleanStudent = (studentAnswer || '').trim();
-  
-  // 1. إذا كانت الإجابة فارغة أو بسبب انتهاء الوقت: 0 فوراً دون أي زيادة
-  if (isBlankOrTimeoutAnswer(cleanStudent)) {
-    return {
-      score: 0,
-      maxScore,
-      percentage: 0,
-      feedback: 'لم يتم الإجابة على السؤال (انتهى وقت الاختبار أو لم يكتب إجابة).',
-      strengths: 'لا توجد إجابة مسجلة',
-      improvements: 'يرجى تدريب نفسك على سرعة الإجابة ومراعاة الوقت المحدد للاختبار.',
-      provider: 'heuristic',
-    };
-  }
-
-  const studentTokens = extractMeaningfulTokens(cleanStudent);
-  const normStudent = normalizeArabic(cleanStudent);
-
-  // تقسيم نموذج الإجابة إلى بنود وفق الترقيم أو الفواصل أو الأسطر
-  const rawModelClauses = modelAnswer
-    .split(/\n|(?=\b\d+[-.)])|(?=\b- )|\.\s+/)
-    .map(c => c.trim())
-    .filter(c => c.length > 6);
-  const modelClauses = rawModelClauses.length > 0 ? rawModelClauses : [modelAnswer];
-
-  const allModelTokens = extractMeaningfulTokens(`${modelAnswer} ${concept}`);
-
-  // فحص عدد بنود النموذج التي غطاها الطالب (Clause Coverage)
-  let coveredClausesCount = 0;
-  modelClauses.forEach(clause => {
-    const clauseTokens = extractMeaningfulTokens(clause);
-    const clauseNorm = normalizeArabic(clause);
-    const hasMatch = studentTokens.some(st => matchTokenWithSynonyms(st, clauseTokens, clauseNorm));
-    if (hasMatch) {
-      coveredClausesCount++;
-    }
-  });
-
-  const clauseCoverageRatio = modelClauses.length > 0 ? (coveredClausesCount / modelClauses.length) : 0;
-
-  // فحص نسبة الكلمات التاريخية الصحيحة التي كتبها الطالب (Student Relevance)
-  let studentMatchCount = 0;
-  studentTokens.forEach(st => {
-    if (matchTokenWithSynonyms(st, allModelTokens, normalizeArabic(modelAnswer))) {
-      studentMatchCount++;
-    }
-  });
-
-  const studentMatchRatio = studentTokens.length > 0 ? (studentMatchCount / studentTokens.length) : 0;
-
-  // إذا لم يذكر الطالب أي مفهوم تاريخي صحيح من السؤال إطلاقاً
-  if (studentMatchCount === 0 && coveredClausesCount === 0) {
-    return {
-      score: 0,
-      maxScore,
-      percentage: 0,
-      feedback: 'الإجابة غير مرتبطة بالسؤال أو لم تتضمن أي شواهد أو مفاهيم تاريخية صحيحة.',
-      strengths: 'محاولة في الكتابة',
-      improvements: 'يرجى مراجعة الدرس ونموذج الإجابة لربط الإجابة بالمفهوم المطلوب.',
-      provider: 'heuristic',
-    };
-  }
-
-  // حساب النسبة العادلة: دمج نسبة تغطية البنود مع دقة ما كتبه الطالب
-  let fairRatio = (clauseCoverageRatio * 0.6) + (studentMatchRatio * 0.4);
-
-  // فحص الروابط المنطقية
-  if (/دلل|أيد|استدل/i.test(essayTypeLabel)) {
-    if (/(شواهد|دليل|حيث|قام|ظهر|ثورة|ثورتي)/i.test(normStudent)) fairRatio = Math.min(1, fairRatio + 0.1);
-  } else if (/بم\s*تفسر|علل/i.test(essayTypeLabel)) {
-    if (/(لان|بسبب|نظرا|حيث|يرجع)/i.test(normStudent)) fairRatio = Math.min(1, fairRatio + 0.1);
-  }
-
-  // فحص اللهجة العامية وفقاً للسياسة المختارة
-  const hasEgyptianColloquial = /(عشان|علشان|كده|كدة|عايز|خلوا|وقعوا|بقى|بقينا|عملوا|جابوا|خدوا)/i.test(cleanStudent);
-  let dialectPenalty = 0;
-  if (hasEgyptianColloquial && dialectPolicy === 'strict') {
-    dialectPenalty = 0.5;
-  }
-
-  // حساب الدرجة النهائية بنظام النسبة والتناسب لأقرب ربع درجة (0.25 و 0.5 و 0.75)
-  let calculatedScore = Math.round(fairRatio * maxScore * 4) / 4;
-  if (studentMatchCount >= 2 && calculatedScore < 0.25) {
-    calculatedScore = 0.25; // مكافأة الطالب بربع درجة كحد أدنى عند ذكر مفاهيم تاريخية صحيحة
-  }
-
-  if (dialectPenalty > 0) {
-    calculatedScore = Math.max(0, calculatedScore - dialectPenalty);
-  }
-  calculatedScore = Math.max(0, Math.min(maxScore, calculatedScore));
-
-  const perc = Math.round((calculatedScore / maxScore) * 100);
-
-  let feedback = '';
-  let strengths = '';
-  let improvements = '';
-
-  if (perc >= 85) {
-    feedback = 'إجابة ممتازة وشاملة! أحاطت بجميع الجوانب المطلوبة والشواهد التاريخية بدقة متناهية.';
-    strengths = 'فهم دقيق للموضوع واستشهاد سليم بالشواهد والمصطلحات التاريخية.';
-    improvements = hasEgyptianColloquial && dialectPolicy === 'strict'
-      ? 'تم خصم نصف درجة لاستخدام العامية، يرجى الالتزام بالفصحى.'
-      : 'استمر على هذا الأداء الرائع.';
-  } else if (perc >= 60) {
-    feedback = 'إجابة جيدة جداً، تضمنت شواهد ومفاهيم تاريخية صحيحة ترتبط بجوهر السؤال.';
-    strengths = 'ذكر شواهد تاريخية دقيقة وحقائق سليمة من المنهج.';
-    improvements = hasEgyptianColloquial
-      ? 'فهمك ممتاز، ولكن يُفضل استخدام الصياغة الفصحى لضمان الدرجة النهائية في الثانوية العامة.'
-      : 'يمكن تدعيم الإجابة بباقي عناصر التحليل الموضحة في نموذج الإجابة لاكتمال الدرجة النهائية.';
-  } else if (perc >= 40) {
-    feedback = 'إجابة مقبولة تضمنت بعض الشواهد التاريخية الصحيحة ولكنها تحتاج لربطها بتحليل أعمق.';
-    strengths = 'إدراك جزء من الشواهد والمفاهيم التاريخية.';
-    improvements = 'ينقص الإجابة استكمال باقي عناصر نموذج الإجابة وتوضيح الأسباب والنتائج.';
-  } else {
-    feedback = 'إجابة غير مكتملة، تضمنت إشارة جزئية وتحتاج إلى مزيد من الشواهد والتحليل التاريخي.';
-    strengths = 'محاولة طيبة في الكتابة.';
-    improvements = 'يُرجى قراءة فقرة الدرس ومقارنتها بنموذج الإجابة لاستيفاء عناصر السؤال.';
-  }
-
-  return {
-    score: calculatedScore,
-    maxScore,
-    percentage: perc,
-    feedback,
-    strengths,
-    improvements,
-    provider: 'heuristic',
-  };
+  return evaluateHighSchoolEssayEngine(studentAnswer, modelAnswer, concept, maxScore, 'male', dialectPolicy);
 };
 
 /**
@@ -712,9 +1049,8 @@ export const evaluateEssayAnswer = async (
   const preEval = evaluateHeuristically(cleanStudent, modelAnswer, question.concept, maxScore, detectedType, dialectPolicy);
 
   // 🛡️ ترشيد الكوتا الذكي:
-  // إذا كانت إجابة الطالب متطابقة ومستوفية لجميع عناصر نموذج الإجابة بنسبة كاملة
-  // نوفر كوتا السيرفر فوراً ونمنحه الدرجة النهائية دون استهلاك أي طلبات API
-  if (preEval.score >= maxScore && preEval.percentage >= 85) {
+  // يمنح الدرجة الكاملة فوراً فقط إذا كانت إجابة الطالب مستوفية للشخصيات والأعمال والمكتسبات بنسبة تامة 100% دون أي نواقص
+  if (preEval.score >= maxScore && preEval.percentage >= 95 && (!(preEval as any).missingPoints || (preEval as any).missingPoints.length === 0)) {
     return {
       ...preEval,
       feedback: preEval.feedback + ' (إجابة نموذجية دقيقة مستوفية لجميع عناصر السؤال 🌟)',
@@ -739,7 +1075,7 @@ export const evaluateEssayAnswer = async (
   }
 
   const prompt = `
-أنت معلم تاريخ ومصحح امتحانات خبير. مهمتك تقييم إجابة الطالب على السؤال المقالي التالي بموضوعية وعدالة تامة:
+أنت كبير مصححي ومراجعي مادة التاريخ للثانوية العامة المصرية بوزارة التربية والتعليم. مهمتك تقييم إجابة الطالب على السؤال المقالي التالي بموضوعية وعدالة تامة:
 
 [نوع السؤال]: ${detectedType}
 [نص السؤال]: ${question.q}
@@ -751,12 +1087,12 @@ export const evaluateEssayAnswer = async (
 "${cleanStudent}"
 
 ضوابط التقييم الحاسمة:
-1. إذا كانت إجابة الطالب فارغة أو غير مرتبطة بالسؤال إطلاقاً أو كلاماً عشوائياً، امنح درجة 0 فوراً دون تردد.
-2. ضابط العدالة والدرجات الجزئية (مهم جداً): إذا ذكر الطالب شواهد تاريخية صحيحة أو أفكاراً تطابق جزءاً من نموذج الإجابة (مثل: ذكر ثورة القاهرة الأولى أو الثانية، أو أسلوب العنف والشدة والقمع، أو فرض الضرائب)، فامنحه الدرجة الجزئية المستحقة فوراً (من 1 إلى 1.5 من 2) ولا تحرمه من الدرجة لمجرد نقص باقي عناصر التحليل أو وجود أخطاء إملائية/لغوية خفيفة.
-3. قيّم مدى صحة ودقة إجابة الطالب بالمقارنة بنموذج الإجابة وطبيعة السؤال (${detectedType}).
+1. إذا كانت إجابة الطالب فارغة أو غير مرتبطة بالسؤال إطلاقاً، امنح درجة 0 فوراً.
+2. قاعدة الاقتران الإلزامي (الشخصية + العمل + الدلالة): مجرد ذكر الشخصية دون عملها يستحق ربع درجة فقط عنها، ومجرد ذكر ألفاظ عامة ("مقاومة"، "ثورة 1919"، "مظاهرات") دون الشخصيات القيادية والمكتسبات الدستورية يستحق نصف الدرجة كحد أقصى (${(maxScore / 2).toFixed(1)} من ${maxScore}).
+3. رصد الحشو والاستطراد غير المرتبط: إذا استطرد الطالب في سرد أحداث من عصور أخرى غير مطلوبة (مثل المماليك في سؤال عن ثورة 1919 والقرن العشرين)، اخصم من درجة التقييم ونبه على ذلك في التحسين.
 4. ${dialectInstruction}
 5. احتساب الدرجة بالنسبة والتناسب: حدد درجة عادلة ومستحقة بين 0 و ${maxScore} بنظام النسبة والتناسب الدقيقة لما كتبه الطالب (يُسمح بأرباع وأنصاف الدرجات بدقة مثل: 0.25، 0.5، 0.75، 1، 1.25، 1.5، 1.75، 2).
-6. اكتب ملاحظة تربوية مشجعة للطالب توضح ما أصاب فيه ونقاط التحسين.
+6. اكتب ملاحظة تربوية مشجعة للطالب توضح ما أصاب فيه ونقاط التحسين المحددة.
 
 أجب بصيغة JSON حصراً بهذا الشكل ودون أي نصوص إضافية:
 {
@@ -905,39 +1241,54 @@ export const compareStudentWithModelAnswer = async (
   const apiKey = getGeminiApiKey();
 
   const prompt = `
-أنت مصحح ومراجع امتحانات تاريخ ثانوية عامة خبير. مهمتك إجراء مقارنة تفصيلية وتحليل الفروق (AI Diff Analysis) بين "إجابة الطالب" و"نموذج الإجابة المعتمد" لمساعدة المعلم في اتخاذ القرار العادل بدقة وسرعة:
+أنت كبير مصححي ومراجعي مادة التاريخ للثانوية العامة المصرية بوزارة التربية والتعليم. 
+مهمتك إجراء تقييم تاريخي صارم ودقيق (Strict Evaluation & Diff Analysis) بين "إجابة الطالب" و"نموذج الإجابة المعتمد"، لمساعدة المعلم في رصد الدرجة العادلة بدقة متناهية:
 
 [نوع السؤال]: ${essayType}
 [نص السؤال]: ${questionText}
-[المفهوم الرئيسي المرتبط]: ${concept || 'عام'}
+[المفهوم الرئيسي]: ${concept || 'عام'}
 [نموذج الإجابة المعتمد]:
 ${modelAnswer}
 
-[إجابة الطالب]:
+[إجابة الطالب الفعلية]:
 "${cleanStudent}"
 
 [الدرجة العظمى]: ${maxScore} درجات
 
-المطلوب بدقة:
-1. "matchedPoints": قائمة بالمفاتيح التاريخية المستوفاة مصنفة بالبادئات والأيقونات التالية لمساعدة المعلم:
-   - 👤 [شخصية]: اسم الشخصية ودورها المستوفى في الإجابة.
-   - ⚔️ [ثورة]: اسم الثورة أو الانتفاضة ودلالتها.
-   - 🏛️ [حدث أو مؤسسة]: اسم المعركة، المدرسة، الصحيفة، الحادثة، الهيئة، أو الاتفاقية.
-   - 💡 [موقف وفكر]: الموقف الفكري، الإصلاحي، أو السياسي.
-   - 🛡️ [مقاومة]: أسلوب الكفاح والنضال ومقاومة الاستعمار.
-   - 🌐 [ظاهرة]: سياسة اقتصادية أو استعمارية.
-2. "missingPoints": قائمة بالمفاتيح التاريخية الناقصة أو المفقودة مصنفة بنفس البادئات لتوضيح ما أغفله الطالب.
-3. "styleNote": تحليل لغة وصياغة الطالب (هل صياغته فصحى أم عامية؟ وهل استخدم المصطلحات التاريخية المطلوبة؟).
-4. "suggestedScore": اقتراح درجة عادلة ودقيقة بالأرقام بين 0 و ${maxScore} (يقبل أنصاف وأرباع الدرجات).
-5. "verdictSummary": خلاصة توجيهية موجزة ومباشرة للمعلم في سطرين توضح قرارك والسبب.
-6. "studentFeedback": عبارة تقييم وتوجيه تربوي رقيقة ومحفزة ومباشرة من المعلم إلى الطالب بصيغة المخاطب (مثال: "ممتاز يا بطل! إجابة نموذجية ومكتملة..." أو "أحسنت، إجابة جيدة ولكن تنقصك النقاط التالية لاكتمال إجابتك...") بحيث تكون مرنة ومخصصة للمقال المكتوب تحديداً وتذكر ما ينقصه بدقة.
+⚠️ ضوابط ومعايير التصحيح الصارم لامتحانات الثانوية العامة:
+1. قاعدة الاقتران الإلزامي (الشخصية + العمل + الدلالة):
+   - لا تمنح درجة كاملة للشخصية إلا إذا ذكر الطالب اسمها الصريح وقرنها بـ [عملها التاريخي الفعلي ودورها المحدد في النموذج].
+   - مجرد ذكر اسم الشخصية دون عملها يستحق ربع درجة فقط عن الشخصية.
+   - مجرد ذكر ألفاظ عامة ("مقاومة"، "ثورة 1919"، "كفاح"، "نساء") دون ذكر أسماء الشخصيات والرموز الواردة بالنموذج لا يستحق أكثر من نصف الدرجة (${(maxScore / 2).toFixed(1)} من ${maxScore}).
+2. حظر احتساب شخصية أو عمل لم يذكره الطالب:
+   - يمنع منعاً باتاً وضع شخصية في "matchedPoints" إلا إذا ورد اسمها أو الإشارة المباشرة إليها صراحة في نص الطالب.
+   - أي شخصية، عمل، تاريخ، أو مكتسب دستوري ورد في النموذج ولم يذكره الطالب يجب أن يوضع فوراً وبدقة في "missingPoints".
+3. رصد الحشو والاستطراد غير المرتبط (Off-topic stuffing):
+   - إذا استطرد الطالب في سرد أحداث أو شخصيات من عصور أخرى لا علاقة لها بالسؤال (مثلاً: ذكر المماليك أو الحملة الفرنسية في سؤال عن ثورة 1919 والقرن العشرين)، يجب التنبيه على ذلك في "styleNote" وخفض درجة التقييم، فالاستطراد غير المرتبط لا يعوض النواقص في الإجابة المطلوبة.
+4. سلم الدرجات العادل المقترح (Rubric for ${maxScore} Marks):
+   - ${maxScore} من ${maxScore} (درجة كاملة): فقط في حال استوفى الطالب جميع محاور الإجابة: الشخصيات الرئيسية + أعمالها وأدواتها + دلالاتها ومكاسبها الدستورية والتاريخية بصياغة واضحة ومنضبطة.
+   - ${(maxScore * 0.75).toFixed(2)} من ${maxScore}: استوفى معظم المحاور والشخصيات لكن أغفل تفصيلة فرعية واحدة (مثل إغفال دستور 1923 أو تصريح 28 فبراير).
+   - ${(maxScore * 0.5).toFixed(1)} من ${maxScore} (نصف الدرجة - كحالة الطالب الذي يذكر فكرة عامة عن الثورة والمرأة دون الشخصيات والنتائج): ذكر فكرة عامة أو جانباً واحداً (مثل ذكر ثورة 1919 وخروج المرأة في المتاريس) مع إغفال الشخصيات الرئيسية (مصطفى كامل، محمد فريد، سعد زغلول) أو إغفال المكاسب الدستورية، أو كانت صياغته غير منضبطة وبها حشو.
+   - ${(maxScore * 0.25).toFixed(2)} من ${maxScore}: إجابة هامشية ذكر فيها مجرد إشارة عابرة أو ذكر شخصية واحدة دون تفاصيل.
+   - 0 من ${maxScore}: إجابة خارج الموضوع تماماً أو فارغة.
+
+المطلوب إخراجه بدقة فائقة:
+1. "matchedPoints": قائمة بالعناصر والمفاتيح التي استوفاها الطالب بنجاح، مصاغة بأسلوب المعلم التربوي الموجه للطالب مباشرة ("أحسنتَ/أحسنتِ في توضيح...").
+2. "missingPoints": قائمة دقيقة ومفصلة بكل شخصية أو عمل تاريخي أو مكتسب أهمله الطالب، مصاغة بأسلوب المعلم الموجه للطالب مباشرة ("أغفلتَ/أغفلتِ عن ذكر شخصية... وعن دورها/دوره في: ..."، "ينقص إجابتك بيان..."). يُمنع منعاً باتاً استخدام صيغة الغائب الجافة ("أغفل الطالب").
+3. "styleNote": توجيه تربوي لصياغة الطالب ولغته موجه إليه مباشرة، لتشجيعه على الالتزام بالفصحى والانضباط الزمني.
+4. "suggestedScore": اقتراح درجة عادلة ودقيقة بالأرقام بين 0 و ${maxScore} (تقبل أرباع وأنصاف الدرجات: مثلاً 0.5، 0.75، 1، 1.25، 1.5، 1.75، 2).
+5. "verdictSummary": خلاصة موجزة وحاسمة للمعلم تشرح بدقة سبب منح هذه الدرجة وتسمي ما استوفاه وما أغفله الطالب.
+6. "studentFeedback": توجيه تربوي مشجع ومباشر للطالب بصيغة المخاطب يوضح له ما ينقصه تحديداً لاكتمال إجابته ("👍 أوردت فكرة عامة طيبة، ولكن ينقصك لاكتمال الدرجة توضيح...").
 
 أجب بصيغة JSON حصراً بهذا النسق وبدون أي markdown خارج الـ JSON:
 {
-  "matchedPoints": ["نقطة 1", "نقطة 2"],
-  "missingPoints": ["عنصر مفقود 1"],
-  "styleNote": "تقييم الصياغة واللهجة",
-  "suggestedScore": 1.5,
+  "matchedPoints": ["أحسنتَ في توضيح..."],
+  "missingPoints": ["أغفلتَ عن ذكر شخصية... وعن دورها/دوره في..."],
+  "styleNote": "توجيه المعلم لأسلوب الطالب ولغته وانضباطه التاريخي",
+  "suggestedScore": 1.0,
+  "verdictSummary": "خلاصة المراجعة السريعة للمعلم",
+  "studentFeedback": "توجيه المعلم المباشر والمخصص للطالب موضحاً التقييم والنواقص بدقة"
+}
   "verdictSummary": "خلاصة المراجعة السريعة للمعلم",
   "studentFeedback": "توجيه المعلم المباشر والمخصص للطالب موضحاً التقييم والنواقص بدقة"
 }
@@ -1012,17 +1363,21 @@ ${modelAnswer}
             studentFeedback = praiseMsg;
           } else if (suggested >= maxScore * 0.4) {
             const missingListStr = validMissing.slice(0, 2).join('، ');
-            studentFeedback = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
+            studentFeedback = gender === 'female'
+              ? `👍 أوردتِ فكرة عامة طيبة، ولكن ينقصكِ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّزي جيداً عليها لتضمني الدرجة الكاملة! 💡`
+              : `👍 أوردتَ فكرة عامة طيبة، ولكن ينقصكَ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّز جيداً عليها لتضمن الدرجة الكاملة! 💡`;
           } else {
             const missingListStr = validMissing.slice(0, 2).join('، ');
-            studentFeedback = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
+            studentFeedback = gender === 'female'
+              ? `⚠️ إجابتكِ ناقصة وبحاجة لتركيز؛ حيث أغفلتِ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`
+              : `⚠️ إجابتكَ ناقصة وبحاجة لتركيز؛ حيث أغفلتَ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
           }
         }
 
         return {
           matchedPoints: matched,
           missingPoints: missing,
-          styleNote: parsed.styleNote || 'تمت المراجعة اللغوية بنجاح.',
+          styleNote: parsed.styleNote || 'تمت المراجعة اللغوية والتاريخية بنجاح.',
           suggestedScore: suggested,
           verdictSummary: parsed.verdictSummary || 'تم تحليل الفروق وتطابق الإجابة بنجاح.',
           studentFeedback,
@@ -1038,7 +1393,7 @@ ${modelAnswer}
   const groqKey = getGroqApiKey();
   if (groqKey && getGroqKeyHealth() !== 'quota_exhausted' && getGroqKeyHealth() !== 'invalid') {
     try {
-      const rawText = await callGroqChatCompletions(prompt, "أنت مصحح ومراجع امتحانات تاريخ ثانوية عامة خبير. أجب بصيغة JSON فقط.");
+      const rawText = await callGroqChatCompletions(prompt, "أنت كبير مصححي مادة التاريخ للثانوية العامة. أجب بصيغة JSON فقط.");
       if (rawText) {
         const parsed = parseAiJsonResponse(rawText);
         const suggested = Math.max(0, Math.min(maxScore, Number(parsed.suggestedScore) || 0));
@@ -1060,17 +1415,21 @@ ${modelAnswer}
             studentFeedback = praiseMsg;
           } else if (suggested >= maxScore * 0.4) {
             const missingListStr = validMissing.slice(0, 2).join('، ');
-            studentFeedback = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
+            studentFeedback = gender === 'female'
+              ? `👍 أوردتِ فكرة عامة طيبة، ولكن ينقصكِ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّزي جيداً عليها لتضمني الدرجة الكاملة! 💡`
+              : `👍 أوردتَ فكرة عامة طيبة، ولكن ينقصكَ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّز جيداً عليها لتضمن الدرجة الكاملة! 💡`;
           } else {
             const missingListStr = validMissing.slice(0, 2).join('، ');
-            studentFeedback = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
+            studentFeedback = gender === 'female'
+              ? `⚠️ إجابتكِ ناقصة وبحاجة لتركيز؛ حيث أغفلتِ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`
+              : `⚠️ إجابتكَ ناقصة وبحاجة لتركيز؛ حيث أغفلتَ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
           }
         }
 
         return {
           matchedPoints: matched,
           missingPoints: missing,
-          styleNote: parsed.styleNote || 'تمت المراجعة اللغوية بنجاح بواسطة Groq AI.',
+          styleNote: parsed.styleNote || 'تمت المراجعة اللغوية والتاريخية بنجاح بواسطة Groq AI.',
           suggestedScore: suggested,
           verdictSummary: parsed.verdictSummary || 'تم تحليل الفروق وتطابق الإجابة بنجاح بواسطة Groq AI (Llama 3.3).',
           studentFeedback,
@@ -1083,142 +1442,17 @@ ${modelAnswer}
   }
 
   // -----------------------------------------------------------------------------------------
-  // المحلل الذكي المحلي المدمج المطور (Advanced Semantic Heuristic Comparator)
-  // يعمل بالربط الدلالي وتطبيع اللغة وتجريد البادئات والمفاهيم ومجموعات الترادف
+  // 3. المحلل الذكي المحلي المدمج المطور (Advanced High School History Comparator)
+  // يعمل بالربط التاريخي الصارم والاقتران (شخصية + عمل + مكتسب) ورصد الاستطراد الحشوي
   // -----------------------------------------------------------------------------------------
-
-  // 1. استخراج المفاهيم والمحاور الأساسية لنموذج الإجابة
-  let rawConcepts: string[] = [];
-
-  // فحص ما إذا كان المعلم قد حدد مفاهيم صريحة مثل: [مفاهيم: ...] أو [عناصر: ...]
-  const explicitMatch = modelAnswer.match(/\[(?:مفاهيم|المفاهيم|عناصر|العناصر|محاور|المحاور):\s*([^\]]+)\]/i);
-  if (explicitMatch && explicitMatch[1]) {
-    rawConcepts = explicitMatch[1].split(/[,،|;\n]/).map(c => c.trim()).filter(Boolean);
-  }
-
-  // تقسيم نموذج الإجابة لبنوده وفق الترقيم أو الفواصل أو الأسطر
-  if (rawConcepts.length === 0) {
-    rawConcepts = modelAnswer
-      .split(/\n|(?=\b\d+[-.)])|(?=\b- )|\.\s+/)
-      .map(l => l.trim())
-      .filter(l => l.length > 5);
-  }
-
-  if (rawConcepts.length === 0) {
-    rawConcepts = [modelAnswer];
-  }
-
-  // دمج المفهوم المرتبط بالسؤال إن وجد
-  if (concept && concept.trim() && !rawConcepts.some(c => c.includes(concept.trim()))) {
-    rawConcepts.push(concept.trim());
-  }
-
-  const normStudent = normalizeArabic(cleanStudent);
-  const studentTokens = extractMeaningfulTokens(cleanStudent);
-
-  const matchedPoints: string[] = [];
-  const missingPoints: string[] = [];
-
-  const safeExcerpt = (textStr: string, limit = 75): string => {
-    const clean = textStr.replace(/\*\*/g, '').replace(/[\*_#\[\]]/g, '').trim();
-    if (clean.length <= limit) return clean;
-    const cutPos = clean.lastIndexOf(' ', limit);
-    return (cutPos > 35 ? clean.slice(0, cutPos) : clean.slice(0, limit)) + '...';
-  };
-
-  rawConcepts.forEach(cItem => {
-    const cTokens = extractMeaningfulTokens(cItem);
-    const cNorm = normalizeArabic(cItem);
-    if (cTokens.length === 0) return;
-
-    // فحص مدى استيفاء الطالب للكلمات المفتاحية أو مرادفاتها في هذا المفهوم
-    const matchedCount = cTokens.filter(ct => matchTokenWithSynonyms(ct, studentTokens, normStudent)).length;
-    const ratio = matchedCount / cTokens.length;
-
-    const excerpt = safeExcerpt(cItem);
-    const keyInfo = categorizeHistoricalKey(cItem);
-    // يعتبر المفهوم مستوفياً إذا غطى 25% من مفرداته أو مفهومين رئيسيين
-    if (ratio >= 0.25 || matchedCount >= 2 || (cTokens.length === 1 && matchedCount === 1)) {
-      matchedPoints.push(`${keyInfo.icon} ${keyInfo.category} [${keyInfo.title}]: استوفى فكرة "${excerpt}"`);
-    } else {
-      missingPoints.push(`${keyInfo.icon} ${keyInfo.category} [${keyInfo.title}]: لم يشر إلى "${excerpt}"`);
-    }
-  });
-
-  const totalConcepts = Math.max(1, rawConcepts.length);
-  const conceptCoverageRatio = matchedPoints.length / totalConcepts;
-
-  // فحص نسبة دقة ما كتبه الطالب من مصطلحات ومفاهيم مرتبطة بنموذج الإجابة
-  const allModelTokens = extractMeaningfulTokens(`${modelAnswer} ${concept}`);
-  const relevantStudentTokens = studentTokens.filter(st => matchTokenWithSynonyms(st, allModelTokens, normalizeArabic(modelAnswer)));
-  const studentRelevanceRatio = studentTokens.length > 0 ? (relevantStudentTokens.length / studentTokens.length) : 0;
-
-  // نسبة الدرجة العادلة بدمج استيفاء المفاهيم مع دقة ما كتبه الطالب
-  let fairRatio = (conceptCoverageRatio * 0.7) + (studentRelevanceRatio * 0.3);
-
-  // احتساب بونص منطقي إذا استشهد الطالب بروابط تعليل وبرهان
-  const hasEvidence = /(شواهد|دليل|حيث|لان|بسبب|نظرا|ترتب|ادي|نتج|اثر)/i.test(normStudent);
-  if (hasEvidence && matchedPoints.length > 0 && fairRatio < 1) {
-    fairRatio = Math.min(1, fairRatio + 0.1);
-  }
-
-  // إعداد توجيه تربوي مباشر ومرن ومخصص للطالب موضحاً النواقص المستخرجة من إجابته الفعلية
-  const validMissing = missingPoints
-    .filter(p => p && !p.includes('جميع العناصر') && !p.includes('جميع عناصر') && !p.includes('جميع النقاط'))
-    .map(p => p.replace(/^لم يشر إلى:\s*"?/, '').replace(/"?$/, '').trim())
-    .filter(Boolean);
-
-  // إذا استوفى الطالب كافة محاور نموذج الإجابة المطلوبة (missingPoints فارغة أو تغطية 100%)
-  // تمنح الدرجة الكاملة فوراً دون أي انتقاص بسبب إسهاب الطالب أو طول إجابته
-  if (conceptCoverageRatio >= 0.99 || validMissing.length === 0) {
-    fairRatio = 1.0;
-  }
-
-  // حساب الدرجة المقترحة لأقرب ربع درجة
-  let suggestedScore = Math.round(fairRatio * maxScore * 4) / 4;
-  if (conceptCoverageRatio >= 0.99 || validMissing.length === 0) {
-    suggestedScore = maxScore;
-  } else if (matchedPoints.length > 0 && suggestedScore < 0.25) {
-    suggestedScore = 0.25;
-  }
-  suggestedScore = Math.max(0, Math.min(maxScore, suggestedScore));
-
-  const colloquialWords = ['عشان', 'علشان', 'خلوا', 'وقعوا', 'بقى', 'كده', 'ايه', 'معملش', 'مجاش', 'جابوا'];
-  const hasColloquial = colloquialWords.some(w => normStudent.includes(normalizeArabic(w)));
-  const styleNote = hasColloquial 
-    ? 'تضمنت إجابة الطالب تعبيرات عامية، يُفضل توجيهه للاعتماد الكامل على الفصحى في الثانوية العامة.'
-    : 'صياغة الطالب واضحة ومقبولة لغوياً وتستخدم مفردات ومصطلحات ملائمة للمنهج.';
-
-  const verdictSummary = conceptCoverageRatio >= 0.75 
-    ? `أجاب الطالب على معظم المفاهيم الأساسية لنموذج الإجابة بنجاح واستحق ${suggestedScore} من ${maxScore}.`
-    : conceptCoverageRatio >= 0.4
-    ? `أورد الطالب بعض المفاهيم الأساسية وأغفل عناصر أخرى، الدرجة المقترحة: ${suggestedScore} من ${maxScore}.`
-    : `الإجابة غير مكتملة وتفتقر إلى معظم الشواهد والمفاهيم الواردة بالنموذج (${suggestedScore} من ${maxScore}).`;
-
-  const praiseMsg = gender === 'female'
-    ? '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتِ وبارك الله فيكِ! 🌟'
-    : '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتَ وبارك الله فيك! 🌟';
-
-  let studentFeedback = '';
-  if (conceptCoverageRatio >= 0.85 || suggestedScore >= maxScore * 0.9 || validMissing.length === 0) {
-    studentFeedback = praiseMsg;
-  } else if (conceptCoverageRatio >= 0.4 || suggestedScore >= maxScore * 0.4) {
-    const missingClean = validMissing.slice(0, 2).join('، ');
-    studentFeedback = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
-  } else if (matchedPoints.length > 0 || suggestedScore > 0) {
-    const missingClean = validMissing.slice(0, 2).join('، ');
-    studentFeedback = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`;
-  } else {
-    studentFeedback = '⚠️ إجابتك بعيدة عن المطلوب ولم تستوفِ مفاهيم السؤال، يرجى مراجعة شرح الدرس ونموذج الإجابة بدقة.';
-  }
-
+  const heuristicResult = evaluateHighSchoolEssayEngine(cleanStudent, modelAnswer, concept, maxScore, gender);
   return {
-    matchedPoints: matchedPoints.length > 0 ? matchedPoints : ['لم يتم العثور على تطابق مباشر مع مفاهيم نموذج الإجابة.'],
-    missingPoints: missingPoints.length > 0 ? missingPoints : ['أورد الطالب جميع النقاط الأساسية.'],
-    styleNote,
-    suggestedScore,
-    verdictSummary,
-    studentFeedback,
+    matchedPoints: heuristicResult.matchedPoints,
+    missingPoints: heuristicResult.missingPoints,
+    styleNote: heuristicResult.styleNote,
+    suggestedScore: heuristicResult.suggestedScore,
+    verdictSummary: heuristicResult.verdictSummary,
+    studentFeedback: heuristicResult.studentFeedback,
     provider: 'heuristic',
   };
 };

@@ -105,19 +105,24 @@ export const StudentRetakeNotificationModal: React.FC<StudentRetakeNotificationM
               : 'bg-indigo-50/70 border-indigo-200 text-indigo-950'
           }`}>
             <p className="font-bold mb-2">
-              {isFemale ? 'أهلاً بكِ يا بطلتي،' : 'أهلاً بك يا بطل،'}
+              {isFemale ? 'أهلاً بكِ يا ابنتي الغالية،' : 'أهلاً بك يا بني البطل،'}
             </p>
 
             {isEssayOnly ? (
-              <div className="space-y-2 font-medium">
+              <div className="space-y-3 font-medium">
                 <p>
                   ✅ <strong className="text-emerald-600 dark:text-emerald-400 font-black">درجاتك في الأسئلة الاختيارية محفوظة بنجاح!</strong>
                 </p>
-                <p>
-                  بناءً على مراجعة إجاباتك، قمتُ بإتاحة <strong>إعادة صياغة وحل الأسئلة المقالية فقط</strong> في امتحان:
+                <p className="text-sm font-black text-indigo-900 dark:text-indigo-200">
+                  🌟 لقد منحك الأستاذ فرصة جديدة لإعادة صياغة وحل الأسئلة المقالية في:
                 </p>
-                <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800 border border-indigo-300 dark:border-indigo-700 font-black text-center text-primary dark:text-indigo-300">
+                <div className="p-3 rounded-2xl bg-white dark:bg-gray-800 border-2 border-indigo-400 dark:border-indigo-600 font-black text-center text-primary dark:text-indigo-300 text-sm sm:text-base shadow-xs">
                   📖 {directive.lessonTitle}
+                </div>
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-500/20 to-orange-500/10 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-200 font-black text-xs sm:text-sm text-center leading-relaxed shadow-xs">
+                  ⚡ {isFemale 
+                    ? '«لقد منحكِ الأستاذ فرصة جديدة للاختبار.. اغتنميها ولا تضيعيها، أعدي المراجعة جيداً وفي انتظار نيلك الدرجة النهائية.. بالتوفيق!» 🌸🎯' 
+                    : '«لقد منحك الأستاذ فرصة جديدة للاختبار.. اغتنمها ولا تضيعها، أعد المراجعة جيداً وفي انتظار نيلك الدرجة النهائية.. بالتوفيق!» 🌟💪'}
                 </div>
                 <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300 leading-normal">
                   {isFemale 
@@ -126,17 +131,22 @@ export const StudentRetakeNotificationModal: React.FC<StudentRetakeNotificationM
                 </p>
               </div>
             ) : (
-              <div className="space-y-2 font-medium">
-                <p>
-                  بناءً على متابعة تقدمك، قمتُ بإتاحة <strong>إعادة محاولة الامتحان كاملاً</strong> في درس:
+              <div className="space-y-3 font-medium">
+                <p className="text-sm font-black text-indigo-900 dark:text-indigo-200">
+                  🌟 لقد منحك الأستاذ فرصة جديدة لإعادة محاولة الاختبار كاملاً في:
                 </p>
-                <div className="p-2.5 rounded-xl bg-white dark:bg-gray-800 border border-indigo-300 dark:border-indigo-700 font-black text-center text-primary dark:text-indigo-300">
+                <div className="p-3 rounded-2xl bg-white dark:bg-gray-800 border-2 border-indigo-400 dark:border-indigo-600 font-black text-center text-primary dark:text-indigo-300 text-sm sm:text-base shadow-xs">
                   📖 {directive.lessonTitle}
+                </div>
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-500/20 to-orange-500/10 border-2 border-amber-400 dark:border-amber-600 text-amber-950 dark:text-amber-200 font-black text-xs sm:text-sm text-center leading-relaxed shadow-xs">
+                  ⚡ {isFemale 
+                    ? '«لقد منحكِ الأستاذ فرصة جديدة للاختبار.. اغتنميها ولا تضيعيها، أعدي المراجعة جيداً وفي انتظار نيلك الدرجة النهائية.. بالتوفيق!» 🌸🎯' 
+                    : '«لقد منحك الأستاذ فرصة جديدة للاختبار.. اغتنمها ولا تضيعها، أعد المراجعة جيداً وفي انتظار نيلك الدرجة النهائية.. بالتوفيق!» 🌟💪'}
                 </div>
                 <p className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300 leading-normal">
                   {isFemale 
-                    ? 'تم تصفير المحاولة السابقة لتبدئي من السؤال الأول. استعيني بالله، راجعي مفاهيم الدرس جيداً وركّزي لتنالي الدرجة التي تليق بكِ! 🌸🎯'
-                    : 'تم تصفير المحاولة السابقة لتبدأ من السؤال الأول. استعن بالله، راجع مفاهيم الدرس جيداً وركّز لتنال الدرجة التي تليق بك! 💪🎯'}
+                    ? 'تم تصفير المحاولة السابقة لتبدئي من جديد بعزيمة أقوى. استعيني بالله، راجعي مفاهيم الدرس جيداً وركّزي لتنالي الدرجة التي تليق بكِ! 🌸🎯'
+                    : 'تم تصفير المحاولة السابقة لتبدأ من جديد بعزيمة أقوى. استعن بالله، راجع مفاهيم الدرس جيداً وركّز لتنال الدرجة التي تليق بك! 💪🎯'}
                 </p>
               </div>
             )}

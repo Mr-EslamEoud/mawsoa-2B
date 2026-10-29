@@ -7,14 +7,19 @@ import {
   savePendingEssaySubmission, 
   getExamConfig, 
   calculateExamStructure,
+  calculateSubScores,
   detectEssayType,
   saveRetakeDirective,
   hasWrittenEssayAnswers,
   checkNeedsFormattingGuidance,
-  ensureCompleteEssayQuestions
+  ensureCompleteEssayQuestions,
+  findLessonForQuizInUnits,
+  getActiveRetakeDirectiveForLesson,
+  notifyPendingEssaysChanged
 } from '../examConfigUtils';
 import { HighlightText } from './HighlightText';
 import { FormatQuestionText } from './FormatQuestionText';
+import { StudentFullExamInspectionModal } from './StudentFullExamInspectionModal';
 import { compareStudentWithModelAnswer, EssayDiffComparison, getGeminiApiKey, getGroqApiKey } from '../aiEvaluationService';
 import { toEasternArabic, API_URL, SECRET_API_KEY, formatPhoneStr, detectArabicGender } from '../utils';
 
@@ -185,9 +190,9 @@ export const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore
     const cleanPhone = formatPhoneStr(sub.studentPhone);
     const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
 
-    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي بدقة في صفوف شيت إجابات المقالي
-    const essayOnlyQuestions = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
-    if (essayOnlyQuestions.length > 0) {
+    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي وملخص الموضوعي بدقة في صفوف شيت إجابات المقالي
+    const questionsToSync = sub.questions.filter(q => q.essayType !== 'صح وخطأ' || q.qIndex === -1);
+    if (questionsToSync.length > 0) {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -197,12 +202,18 @@ export const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore
           studentName: sub.studentName,
           studentPhone: fullPhone,
           quizTitle: sub.quizTitle,
-          questions: essayOnlyQuestions.map(q => ({
-            ...q,
-            isApproved: true,
-            teacherScore: q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0),
-            teacherFeedback: q.teacherFeedback || teacherFeedback || 'تم اعتماد الإجابة بنجاح'
-          })),
+          questions: questionsToSync.map(q => {
+            const rawScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
+            const safeScore = (q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ')
+              ? Math.min(q.maxScore || 2, rawScore)
+              : rawScore;
+            return {
+              ...q,
+              isApproved: true,
+              teacherScore: safeScore,
+              teacherFeedback: q.teacherFeedback || teacherFeedback || 'تم اعتماد الإجابة بنجاح'
+            };
+          }),
           isApproved: true,
           status: 'معتمد',
           studentType: sub.studentType || 'سنتر',
@@ -211,7 +222,7 @@ export const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore
       });
     }
 
-    // 2. تحديث الحالة العامة
+    // 2. تحديث الحالة العامة فقط دون مساس بدرجة كل سؤال
     await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -219,7 +230,6 @@ export const syncGradeToCloud = async (sub: StudentEssaySubmission, teacherScore
         action: 'updateEssayGrade',
         studentPhone: fullPhone,
         quizTitle: sub.quizTitle,
-        teacherScore: teacherScore !== undefined ? teacherScore : sub.finalScore,
         teacherFeedback: teacherFeedback || 'تم اعتماد الإجابة بنجاح',
         isApproved: true,
         status: 'معتمد',
@@ -236,9 +246,9 @@ export const syncDraftToCloud = async (sub: StudentEssaySubmission) => {
     const cleanPhone = formatPhoneStr(sub.studentPhone);
     const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
 
-    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي بدقة كمسودة مصححة في شيت إجابات المقالي
-    const essayOnlyQuestions = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
-    if (essayOnlyQuestions.length > 0) {
+    // 1. مزامنة تفاصيل درجات وملاحظات كل سؤال مقالي وملخص الموضوعي بدقة كمسودة مصححة في شيت إجابات المقالي
+    const questionsToSync = sub.questions.filter(q => q.essayType !== 'صح وخطأ' || q.qIndex === -1);
+    if (questionsToSync.length > 0) {
       await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -248,12 +258,18 @@ export const syncDraftToCloud = async (sub: StudentEssaySubmission) => {
           studentName: sub.studentName,
           studentPhone: fullPhone,
           quizTitle: sub.quizTitle,
-          questions: essayOnlyQuestions.map(q => ({
-            ...q,
-            isApproved: false,
-            teacherScore: q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0),
-            teacherFeedback: q.teacherFeedback || 'تم التصحيح وحفظ المسودة بواسطة المعلم'
-          })),
+          questions: questionsToSync.map(q => {
+            const rawScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
+            const safeScore = (q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ')
+              ? Math.min(q.maxScore || 2, rawScore)
+              : rawScore;
+            return {
+              ...q,
+              isApproved: false,
+              teacherScore: safeScore,
+              teacherFeedback: q.teacherFeedback || 'تم التصحيح وحفظ المسودة بواسطة المعلم'
+            };
+          }),
           isApproved: false,
           status: 'تم التصحيح',
           studentType: sub.studentType || 'سنتر',
@@ -262,7 +278,7 @@ export const syncDraftToCloud = async (sub: StudentEssaySubmission) => {
       });
     }
 
-    // 2. تحديث حالة المسودة
+    // 2. تحديث حالة المسودة فقط دون مساس بدرجة كل سؤال
     await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -270,7 +286,6 @@ export const syncDraftToCloud = async (sub: StudentEssaySubmission) => {
         action: 'updateEssayGrade',
         studentPhone: fullPhone,
         quizTitle: sub.quizTitle,
-        teacherScore: sub.finalScore,
         teacherFeedback: 'تم التصحيح وحفظ المسودة بواسطة المعلم',
         isApproved: false,
         status: 'تم التصحيح',
@@ -299,6 +314,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
+  const [inspectingSub, setInspectingSub] = useState<StudentEssaySubmission | null>(null);
 
   // إذا لم تكن هناك إجابات بانتظار التصحيح في البداية، نعرض الكل تلقائياً
   const [hasAutoSwitchedToAll, setHasAutoSwitchedToAll] = useState(false);
@@ -372,7 +388,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         resData.data.forEach((row: any) => {
           if (!row.studentPhone || !row.quizTitle) return;
           const cleanPhone = formatPhoneStr(row.studentPhone);
-          const key = `${cleanPhone}___${row.quizTitle.trim()}`;
+          const key = `${cleanPhone}___${normalizeTextForMatching(row.quizTitle)}`;
           if (!groupedMap.has(key)) {
             groupedMap.set(key, {
               date: row.date || '',
@@ -424,10 +440,13 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             return;
           }
 
+          const isMcqSummary = cleanQText.includes('الأسئلة الموضوعية') || cleanQText.includes('الاختياري والصح/خطأ');
+          const isTfOrMcq = isMcqSummary || cleanQText.includes('هل العبارة صحيحة') || cleanQText.includes('اختر من متعدد');
+
           grp.questions.push({
             qIndex: grp.questions.length,
             questionText: cleanQText,
-            essayType: detectEssayType(cleanQText).label,
+            essayType: isTfOrMcq ? 'اختر من متعدد' : detectEssayType(cleanQText).label,
             modelAnswer: '',
             studentText: row.studentAnswerText || '',
             maxScore: 2,
@@ -441,12 +460,35 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
 
         const cloudSubmissions: StudentEssaySubmission[] = [];
         groupedMap.forEach((grp, key) => {
+          const retakeDirective = getActiveRetakeDirectiveForLesson(grp.studentPhone, grp.quizTitle);
+          if (retakeDirective) {
+            // الطالب ممنوح إذن إعادة بالفعل - إخلاء قائمته من التصحيح المعلق
+            return;
+          }
+
           const isAllApproved = grp.questions.length > 0 && grp.questions.every(q => q.isApproved);
           const hasAllTeacherScores = grp.questions.length > 0 && grp.questions.every(q => q.teacherScore !== undefined && q.teacherScore !== null);
           const isReviewed = Boolean(isAllApproved || (grp as any).hasGradedStatus || hasAllTeacherScores);
           
-          let lessonId = grp.quizTitle;
+          const matchedLesson = findLessonForQuizInUnits(grp.quizTitle, undefined, data);
+          let lessonId = matchedLesson ? matchedLesson.id : grp.quizTitle;
+          const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+          const mcqMax = structure ? (structure.mcqTotalScore + structure.tfTotalScore) : 0;
+
           grp.questions.forEach((q, qi) => {
+            if (q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ')) {
+              q.essayType = 'اختر من متعدد';
+              if (mcqMax > 0) q.maxScore = mcqMax;
+              const match = (q.studentText || '').match(/حصل الطالب على\s*([\d.]+)/);
+              if (match && match[1]) {
+                const parsed = parseFloat(match[1]);
+                if (!isNaN(parsed)) {
+                  q.teacherScore = parsed;
+                  q.aiScore = parsed;
+                }
+              }
+              return;
+            }
             const found = resolveModelAnswer(q.questionText, grp.quizTitle, undefined, qi, data);
             if (found.modelAnswer) {
               q.modelAnswer = found.modelAnswer;
@@ -460,21 +502,30 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           });
 
           // معالجة تصحيح التكرار في حال تم حفظ الدرجة الكلية في كل صف بدلاً من توزيعها
-          const totalMaxPossible = grp.questions.reduce((sum, q) => sum + (q.maxScore || 2), 0);
-          const rawEarned = grp.questions.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
-          
-          if (isReviewed && grp.questions.length > 1 && rawEarned > totalMaxPossible) {
-            const firstScore = grp.questions[0].teacherScore;
-            const isAllSameTotal = grp.questions.every(q => q.teacherScore === firstScore && (firstScore || 0) > (q.maxScore || 2));
-            if (isAllSameTotal && firstScore !== undefined) {
-              const distributedScore = Math.min(totalMaxPossible, firstScore) / grp.questions.length;
-              grp.questions.forEach(q => {
-                q.teacherScore = Number(distributedScore.toFixed(2));
-              });
+          const totalMaxPossible = structure ? structure.examTotalScore : grp.questions.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+
+          // حماية صارمة لكل سؤال مقالي: لا يجوز لأي سؤال أن تتجاوز درجته درجته العظمى (مثلاً: 4 من 2)
+          const essayQs = grp.questions.filter(q => !q.questionText.includes('الأسئلة الموضوعية') && !q.questionText.includes('الاختياري والصح/خطأ'));
+          const maxEssayPossible = structure ? structure.essayTotalScore : essayQs.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+
+          essayQs.forEach(q => {
+            const qMax = q.maxScore || 2;
+            if (q.teacherScore !== undefined && q.teacherScore > qMax) {
+              q.teacherScore = qMax;
             }
+          });
+
+          // معالجة تصحيح التكرار في حال تم حفظ الدرجة الكلية للمقالي في كل صف
+          const currentEssayEarned = essayQs.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          if (currentEssayEarned > maxEssayPossible && essayQs.length > 0) {
+            const distributedScore = maxEssayPossible / essayQs.length;
+            essayQs.forEach(q => {
+              q.teacherScore = Number(distributedScore.toFixed(2));
+            });
           }
 
-          const finalEarned = grp.questions.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          const rawEarned = grp.questions.reduce((sum, q) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          const finalEarned = Math.min(totalMaxPossible > 0 ? totalMaxPossible : rawEarned, rawEarned);
 
           const rawSub: StudentEssaySubmission = {
             id: `cloud_${key}`,
@@ -509,11 +560,13 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         });
         const mergedMap = new Map<string, StudentEssaySubmission>();
         cloudSubmissions.forEach(cs => {
-          const mKey = `${formatPhoneStr(cs.studentPhone)}___${cs.quizTitle.trim()}`;
+          const mKey = `${formatPhoneStr(cs.studentPhone)}___${normalizeTextForMatching(cs.quizTitle)}`;
           mergedMap.set(mKey, cs);
         });
         localList.forEach(ls => {
-          const mKey = `${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`;
+          const retakeDirective = getActiveRetakeDirectiveForLesson(ls.studentPhone, ls.quizTitle);
+          if (retakeDirective) return;
+          const mKey = `${formatPhoneStr(ls.studentPhone)}___${normalizeTextForMatching(ls.quizTitle)}`;
           const normalizedLs = ensureCompleteEssayQuestions(ls, data);
           if (!mergedMap.has(mKey)) {
             // الاحتفاظ بالتسليمات المحلية غير الموجودة في السحابة
@@ -541,11 +594,13 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         const finalList = Array.from(mergedMap.values());
         localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(finalList));
         setSubmissions(finalList);
+        notifyPendingEssaysChanged();
         if (isManual) {
           showToast('✅ تم جلب وتحديث كافة تسليمات المقالي من السحابة بنجاح!');
         }
       } else {
         refreshSubmissions();
+        notifyPendingEssaysChanged();
         if (isManual) {
           showToast('تم تحديث البيانات من السجلات المحلية.');
         }
@@ -771,24 +826,29 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     });
   }, [essayEligibleSubmissions, statusFilter, studentTypeFilter, selectedUnitFilter, selectedQuizFilter, searchQuery, onlineStudents, data]);
 
-  // البحث عن الطالب التالي الذي ينتظر التصحيح الفعلي (لم يتم رصد درجاته بعد) للانتقال السلس
+  // البحث عن الطالب التالي الذي ينتظر التصحيح أو الاعتماد للانتقال السلس
   const nextPendingSub = useMemo(() => {
     if (!selectedSubForReview) return null;
-    const sameQuizPending = essayEligibleSubmissions.filter(s => 
-      (s.quizTitle === selectedSubForReview.quizTitle || s.lessonId === selectedSubForReview.lessonId) &&
-      !s.isFullyApproved &&
-      !s.isTeacherReviewed &&
-      s.id !== selectedSubForReview.id
+    const currentIndex = filteredSubmissions.findIndex(s => s.id === selectedSubForReview.id);
+    
+    // 1. نبحث أولاً بعد الطالب الحالي في القائمة المعروضة عن أي طالب لم يُعتمد بعد
+    const nextAfter = filteredSubmissions.slice(currentIndex + 1).find(s => 
+      s.id !== selectedSubForReview.id && 
+      !s.isFullyApproved
     );
-    if (sameQuizPending.length > 0) return sameQuizPending[0];
+    if (nextAfter) return nextAfter;
 
-    const anyPending = filteredSubmissions.filter(s => 
-      !s.isFullyApproved && 
-      !s.isTeacherReviewed && 
-      s.id !== selectedSubForReview.id
+    // 2. إذا لم نجد بعده، نبحث في كامل القائمة المعروضة عن أي طالب لم يُعتمد بعد
+    const anyInFiltered = filteredSubmissions.find(s => 
+      s.id !== selectedSubForReview.id && 
+      !s.isFullyApproved
     );
-    return anyPending.length > 0 ? anyPending[0] : null;
-  }, [selectedSubForReview, essayEligibleSubmissions, filteredSubmissions]);
+    if (anyInFiltered) return anyInFiltered;
+
+    // 3. إن لم يكن هناك أي طالب غير معتمد، نبحث عن أي طالب تالي بعده للتصفح
+    const nextAny = filteredSubmissions.slice(currentIndex + 1)[0];
+    return nextAny || null;
+  }, [selectedSubForReview, filteredSubmissions]);
 
   // حذف تسليم
   const handleDeleteSubmission = (id: string) => {
@@ -797,6 +857,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
       const current = getPendingEssaySubmissions().filter(s => s.id !== id);
       localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
       refreshSubmissions();
+      notifyPendingEssaysChanged();
       showToast('تم حذف التسليم بنجاح');
     } catch (e) {}
   };
@@ -831,6 +892,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
       const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
       localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
       refreshSubmissions();
+      notifyPendingEssaysChanged();
       setRetakeModalSub(null);
       showToast(`🔄 تم تفعيل إعادة الامتحان كاملاً بنجاح للطالب/ة: ${sub.studentName}`);
     } catch (e) {
@@ -874,6 +936,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
       const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
       localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
       refreshSubmissions();
+      notifyPendingEssaysChanged();
       setRetakeModalSub(null);
       showToast(`✍️ تم تفعيل إعادة الأسئلة المقالية فقط (وحفظ الاختياري: ${preservedMcqScore} درجة) للطالب/ة: ${sub.studentName}`);
     } catch (e) {
@@ -886,6 +949,7 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
       const current = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
       localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(current));
       refreshSubmissions();
+      notifyPendingEssaysChanged();
       setRetakeModalSub(null);
       showToast(`🗑️ تم حذف التسليم إدارياً للطالب/ة: ${sub.studentName}`);
     } catch (e) {
@@ -1498,7 +1562,15 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                       {/* بيانات الطالب والاختبار */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 sm:gap-2 mb-1 flex-wrap">
-                          <span className="font-black text-sm sm:text-base text-gray-900">{sub.studentName}</span>
+                          <button
+                            type="button"
+                            onClick={() => setInspectingSub(sub)}
+                            className="font-black text-sm sm:text-base text-gray-900 hover:text-primary dark:text-white dark:hover:text-blue-400 flex items-center gap-1.5 group cursor-pointer text-right transition-colors"
+                            title="انقر لعرض ورقة أسئلة الطالب وإجاباته كاملة (موضوعي ومقالي)"
+                          >
+                            <span className="underline decoration-dotted decoration-primary/40 group-hover:decoration-primary group-hover:underline-offset-2">{sub.studentName}</span>
+                            <i className="fas fa-file-lines text-xs text-primary/70 group-hover:text-primary transition-transform group-hover:scale-110"></i>
+                          </button>
                           <span className="text-[11px] sm:text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md" dir="ltr">
                             {sub.studentPhone}
                           </span>
@@ -1538,6 +1610,38 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                               <i className="fas fa-shield-halved text-rose-600"></i> سُحبت لمخالفات
                             </span>
                           )}
+
+                          {/* مكان الخطوط الحمراء: درجات الموضوعي والمقالي والمجموع */}
+                          {(() => {
+                            const subScores = calculateSubScores(sub, data);
+                            return (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span 
+                                  className="text-[10px] sm:text-[11px] font-black px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-900 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-800 flex items-center gap-1 shadow-2xs"
+                                  title="درجة الأسئلة الموضوعية (اختياري وصح/خطأ)"
+                                >
+                                  <i className="fas fa-check-double text-blue-600 dark:text-blue-400"></i>
+                                  <span>موضوعي: {toEasternArabic(subScores.mcqEarned)} من {toEasternArabic(subScores.mcqMax)}</span>
+                                </span>
+
+                                <span 
+                                  className="text-[10px] sm:text-[11px] font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-900 border border-purple-200 dark:bg-purple-950/60 dark:text-purple-200 dark:border-purple-800 flex items-center gap-1 shadow-2xs"
+                                  title="درجة الأسئلة المقالية"
+                                >
+                                  <i className="fas fa-feather-alt text-purple-600 dark:text-purple-400"></i>
+                                  <span>مقالي: {toEasternArabic(subScores.essayEarned)} من {toEasternArabic(subScores.essayMax)}</span>
+                                </span>
+
+                                <span 
+                                  className="text-[10px] sm:text-[11px] font-black px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-950 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-800 flex items-center gap-1 shadow-2xs font-mono"
+                                  title="المجموع الكلي والنسبة المئوية"
+                                >
+                                  <i className="fas fa-award text-amber-500"></i>
+                                  <span>{toEasternArabic(subScores.totalEarned)} من {toEasternArabic(subScores.totalMax)} ({toEasternArabic(subScores.perc)}%)</span>
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-gray-500 font-bold flex-wrap mt-1">
@@ -1603,8 +1707,25 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             savePendingEssaySubmission(updated);
             syncGradeToCloud(updated);
             if (onSaveResultToDB && updated.quizTitle) {
-              const maxPossible = updated.maxPossibleScore || 50;
-              const perc = Math.round(((updated.finalScore || 0) / Math.max(1, maxPossible)) * 100);
+              let matchedLesson = null;
+              if (data && data.length > 0) {
+                for (const u of data) {
+                  const l = u.lessons.find(ls => ls.id === updated.lessonId || ls.title.trim() === updated.quizTitle.trim());
+                  if (l) { matchedLesson = l; break; }
+                }
+              }
+              let effectiveEarned = updated.finalScore || 0;
+              let effectiveMax = updated.maxPossibleScore || 50;
+              if (matchedLesson) {
+                const structure = calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id));
+                effectiveMax = structure.examTotalScore;
+                const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+                const hasMcq = updated.questions.some(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+                if (!hasMcq && mcqMax > 0 && effectiveEarned < mcqMax) {
+                  effectiveEarned += mcqMax;
+                }
+              }
+              const perc = Math.min(100, Math.round((effectiveEarned / Math.max(1, effectiveMax)) * 100));
               onSaveResultToDB({
                 quizName: updated.quizTitle,
                 score: `${perc}%`,
@@ -1613,38 +1734,48 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
               });
             }
 
-            const allFresh = getPendingEssaySubmissions();
-            const nextInSameQuiz = allFresh.find(s => 
-              s.id !== updated.id &&
-              (s.quizTitle === updated.quizTitle || s.lessonId === updated.lessonId) &&
-              !s.isFullyApproved &&
-              !s.isTeacherReviewed &&
-              hasWrittenEssayAnswers(s)
-            );
-            const nextTarget = nextInSameQuiz || allFresh.find(s => 
-              s.id !== updated.id &&
-              !s.isFullyApproved &&
-              !s.isTeacherReviewed &&
-              hasWrittenEssayAnswers(s)
-            );
+            // تحديث القائمة الحية فوراً ليظهر الطالب معتمداً بشارة خضراء
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s));
 
-            refreshSubmissions();
+            // العثور على الطالب التالي بدقة من القائمة المعروضة أمام المعلم
+            const currentIndex = filteredSubmissions.findIndex(s => s.id === updated.id);
+            let nextTarget = filteredSubmissions.slice(currentIndex + 1).find(s => s.id !== updated.id && !s.isFullyApproved);
+            if (!nextTarget) {
+              nextTarget = filteredSubmissions.find(s => s.id !== updated.id && !s.isFullyApproved);
+            }
 
             if (nextTarget) {
-              showToast(`✅ تم اعتماد درجات: ${updated.studentName} والانتقال للطالب التالي`);
+              showToast(`✅ تم اعتماد: ${updated.studentName} والانتقال إلى: ${nextTarget.studentName}`);
               setSelectedSubForReview(nextTarget);
             } else {
               setSelectedSubForReview(null);
-              showToast(`🎉 تم اعتماد درجات: ${updated.studentName}، واكتمل تصحيح كافة الطلاب!`);
+              showToast(`🎉 تم اعتماد درجات: ${updated.studentName}، واكتمل اعتماد كافة الطلاب!`);
             }
           }}
           onSaveApproved={(updated) => {
             savePendingEssaySubmission(updated);
             syncGradeToCloud(updated);
-            refreshSubmissions();
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s));
             if (onSaveResultToDB && updated.quizTitle) {
-              const maxPossible = updated.maxPossibleScore || 50;
-              const perc = Math.round(((updated.finalScore || 0) / Math.max(1, maxPossible)) * 100);
+              let matchedLesson = null;
+              if (data && data.length > 0) {
+                for (const u of data) {
+                  const l = u.lessons.find(ls => ls.id === updated.lessonId || ls.title.trim() === updated.quizTitle.trim());
+                  if (l) { matchedLesson = l; break; }
+                }
+              }
+              let effectiveEarned = updated.finalScore || 0;
+              let effectiveMax = updated.maxPossibleScore || 50;
+              if (matchedLesson) {
+                const structure = calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id));
+                effectiveMax = structure.examTotalScore;
+                const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+                const hasMcq = updated.questions.some(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+                if (!hasMcq && mcqMax > 0 && effectiveEarned < mcqMax) {
+                  effectiveEarned += mcqMax;
+                }
+              }
+              const perc = Math.min(100, Math.round((effectiveEarned / Math.max(1, effectiveMax)) * 100));
               onSaveResultToDB({
                 quizName: updated.quizTitle,
                 score: `${perc}%`,
@@ -1658,37 +1789,28 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           onSaveDraft={(updated) => {
             savePendingEssaySubmission(updated);
             syncDraftToCloud(updated);
-            refreshSubmissions();
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s));
             setSelectedSubForReview(null);
-            showToast(`💾 تم حفظ درجات ${updated.studentName} كمسودة بنجاح (النتيجة محجوبة لحين الاعتماد النهائي)`);
+            showToast(`💾 تم حفظ درجات ${updated.studentName} كمسودة بنجاح`);
           }}
           onSaveDraftAndNext={(updated) => {
             savePendingEssaySubmission(updated);
             syncDraftToCloud(updated);
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s));
 
-            const allFresh = getPendingEssaySubmissions();
-            const nextInSameQuiz = allFresh.find(s => 
-              s.id !== updated.id &&
-              (s.quizTitle === updated.quizTitle || s.lessonId === updated.lessonId) &&
-              !s.isFullyApproved &&
-              !s.isTeacherReviewed &&
-              hasWrittenEssayAnswers(s)
-            );
-            const nextTarget = nextInSameQuiz || allFresh.find(s => 
-              s.id !== updated.id &&
-              !s.isFullyApproved &&
-              !s.isTeacherReviewed &&
-              hasWrittenEssayAnswers(s)
-            );
-
-            refreshSubmissions();
+            // العثور على الطالب التالي بدقة من القائمة المعروضة أمام المعلم
+            const currentIndex = filteredSubmissions.findIndex(s => s.id === updated.id);
+            let nextTarget = filteredSubmissions.slice(currentIndex + 1).find(s => s.id !== updated.id && !s.isFullyApproved);
+            if (!nextTarget) {
+              nextTarget = filteredSubmissions.find(s => s.id !== updated.id && !s.isFullyApproved);
+            }
 
             if (nextTarget) {
-              showToast(`💾 تم حفظ درجات: ${updated.studentName} كمسودة والانتقال للطالب التالي`);
+              showToast(`💾 تم حفظ درجات: ${updated.studentName} كمسودة والانتقال إلى: ${nextTarget.studentName}`);
               setSelectedSubForReview(nextTarget);
             } else {
               setSelectedSubForReview(null);
-              showToast(`🎉 تم الانتهاء من تصحيح كافة طلاب هذا الامتحان بنجاح! انتقل الآن لتبويب "اعتماد النتائج 🎯" لإعلانها.`);
+              showToast(`🎉 تم الانتهاء من تصحيح كافة طلاب هذا القسم بنجاح!`);
             }
           }}
           isDarkMode={isDarkMode}
@@ -1835,6 +1957,15 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           </div>
         );
       })()}
+      {/* نافذة تفصيل ورقة أسئلة الطالب وحله بالكامل */}
+      {inspectingSub && (
+        <StudentFullExamInspectionModal
+          submission={inspectingSub}
+          data={data}
+          onClose={() => setInspectingSub(null)}
+          isDarkMode={isDarkMode}
+        />
+      )}
     </>
   );
 };
@@ -1892,9 +2023,9 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
         modelAnswer: resolvedModelAnswer,
         maxScore: resolvedMaxScore,
         teacherScore: q.teacherScore !== undefined 
-          ? q.teacherScore 
+          ? Math.min(resolvedMaxScore, Number(q.teacherScore) || 0)
           : (q.aiScore !== undefined 
-              ? q.aiScore 
+              ? Math.min(resolvedMaxScore, Number(q.aiScore) || 0)
               : (hasNoText ? 0 : resolvedMaxScore)),
         teacherFeedback: q.teacherFeedback || q.aiFeedback || (hasNoText ? 'لم يتم الإجابة على هذا السؤال.' : ''),
       };
@@ -2073,14 +2204,22 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
       ? '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتِ وبارك الله فيكِ! 🌟'
       : '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتَ وبارك الله فيك! 🌟';
 
-    if (score >= maxScore * 0.9 || validMissing.length === 0) {
+    if (score >= maxScore * 0.85) {
       feedbackText = praiseMsg;
+    } else if (validMissing.length === 0 || validMissing.every(m => m.includes('استوفيت') || m.includes('مكتملة') || m.includes('شاملة'))) {
+      feedbackText = isFemale
+        ? `👍 أحسنتِ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقص إجابتكِ التوسع في الشرح والتحليل التاريخي لاستحقاق الدرجة الكاملة (${score} من ${maxScore}). 💡`
+        : `👍 أحسنتَ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقص إجابتكَ التوسع في الشرح والتحليل التاريخي لاستحقاق الدرجة الكاملة (${score} من ${maxScore}). 💡`;
     } else if (score >= maxScore * 0.4) {
       const missingListStr = validMissing.slice(0, 2).join('، ');
-      feedbackText = `👍 الإجابة صحيحة وموفقة في مجملها، ولكن ينقصك لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركز عليها لتضمن الدرجة الكاملة! 💡`;
+      feedbackText = isFemale
+        ? `👍 أوردتِ فكرة عامة طيبة وموفقة، ولكن ينقصكِ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّزي جيداً عليها لتضمني الدرجة الكاملة! 💡`
+        : `👍 أوردتَ فكرة عامة طيبة وموفقة، ولكن ينقصكَ لاكتمال الدرجة النهائية توضيح: (${missingListStr}). ركّز جيداً عليها لتضمن الدرجة الكاملة! 💡`;
     } else if (score > 0) {
       const missingListStr = validMissing.slice(0, 2).join('، ');
-      feedbackText = `⚠️ إجابتك ناقصة وبحاجة لمراجعة؛ حيث أغفلت توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
+      feedbackText = isFemale
+        ? `⚠️ إجابتكِ ناقصة وبحاجة لمزيد من التركيز؛ حيث أغفلتِ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`
+        : `⚠️ إجابتكَ ناقصة وبحاجة لمزيد من التركيز؛ حيث أغفلتَ عن توضيح: (${missingListStr}). يرجى مراجعة نموذج الإجابة جيداً.`;
     } else {
       feedbackText = diff.studentFeedback || `${diff.verdictSummary}`;
     }
@@ -2113,7 +2252,12 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
   const [reviewFilter, setReviewFilter] = useState<'essay' | 'all' | 'mcq'>('essay');
 
   const hasMixedQuestions = useMemo(() => {
-    return questions.some(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+    return questions.some(q => 
+      (q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ') &&
+      q.qIndex !== -1 &&
+      !q.questionText.includes('الأسئلة الموضوعية') &&
+      !q.questionText.includes('الاختياري والصح/خطأ')
+    );
   }, [questions]);
 
   const essayQuestions = useMemo(() => {
@@ -2136,27 +2280,50 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
     return questions.reduce((sum, q) => sum + (Number(q.maxScore) || 0), 0);
   }, [questions]);
 
+  const hasObjectiveScore = useMemo(() => {
+    return (totalMaxScore - essayMaxScore) > 0;
+  }, [totalMaxScore, essayMaxScore]);
+
   const perc = Math.round((totalEarnedScore / Math.max(1, totalMaxScore)) * 100);
 
   const [mistakesReleaseDialog, setMistakesReleaseDialog] = useState<'publish' | 'next' | null>(null);
 
+  const [rememberMistakesPreference, setRememberMistakesPreference] = useState<boolean>(() => {
+    return sessionStorage.getItem('kanz_remember_mistakes_pref') === 'true';
+  });
+
   const handleApproveAndPublish = () => {
+    const savedPref = sessionStorage.getItem('kanz_auto_mistakes_release');
+    if (savedPref !== null) {
+      executeApprovalWithMistakesOption(savedPref === 'true', 'publish');
+      return;
+    }
     setMistakesReleaseDialog('publish');
   };
 
   const handleApproveAndNext = () => {
+    const savedPref = sessionStorage.getItem('kanz_auto_mistakes_release');
+    if (savedPref !== null) {
+      executeApprovalWithMistakesOption(savedPref === 'true', 'next');
+      return;
+    }
     setMistakesReleaseDialog('next');
   };
 
-  const executeApprovalWithMistakesOption = (releaseMistakes: boolean) => {
+  const executeApprovalWithMistakesOption = (releaseMistakes: boolean, explicitMode?: 'publish' | 'next') => {
+    if (rememberMistakesPreference) {
+      sessionStorage.setItem('kanz_remember_mistakes_pref', 'true');
+      sessionStorage.setItem('kanz_auto_mistakes_release', String(releaseMistakes));
+    }
     const updated: StudentEssaySubmission = {
       ...submission,
       questions: questions.map(q => ({ ...q, isApproved: true })),
       isFullyApproved: true,
+      isTeacherReviewed: true,
       isMistakesBankReleased: releaseMistakes,
       finalScore: totalEarnedScore,
     };
-    const targetMode = mistakesReleaseDialog;
+    const targetMode = explicitMode || mistakesReleaseDialog || 'next';
     setMistakesReleaseDialog(null);
 
     if (targetMode === 'next' && onSaveApprovedAndNext) {
@@ -2264,7 +2431,7 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
               {hasMixedQuestions ? (
                 <>مقالي: <strong>{essayQuestions.length}</strong> • موضوعي: <strong>{questions.length - essayQuestions.length}</strong></>
               ) : (
-                <>أسئلة المقالي: <strong>{questions.length}</strong></>
+                <>عدد الأسئلة المقالية: <strong>{essayQuestions.length}</strong></>
               )}
             </span>
           </div>
@@ -2393,7 +2560,44 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
             </button>
           </div>
 
+          {/* كارت ملخص نتيجة الأسئلة الموضوعية (المصححة آلياً) */}
+          {(() => {
+            const mcqQ = questions.find(q => q.qIndex === -1 || q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ'));
+            if (!mcqQ) return null;
+            const mcqEarnedVal = mcqQ.teacherScore !== undefined ? mcqQ.teacherScore : (mcqQ.aiScore || 0);
+            return (
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/60 dark:from-emerald-950/40 dark:via-gray-900 dark:to-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-700 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-lg shadow-xs shrink-0">
+                    <i className="fas fa-check-double"></i>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-black text-emerald-950 dark:text-emerald-100 text-sm sm:text-base">
+                        نتيجة الأسئلة الموضوعية (اختر من متعدد + صح وخطأ)
+                      </h4>
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-200 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200 border border-emerald-300">
+                        تصحيح آلي فوري ✅
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-800 dark:text-emerald-300 font-bold mt-0.5">
+                      حصل الطالب على {mcqEarnedVal} من أصل {mcqQ.maxScore} درجة
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-auto bg-white dark:bg-gray-800 px-3.5 py-2 rounded-xl border border-emerald-300 dark:border-emerald-700 shadow-2xs">
+                  <span className="text-xs font-bold text-gray-500 dark:text-gray-400">درجة الموضوعي:</span>
+                  <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                    {mcqEarnedVal} / {mcqQ.maxScore}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
           {questions.map((q, idx) => {
+            const isMcqSummary = q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ');
+            if (isMcqSummary) return null;
             const isMcq = q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ';
             if (reviewFilter === 'essay' && isMcq) return null;
             if (reviewFilter === 'mcq' && !isMcq) return null;
@@ -2632,7 +2836,7 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
 
                         {/* خلاصة التحليل */}
                         <p className="text-xs sm:text-sm font-bold text-gray-700 dark:text-gray-300 leading-relaxed pr-9">
-                          💡 <strong className="text-indigo-900 dark:text-indigo-300">خلاصة تقرير المصحح:</strong> {diffComparisons[idx].verdictSummary}
+                          💡 <strong className="text-indigo-900 dark:text-indigo-300">خلاصة تقييم وتوجيه المعلم:</strong> {diffComparisons[idx].verdictSummary}
                         </p>
 
                         {/* تفاصيل الفروق إذا كانت مفتوحة */}
@@ -2642,7 +2846,7 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                               {/* نقاط القوة والتطابق */}
                               <div className="bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
                                 <span className="font-black text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5 mb-2">
-                                  <i className="fas fa-check-circle text-emerald-600 dark:text-emerald-400"></i> ما استوفاه الطالب بنجاح:
+                                  <i className="fas fa-check-circle text-emerald-600 dark:text-emerald-400"></i> ما وُفّق فيه الطالب واستوفاه بنجاح:
                                 </span>
                                 {diffComparisons[idx].matchedPoints.length === 0 ? (
                                   <p className="text-gray-500 font-normal">لم يتم استيفاء عناصر واضحة من النموذج.</p>
@@ -2656,20 +2860,33 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                               </div>
 
                               {/* العناصر الناقصة أو المفقودة */}
-                              <div className="bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-3">
-                                <span className="font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5 mb-2">
-                                  <i className="fas fa-triangle-exclamation text-amber-600 dark:text-amber-400"></i> عناصر ناقصة أو مفقودة:
-                                </span>
-                                {diffComparisons[idx].missingPoints.length === 0 ? (
-                                  <p className="text-gray-500 font-normal">أورد الطالب جميع العناصر المطلوبة دون نقص.</p>
-                                ) : (
-                                  <ul className="space-y-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-300 pr-4 list-disc">
+                              {diffComparisons[idx].suggestedScore >= (q?.maxScore || 2) * 0.85 ? (
+                                <div className="bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
+                                  <span className="font-black text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5 mb-2">
+                                    <i className="fas fa-check-double text-emerald-600 dark:text-emerald-400"></i> اكتمال عناصر نموذج الإجابة:
+                                  </span>
+                                  <ul className="space-y-1.5 text-[11px] font-bold text-emerald-900 dark:text-emerald-300 pr-4 list-disc">
                                     {diffComparisons[idx].missingPoints.map((pt, pIdx) => (
                                       <li key={pIdx} className="leading-relaxed">{pt}</li>
                                     ))}
                                   </ul>
-                                )}
-                              </div>
+                                </div>
+                              ) : (
+                                <div className="bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-3">
+                                  <span className="font-black text-amber-950 dark:text-amber-200 flex items-center gap-1.5 mb-2">
+                                    <i className="fas fa-triangle-exclamation text-amber-600 dark:text-amber-400"></i> عناصر ناقصة وتوجيهات لاستكمال الإجابة:
+                                  </span>
+                                  {diffComparisons[idx].missingPoints.length === 0 ? (
+                                    <p className="text-gray-500 font-normal">أورد الطالب جميع العناصر المطلوبة دون نقص.</p>
+                                  ) : (
+                                    <ul className="space-y-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-300 pr-4 list-disc">
+                                      {diffComparisons[idx].missingPoints.map((pt, pIdx) => (
+                                        <li key={pIdx} className="leading-relaxed">{pt}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             {/* تحليل الصياغة والأسلوب */}
@@ -2881,7 +3098,7 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
           {/* الصف الأول: النتيجة + واتساب + إلغاء */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 bg-primary/10 px-2.5 py-1 rounded-lg text-primary text-xs font-black">
-              <span>المقالي:</span>
+              <span>{hasObjectiveScore ? 'الإجمالي:' : 'المقالي:'}</span>
               <strong className="text-xs font-black">{totalEarnedScore} / {totalMaxScore} ({perc}%)</strong>
             </div>
 
@@ -2897,7 +3114,9 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                       `مرحباً بك يا بطل (${submission.studentName}) 🌟\n` +
                       `معك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
                       `✅ تم مراجعة واعتماد اختبارك: *${submission.quizTitle}*\n` +
-                      `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n` +
+                      (hasObjectiveScore
+                        ? `📊 درجتك النهائية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n(المقالي: ${essayEarnedScore} من ${essayMaxScore} • الموضوعي: ${totalEarnedScore - essayEarnedScore} من ${totalMaxScore - essayMaxScore})\n\n`
+                        : `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n`) +
                       `تمنياتي لك بالتوفيق والنجاح دائماً! ❤️`
                     );
                     window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
@@ -2919,29 +3138,56 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
           </div>
 
           {/* الصف الثاني: الأزرار الأساسية (متجاورة بشكل متناسق ومريح) */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {!submission.isFullyApproved && (
               <>
+                {/* 1. زر الاعتماد المباشر ونشر النتيجة (الأخضر البارز) */}
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndNext}
+                    className="flex-[1.3] py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="اعتماد النتيجة ونشرها للطالب والانتقال للتالي فوراً"
+                  >
+                    <i className="fas fa-check-double text-xs"></i>
+                    <span>اعتماد والتالي 🚀</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndPublish}
+                    className="flex-[1.3] py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="اعتماد النتيجة ونشرها للطالب وإنهاء التصحيح"
+                  >
+                    <i className="fas fa-stamp text-xs"></i>
+                    <span>اعتماد ونشر 🎯</span>
+                  </button>
+                )}
+
+                {/* 2. زر حفظ المسودة والتالي */}
                 {hasNextPending ? (
                   <button
                     type="button"
                     onClick={handleSaveDraftAndNext}
-                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="حفظ الدرجات كمسودة دون إعلانها للطالب ومتابعة التالي"
                   >
-                    <i className="fas fa-arrow-left text-xs"></i>
-                    <span>حفظ والتالي ⬅️</span>
+                    <i className="fas fa-save text-xs"></i>
+                    <span>مسودة والتالي 💾</span>
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={handleSaveAsDraft}
-                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="flex-1 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    title="حفظ الدرجات كمسودة دون إعلانها للطالب"
                   >
-                    <i className="fas fa-check text-xs"></i>
-                    <span>حفظ وإنهاء 💾</span>
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ كمسودة 💾</span>
                   </button>
                 )}
 
+                {/* 3. زر الانتقال للاعتماد */}
                 <button
                   type="button"
                   onClick={() => {
@@ -2950,23 +3196,37 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                       onNavigateToApproval();
                     }
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="px-2.5 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0"
+                  title="الانتقال لشاشة الاعتماد الجماعي"
                 >
                   <i className="fas fa-stamp text-xs"></i>
-                  <span>الانتقال للاعتماد 🎯</span>
+                  <span>الاعتماد</span>
                 </button>
               </>
             )}
 
             {submission.isFullyApproved && (
-              <button
-                type="button"
-                onClick={handleApproveAndPublish}
-                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <i className="fas fa-save text-xs"></i>
-                <span>حفظ التعديل</span>
-              </button>
+              <>
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndNext}
+                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ التعديل والتالي ⬅️</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndPublish}
+                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ التعديل</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -2974,11 +3234,15 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
         {/* تصميم الشاشات الكبيرة (sm فما فوق): شريط أفقي واحد واسع */}
         <div className="hidden sm:flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            {hasMixedQuestions ? (
+            {hasObjectiveScore ? (
               <>
                 <div className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs sm:text-sm font-bold text-indigo-900 dark:text-indigo-300">
                   <span>المقالي:</span>
                   <strong className="text-sm font-black">{essayEarnedScore} من {essayMaxScore}</strong>
+                </div>
+                <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs sm:text-sm font-bold text-emerald-900 dark:text-emerald-300">
+                  <span>الموضوعي:</span>
+                  <strong className="text-sm font-black">{totalEarnedScore - essayEarnedScore} من {totalMaxScore - essayMaxScore}</strong>
                 </div>
                 <div className="flex items-center gap-1.5 bg-primary/10 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold text-primary">
                   <span>إجمالي درجات الاختبار:</span>
@@ -3007,7 +3271,9 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                     `مرحباً بك يا بطل (${submission.studentName}) 🌟\n` +
                     `معك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
                     `✅ تم مراجعة واعتماد اختبارك: *${submission.quizTitle}*\n` +
-                    `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n` +
+                    (hasObjectiveScore
+                      ? `📊 درجتك النهائية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n(المقالي: ${essayEarnedScore} من ${essayMaxScore} • الموضوعي: ${totalEarnedScore - essayEarnedScore} من ${totalMaxScore - essayMaxScore})\n\n`
+                      : `📊 درجتك المقالية المعتمدة: *${totalEarnedScore} من ${totalMaxScore}* (${percVal}%)\n\n`) +
                     `تمنياتي لك بالتوفيق والنجاح دائماً! ❤️`
                   );
                   window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
@@ -3030,26 +3296,53 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
 
             {!submission.isFullyApproved && (
               <>
+                {/* 1. زر الاعتماد المباشر ونشر النتيجة (الأخضر البارز) */}
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndNext}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="اعتماد النتيجة ونشرها للطالب والانتقال فوراً للطالب التالي"
+                  >
+                    <i className="fas fa-check-double text-xs"></i>
+                    <span>اعتماد ونقل للتالي 🚀</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndPublish}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="اعتماد النتيجة ونشرها للطالب وإنهاء التصحيح"
+                  >
+                    <i className="fas fa-stamp text-xs"></i>
+                    <span>اعتماد النتيجة ونشرها 🎯</span>
+                  </button>
+                )}
+
+                {/* 2. زر حفظ المسودة والتالي */}
                 {hasNextPending ? (
                   <button
                     type="button"
                     onClick={handleSaveDraftAndNext}
-                    className="px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="حفظ الدرجات كمسودة دون إعلانها للطالب ومتابعة التالي"
                   >
-                    <i className="fas fa-arrow-left text-xs"></i>
-                    <span>حفظ ومتابعة التالي ⬅️</span>
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ كمسودة والتالي 💾</span>
                   </button>
                 ) : (
                   <button
                     type="button"
                     onClick={handleSaveAsDraft}
-                    className="px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="حفظ الدرجات كمسودة دون إعلانها للطالب"
                   >
-                    <i className="fas fa-check text-xs"></i>
-                    <span>حفظ وإنهاء 💾</span>
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ كمسودة 💾</span>
                   </button>
                 )}
 
+                {/* 3. زر الانتقال لشاشة الاعتماد */}
                 <button
                   type="button"
                   onClick={() => {
@@ -3058,23 +3351,37 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                       onNavigateToApproval();
                     }
                   }}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
+                  title="حفظ المسودة والانتقال لشاشة اعتماد النتائج الجماعية"
                 >
-                  <i className="fas fa-stamp text-xs"></i>
-                  <span>الانتقال للاعتماد 🎯</span>
+                  <i className="fas fa-external-link-alt text-xs"></i>
+                  <span>شاشة الاعتماد 🎯</span>
                 </button>
               </>
             )}
 
             {submission.isFullyApproved && (
-              <button
-                type="button"
-                onClick={handleApproveAndPublish}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <i className="fas fa-save text-xs"></i>
-                <span>حفظ التعديل</span>
-              </button>
+              <>
+                {hasNextPending ? (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndNext}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ التعديل والتالي ⬅️</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleApproveAndPublish}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <i className="fas fa-save text-xs"></i>
+                    <span>حفظ التعديل 💾</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -3104,6 +3411,16 @@ export const StudentEssayReviewModal: React.FC<StudentEssayReviewModalProps> = (
                 أنت الآن بصدد اعتماد نتيجة الامتحان. يرجى تحديد ما إذا كنت ترغب في <strong>إتاحة أسئلة هذا الاختبار في بنك الأخطاء</strong> للطالب للتدرب عليها:
               </span>
             </div>
+
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-700 dark:text-gray-300 py-1.5 bg-gray-50 dark:bg-gray-700/50 px-3 rounded-xl border border-gray-200 dark:border-gray-600 select-none">
+              <input
+                type="checkbox"
+                checked={rememberMistakesPreference}
+                onChange={e => setRememberMistakesPreference(e.target.checked)}
+                className="w-4 h-4 rounded text-primary focus:ring-primary cursor-pointer"
+              />
+              <span>تذكر هذا الاختيار لباقي طلاب الجلسة للانتقال الفوري السريع ⚡</span>
+            </label>
 
             <div className="space-y-3 pt-1">
               <button

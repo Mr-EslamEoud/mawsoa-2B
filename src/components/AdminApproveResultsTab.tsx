@@ -8,9 +8,14 @@ import {
   calculateExamStructure,
   saveRetakeDirective,
   StudentRetakeDirective,
-  ensureCompleteEssayQuestions
+  ensureCompleteEssayQuestions,
+  detectEssayType,
+  findLessonForQuizInUnits,
+  getActiveRetakeDirectiveForLesson,
+  notifyPendingEssaysChanged
 } from '../examConfigUtils';
-import { StudentEssayReviewModal, syncGradeToCloud, syncDraftToCloud, resolveModelAnswer } from './AdminEssayReviewTab';
+import { StudentEssayReviewModal, syncGradeToCloud, syncDraftToCloud, resolveModelAnswer, normalizeTextForMatching } from './AdminEssayReviewTab';
+import { StudentFullExamInspectionModal } from './StudentFullExamInspectionModal';
 
 interface AdminApproveResultsTabProps {
   onSaveResultToDB?: (result: { quizName: string; score: string; studentName?: string; studentPhone?: string }) => void;
@@ -19,6 +24,11 @@ interface AdminApproveResultsTabProps {
   data?: Unit[];
   onNavigateToEssayReview?: (quizTitle?: string) => void;
 }
+
+const normQuizTitle = (t?: string): string => {
+  if (!t) return '';
+  return normalizeTextForMatching(t);
+};
 
 export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   onSaveResultToDB,
@@ -41,9 +51,14 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
 
   // نافذة منح إعادة لطالب
   const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
+  // إظهار خيارات الإعادة مباشرة في نفس سطر الطالب (مكان الضغط دون تمرير)
+  const [retakeInlineSubId, setRetakeInlineSubId] = useState<string | null>(null);
+  const [isReleasingTraining, setIsReleasingTraining] = useState<boolean>(false);
 
   // نافذة تعديل درجات طالب سريعاً قبل الاعتماد
   const [quickEditSub, setQuickEditSub] = useState<StudentEssaySubmission | null>(null);
+  // نافذة فحص ورقة أسئلة الطالب وحله بالكامل تفاعلياً
+  const [inspectingSub, setInspectingSub] = useState<StudentEssaySubmission | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -71,7 +86,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         resData.data.forEach((row: any) => {
           if (!row.studentPhone || !row.quizTitle) return;
           const cleanPhone = formatPhoneStr(row.studentPhone);
-          const key = `${cleanPhone}___${row.quizTitle.trim()}`;
+          const key = `${cleanPhone}___${normQuizTitle(row.quizTitle)}`;
           if (!groupedCloud.has(key)) {
             groupedCloud.set(key, {
               date: row.date || '',
@@ -123,46 +138,81 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
             return;
           }
 
+          const isMcqSummary = cleanQText.includes('الأسئلة الموضوعية') || cleanQText.includes('الاختياري والصح/خطأ');
+          const isTfOrMcq = isMcqSummary || cleanQText.includes('هل العبارة صحيحة') || cleanQText.includes('اختر من متعدد');
+
+          let defaultMax = 2;
+          if (isMcqSummary) {
+            const matchMax = (row.studentAnswerText || '').match(/(?:من أصل|الدرجة العظمى:?)\s*([\d.]+)/);
+            defaultMax = (matchMax && matchMax[1]) ? parseFloat(matchMax[1]) : Math.max(scoreNum || 0, 50);
+          }
+
           grp.questions.push({
             qIndex: grp.questions.length,
             questionText: cleanQText,
+            essayType: isTfOrMcq ? 'اختر من متعدد' : detectEssayType(cleanQText).label,
             studentText: row.studentAnswerText || '',
             teacherScore: isTeacherGradedQuestion ? scoreNum : undefined,
             teacherFeedback: isTeacherGradedQuestion ? rawFb : '',
             aiScore: scoreNum,
             aiFeedback: rawFb,
             isApproved: isAppr,
-            maxScore: 2
+            maxScore: defaultMax
           });
         });
 
         groupedCloud.forEach((grp, key) => {
+          const retakeDirective = getActiveRetakeDirectiveForLesson(grp.studentPhone, grp.quizTitle);
+          if (retakeDirective) {
+            // الطالب ممنوح إذن إعادة بالفعل - لا نظهره في قائمة الاعتماد المعلقة
+            return;
+          }
+
           const isAllApproved = grp.questions.length > 0 && grp.questions.every((q: any) => q.isApproved);
           const hasAllTeacherScores = grp.questions.length > 0 && grp.questions.every((q: any) => q.teacherScore !== undefined && q.teacherScore !== null);
           const isReviewed = Boolean(isAllApproved || (grp as any).hasGradedStatus || hasAllTeacherScores);
           
+          const matchedLesson = findLessonForQuizInUnits(grp.quizTitle, undefined, data);
+          const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+
           // إيجاد الدرجة العظمى الممكنة
-          let totalMaxPossible = 0;
+          let totalMaxPossible = structure ? structure.examTotalScore : 0;
           grp.questions.forEach((q: any, qi: number) => {
-            const found = resolveModelAnswer(q.questionText, grp.quizTitle, undefined, qi, data);
-            if (found.maxScore) q.maxScore = found.maxScore;
-            totalMaxPossible += (q.maxScore || 2);
+            if (q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ')) {
+              q.essayType = 'اختر من متعدد';
+              if (structure) {
+                const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+                if (mcqMax > 0) q.maxScore = mcqMax;
+              }
+            } else {
+              const found = resolveModelAnswer(q.questionText, grp.quizTitle, undefined, qi, data);
+              if (found.maxScore) q.maxScore = found.maxScore;
+            }
+            if (!structure) totalMaxPossible += (q.maxScore || 2);
           });
 
-          // معالجة تصحيح التكرار في حال تم حفظ الدرجة الكلية في كل صف بدلاً من توزيعها
-          const rawEarned = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
-          if (isReviewed && grp.questions.length > 1 && rawEarned > totalMaxPossible) {
-            const firstScore = grp.questions[0].teacherScore;
-            const isAllSameTotal = grp.questions.every((q: any) => q.teacherScore === firstScore && (firstScore || 0) > (q.maxScore || 2));
-            if (isAllSameTotal && firstScore !== undefined) {
-              const distributedScore = Math.min(totalMaxPossible, firstScore) / grp.questions.length;
-              grp.questions.forEach((q: any) => {
-                q.teacherScore = Number(distributedScore.toFixed(2));
-              });
+          // حماية صارمة لكل سؤال مقالي: لا يجوز لأي سؤال أن تتجاوز درجته درجته العظمى (مثلاً: 4 من 2)
+          const essayQs = grp.questions.filter((q: any) => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+          const maxEssayPossible = structure ? structure.essayTotalScore : essayQs.reduce((sum: number, q: any) => sum + (q.maxScore || 2), 0);
+
+          essayQs.forEach((q: any) => {
+            const qMax = q.maxScore || 2;
+            if (q.teacherScore !== undefined && q.teacherScore > qMax) {
+              q.teacherScore = qMax;
             }
+          });
+
+          // معالجة تصحيح التكرار في حال تم حفظ الدرجة الكلية للمقالي في كل صف
+          const currentEssayEarned = essayQs.reduce((sum: number, q: any) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          if (currentEssayEarned > maxEssayPossible && essayQs.length > 0) {
+            const distributedScore = maxEssayPossible / essayQs.length;
+            essayQs.forEach((q: any) => {
+              q.teacherScore = Number(distributedScore.toFixed(2));
+            });
           }
 
-          const finalEarned = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          const rawEarned = grp.questions.reduce((sum: number, q: any) => sum + (q.teacherScore !== undefined ? q.teacherScore : (q.aiScore || 0)), 0);
+          const finalEarned = Math.min(totalMaxPossible > 0 ? totalMaxPossible : rawEarned, rawEarned);
 
           const rawSub: StudentEssaySubmission = {
             id: `cloud_${key}`,
@@ -185,7 +235,9 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
 
       // دمج المحلي
       localList.forEach(ls => {
-        const mKey = `${formatPhoneStr(ls.studentPhone)}___${ls.quizTitle.trim()}`;
+        const retakeDirective = getActiveRetakeDirectiveForLesson(ls.studentPhone, ls.quizTitle);
+        if (retakeDirective) return;
+        const mKey = `${formatPhoneStr(ls.studentPhone)}___${normQuizTitle(ls.quizTitle)}`;
         const completeLs = ensureCompleteEssayQuestions(ls, data);
         if (!mergedMap.has(mKey)) {
           mergedMap.set(mKey, completeLs);
@@ -205,7 +257,9 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       });
 
       const list = Array.from(mergedMap.values());
+      localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(list));
       setSubmissions(list);
+      notifyPendingEssaysChanged();
     } catch (e) {
       // في حال تعذر الاتصال بالسحابة نعتمد على المحلي
       setSubmissions(getPendingEssaySubmissions());
@@ -302,7 +356,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   const filteredSubmissions = useMemo(() => {
     return submissions.filter(sub => {
       // فلتر الوحدة والامتحان
-      if (selectedQuizFilter !== 'all' && sub.quizTitle.trim() !== selectedQuizFilter.trim()) {
+      if (selectedQuizFilter !== 'all' && normQuizTitle(sub.quizTitle) !== normQuizTitle(selectedQuizFilter)) {
         return false;
       }
 
@@ -335,7 +389,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   const stats = useMemo(() => {
     const list = selectedQuizFilter === 'all' 
       ? submissions 
-      : submissions.filter(s => s.quizTitle.trim() === selectedQuizFilter.trim());
+      : submissions.filter(s => normQuizTitle(s.quizTitle) === normQuizTitle(selectedQuizFilter));
 
     let readyFast = 0;
     let readyGraded = 0;
@@ -374,32 +428,71 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         }))
       };
 
-      // حساب المجموع النهائي لكافة الأسئلة
-      const earned = updated.questions.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
-      updated.finalScore = earned;
+      // فحص هل يتوفر تسليم مفصل محلياً للاحتفاظ بكامل الأسئلة بدلاً من تقليصها لملخص
+      try {
+        const localSubs = getPendingEssaySubmissions();
+        const localMatch = localSubs.find(ls => 
+          formatPhoneStr(ls.studentPhone) === formatPhoneStr(sub.studentPhone) &&
+          ls.quizTitle.trim() === sub.quizTitle.trim() &&
+          ls.questions.length > updated.questions.length
+        );
+        if (localMatch && localMatch.questions) {
+          updated.questions = localMatch.questions.map(lq => {
+            const cloudQ = updated.questions.find(cq => cq.questionText.trim() === lq.questionText.trim());
+            return {
+              ...lq,
+              isApproved: true,
+              teacherScore: cloudQ && cloudQ.teacherScore !== undefined ? cloudQ.teacherScore : lq.teacherScore,
+              teacherFeedback: cloudQ && cloudQ.teacherFeedback ? cloudQ.teacherFeedback : lq.teacherFeedback
+            };
+          });
+        }
+      } catch(e) {}
 
       // العثور على الدرس في المنهج إن وجد لحساب الدرجة العظمى بدقة
-      let matchedLesson = null;
-      if (data && data.length > 0) {
-        for (const u of data) {
-          const l = u.lessons.find(ls => ls.id === updated.lessonId || ls.title.trim() === updated.quizTitle.trim());
-          if (l) { matchedLesson = l; break; }
+      const matchedLesson = findLessonForQuizInUnits(updated.quizTitle, updated.lessonId, data);
+      const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+
+      // حماية وضمان عدم تجاوز درجات المقالي لدرجتها العظمى وتحديث الدرجة العظمى للموضوعي
+      updated.questions.forEach(q => {
+        if (q.questionText.includes('الأسئلة الموضوعية') || q.questionText.includes('الاختياري والصح/خطأ')) {
+          q.essayType = 'اختر من متعدد';
+          if (structure) {
+            const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+            if (mcqMax > 0) q.maxScore = mcqMax;
+          }
+        } else if (q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ') {
+          const qMax = q.maxScore || 2;
+          if (q.teacherScore !== undefined && q.teacherScore > qMax) {
+            q.teacherScore = qMax;
+          }
         }
-      }
+      });
+
+      // حساب المجموع النهائي لكافة الأسئلة
+      const earned = updated.questions.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
 
       // فحص هل يحتوي التسليم على درجات الأسئلة الموضوعية أم مقالي فقط
       const hasMcqQuestions = updated.questions.some(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
       
       let maxPossible = updated.maxPossibleScore;
-      if (!maxPossible || maxPossible <= 0) {
-        if (hasMcqQuestions && matchedLesson) {
-          const structure = calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id));
-          maxPossible = structure.examTotalScore;
-        } else {
-          maxPossible = updated.questions.reduce((sum, q) => sum + (Number(q.maxScore) || 2), 0);
+      let effectiveEarned = earned;
+
+      if (matchedLesson) {
+        const structure = calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id));
+        maxPossible = structure.examTotalScore;
+        const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+        if (!hasMcqQuestions && mcqMax > 0 && effectiveEarned < mcqMax) {
+          effectiveEarned += mcqMax;
         }
+      } else if (!maxPossible || maxPossible <= 0) {
+        maxPossible = updated.questions.reduce((sum, q) => sum + (Number(q.maxScore) || 2), 0);
+      }
+      if (maxPossible && maxPossible > 0) {
+        effectiveEarned = Math.min(maxPossible, effectiveEarned);
       }
       updated.maxPossibleScore = maxPossible;
+      updated.finalScore = effectiveEarned;
 
       // حفظ محلياً
       savePendingEssaySubmission(updated);
@@ -422,9 +515,9 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         })
       }).catch(() => {});
 
-      // 2. مزامنة تفاصيل درجات كل سؤال مقالي بدقة عبر saveEssaySubmission
-      const essayOnlyQuestions = updated.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
-      if (essayOnlyQuestions.length > 0) {
+      // 2. مزامنة تفاصيل درجات كل سؤال مقالي وملخص الموضوعي بدقة عبر saveEssaySubmission
+      const questionsToSync = updated.questions.filter(q => q.essayType !== 'صح وخطأ' || q.qIndex === -1);
+      if (questionsToSync.length > 0) {
         fetch(API_URL, {
           method: 'POST',
           keepalive: true,
@@ -435,11 +528,18 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
             studentName: updated.studentName,
             studentPhone: fullPhone,
             quizTitle: updated.quizTitle,
-            questions: essayOnlyQuestions.map(q => ({
-              ...q,
-              isApproved: true,
-              teacherScore: q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0)
-            })),
+            questions: questionsToSync.map(q => {
+              const qMax = q.maxScore || 2;
+              const rawScore = q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : 0);
+              const safeScore = (q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ')
+                ? Math.min(qMax, rawScore)
+                : rawScore;
+              return {
+                ...q,
+                isApproved: true,
+                teacherScore: safeScore
+              };
+            }),
             isApproved: true,
             studentType: updated.studentType || 'سنتر',
             apiKey: SECRET_API_KEY
@@ -449,7 +549,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
 
       // حفظ النتيجة في شيت النتائج
       if (onSaveResultToDB && updated.quizTitle) {
-        const perc = Math.min(100, Math.round((earned / Math.max(1, maxPossible)) * 100));
+        const perc = Math.min(100, Math.round((effectiveEarned / Math.max(1, maxPossible)) * 100));
         onSaveResultToDB({
           quizName: updated.quizTitle,
           score: `${perc}%`,
@@ -489,7 +589,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
     showToast(`🎉 تم اعتماد وإعلان نتائج (${toApprove.length}) طالب بنجاح!`);
   };
 
-  // إعطاء إذن إعادة للطالب
+  // إعطاء إذن إعادة للطالب وإخلاء قائمته من التصحيح
   const handleGrantRetake = (sub: StudentEssaySubmission, retakeType: 'full' | 'essay_only') => {
     const cleanPhone = formatPhoneStr(sub.studentPhone);
     const mcqQuestions = sub.questions.filter(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
@@ -514,15 +614,137 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
     // تسجيل الإعادة في شيت السحابة
     if (onSaveResultToDB) {
       onSaveResultToDB({
-        quizName: `إعادة ${retakeType === 'full' ? 'شاملة' : 'مقالي'} 🔄: ${sub.quizTitle}`,
+        quizName: `فرصة جديدة (${retakeType === 'full' ? 'كامل' : 'مقالي'}) 🔄: ${sub.quizTitle}`,
         score: `إذن إعادة 🔄`,
         studentName: sub.studentName,
         studentPhone: sub.studentPhone,
       });
     }
 
+    // تحديث الحالة في السحابة إلى "ممنوح إعادة" حتى لا يتم سحبها كمعلقة في التصحيح
+    const fullPhone = cleanPhone.startsWith('0') ? '+20' + cleanPhone.substring(1) : cleanPhone;
+    fetch(API_URL, {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'updateEssayGrade',
+        studentPhone: fullPhone,
+        quizTitle: sub.quizTitle,
+        status: 'ممنوح إعادة 🔄',
+        apiKey: SECRET_API_KEY
+      })
+    }).catch(() => {});
+
+    // إزالة التسليم القديم محلياً لإفساح المجال للتسليم الجديد بعد الإعادة
+    try {
+      const localSubs = getPendingEssaySubmissions().filter(s => s.id !== sub.id);
+      localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(localSubs));
+      notifyPendingEssaysChanged();
+    } catch(e) {}
+
+    // إزالة التسليم فوراً من قائمة الواجهة حتى لا يظل في التصحيح أو الاعتماد
+    setSubmissions(prev => prev.filter(s => s.id !== sub.id));
     setRetakeModalSub(null);
-    showToast(`🔄 تم منح إذن الإعادة لـ: ${sub.studentName}`);
+    setRetakeInlineSubId(null);
+    showToast(`🔄 تم منح إذن الإعادة لـ: ${sub.studentName} ونقله من قائمة الاعتماد لانتظار حله الجديد.`);
+  };
+
+  // إتاحة الامتحان وتدريب الطلاب واعتماد جميع تسليماته
+  const handleReleaseExamForTraining = async () => {
+    const targetQuiz = selectedQuizFilter !== 'all' ? selectedQuizFilter : null;
+    const matchingSubs = submissions.filter(s => 
+      !targetQuiz || normQuizTitle(s.quizTitle) === normQuizTitle(targetQuiz)
+    );
+
+    if (matchingSubs.length === 0) {
+      showToast('⚠️ لا توجد تسليمات مسجلة لهذا الاختبار حالياً.');
+      return;
+    }
+
+    setIsReleasingTraining(true);
+    try {
+      for (const sub of matchingSubs) {
+        await handleApproveSingle(sub, true);
+      }
+
+      // توثيق إتاحة الامتحان للتدريب في التخزين المشترك
+      try {
+        const approvedQuizzes = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+        const toAdd = targetQuiz || 'all';
+        if (!approvedQuizzes.includes(toAdd)) {
+          approvedQuizzes.push(toAdd);
+          localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(approvedQuizzes));
+        }
+      } catch(e) {}
+
+      showToast(`🎉 تم اعتماد (${matchingSubs.length}) تسليماً وإتاحة الامتحان رسمياً لتدريب ومراجعة الطلاب!`);
+      await refreshData();
+    } catch (e) {
+      showToast('❌ حدث خطأ أثناء إتاحة الامتحان.');
+    } finally {
+      setIsReleasingTraining(false);
+    }
+  };
+
+  const [isRepairingPast, setIsRepairingPast] = useState<boolean>(false);
+
+  // زر تصحيح النتائج السابقة المتأثرة بخلل الحساب في شيت النتائج
+  const handleRepairPastResults = async () => {
+    setIsRepairingPast(true);
+    let repairedCount = 0;
+    try {
+      for (const sub of submissions) {
+        let matchedLesson = null;
+        if (data && data.length > 0) {
+          for (const u of data) {
+            const l = u.lessons.find(ls => ls.id === sub.lessonId || ls.title.trim() === sub.quizTitle.trim());
+            if (l) { matchedLesson = l; break; }
+          }
+        }
+        if (!matchedLesson) continue;
+
+        const structure = calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id));
+        const totalExamMax = structure.examTotalScore;
+        const mcqMax = structure.mcqTotalScore + structure.tfTotalScore;
+
+        const essayQs = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+        const essayEarned = essayQs.reduce((sum, q) => sum + (Number(q.teacherScore) || 0), 0);
+        
+        const mcqQ = sub.questions.find(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
+        let mcqEarned = mcqMax;
+        if (mcqQ) {
+          const scoreVal = Number(mcqQ.teacherScore);
+          if (!isNaN(scoreVal) && scoreVal > 0) {
+            mcqEarned = Math.min(mcqMax, scoreVal);
+          } else {
+            const match = (mcqQ.studentText || '').match(/حصل الطالب على\s*([\d.]+)/);
+            if (match && match[1]) {
+              mcqEarned = Math.min(mcqMax, parseFloat(match[1]));
+            }
+          }
+        }
+
+        const realTotalEarned = Math.min(totalExamMax, mcqEarned + essayEarned);
+        const correctPerc = Math.min(100, Math.round((realTotalEarned / Math.max(1, totalExamMax)) * 100));
+
+        if (onSaveResultToDB && sub.quizTitle) {
+          onSaveResultToDB({
+            quizName: sub.quizTitle,
+            score: `${correctPerc}%`,
+            studentName: sub.studentName,
+            studentPhone: sub.studentPhone,
+          });
+          repairedCount++;
+        }
+      }
+      showToast(`🎉 تم تصحيح وإعادة احتساب درجات (${repairedCount}) طالب بنجاح ونشرها في شيت النتائج!`);
+      await refreshData();
+    } catch(e) {
+      showToast('❌ حدث خطأ أثناء التصحيح');
+    } finally {
+      setIsRepairingPast(false);
+    }
   };
 
   return (
@@ -550,7 +772,18 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+          <button
+            type="button"
+            onClick={handleRepairPastResults}
+            disabled={isRepairingPast || isLoadingCloud}
+            className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            title="إعادة احتساب وتصحيح نسب الطلاب التي سُجلت سابقاً بنسب متدنية بسبب خلل القسمة"
+          >
+            <i className={`fas fa-wand-magic-sparkles ${isRepairingPast ? 'animate-spin' : 'text-amber-600'}`}></i>
+            <span>تصحيح النتائج السابقة 🛠️</span>
+          </button>
+
           <button
             type="button"
             onClick={refreshData}
@@ -559,6 +792,17 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           >
             <i className={`fas fa-rotate ${isLoadingCloud ? 'animate-spin' : ''}`}></i>
             <span>تحديث</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleReleaseExamForTraining}
+            disabled={isReleasingTraining || isLoadingCloud}
+            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
+            title="اعتماد كافة تسليمات هذا الامتحان ونشر النتيجة وإتاحة الامتحان فوراً لتدريب ومراجعة الطلاب"
+          >
+            <i className={`fas fa-paper-plane ${isReleasingTraining ? 'animate-bounce' : ''}`}></i>
+            <span>{isReleasingTraining ? 'جاري الإتاحة...' : (selectedQuizFilter !== 'all' ? `إظهار الامتحان وتدريب الطلاب (${toEasternArabic(filteredSubmissions.length)}) 📢` : 'إظهار الامتحان وتدريب الطلاب 📢')}</span>
           </button>
 
           {stats.totalReady > 0 && (
@@ -747,29 +991,50 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       {/* 5. قائمة كروت الطلاب المخصصة للموبايل والكمبيوتر */}
       <div className="space-y-2.5">
         {filteredSubmissions.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 text-center border border-dashed border-gray-300 dark:border-gray-700 space-y-2">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 text-center border border-dashed border-gray-300 dark:border-gray-700 space-y-3">
             <div className="text-3xl">🎯</div>
             <h3 className="text-sm sm:text-base font-black text-gray-700 dark:text-gray-300">
               لا توجد أوراق في هذا القسم حالياً
             </h3>
-            <p className="text-xs text-gray-400">
-              اختر قسماً آخر أو حدد امتحاناً مختلفاً من القائمة العلوية
-            </p>
+            {stats.needsGrading > 0 && statusTab === 'ready' ? (
+              <div className="space-y-2 pt-1">
+                <p className="text-xs text-amber-700 dark:text-amber-300 font-bold">
+                  يوجد {toEasternArabic(stats.needsGrading)} طالب بانتظار تصحيح المقالي أولاً
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setStatusTab('needs_grading')}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <i className="fas fa-edit"></i> الانتقال إلى الطلاب بانتظار التصحيح ({toEasternArabic(stats.needsGrading)}) ✍️
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">
+                اختر قسماً آخر أو حدد امتحاناً مختلفاً من القائمة العلوية
+              </p>
+            )}
           </div>
         ) : (
           filteredSubmissions.map(sub => {
             const cat = getSubmissionCategory(sub);
             const isOnline = isSubOnline(sub);
 
-            // حساب درجات الموضوعي والمقالي
+            // حساب درجات الموضوعي والمقالي بحماية دقيقة تمنع تضخم الدرجة أو تجاوز 100%
             const mcqQs = sub.questions.filter(q => q.essayType === 'اختر من متعدد' || q.essayType === 'صح وخطأ');
             const essayQs = sub.questions.filter(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
             
+            const matchedLesson = findLessonForQuizInUnits(sub.quizTitle, sub.lessonId, data);
+            const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
+            const maxEssayPossible = structure ? structure.essayTotalScore : essayQs.reduce((sum, q) => sum + (q.maxScore || 2), 0);
+
             const mcqEarned = mcqQs.reduce((sum, q) => sum + (q.teacherScore || 0), 0);
-            const essayEarned = essayQs.reduce((sum, q) => sum + (q.teacherScore || 0), 0);
-            const totalEarned = sub.finalScore !== undefined ? sub.finalScore : (mcqEarned + essayEarned);
-            const maxScore = sub.maxPossibleScore || 50;
-            const perc = Math.round((totalEarned / Math.max(1, maxScore)) * 100);
+            const rawEssayEarned = essayQs.reduce((sum, q) => sum + Math.min(q.maxScore || 2, q.teacherScore || 0), 0);
+            const essayEarned = Math.min(maxEssayPossible, rawEssayEarned);
+
+            const maxScore = structure ? structure.examTotalScore : (sub.maxPossibleScore || 50);
+            const totalEarned = Math.min(maxScore, mcqEarned + essayEarned);
+            const perc = Math.min(100, Math.round((totalEarned / Math.max(1, maxScore)) * 100));
 
             return (
               <div
@@ -779,9 +1044,15 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 {/* بيانات الطالب الأساسية */}
                 <div className="flex-1 min-w-0 w-full sm:w-auto">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="font-black text-sm sm:text-base text-gray-900 dark:text-white truncate">
-                      {sub.studentName}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setInspectingSub(sub)}
+                      className="font-black text-sm sm:text-base text-gray-900 hover:text-primary dark:text-white dark:hover:text-blue-400 flex items-center gap-1.5 group cursor-pointer text-right transition-colors"
+                      title="انقر لعرض ورقة أسئلة الطالب وإجاباته كاملة (موضوعي ومقالي)"
+                    >
+                      <span className="underline decoration-dotted decoration-primary/40 group-hover:decoration-primary group-hover:underline-offset-2">{sub.studentName}</span>
+                      <i className="fas fa-file-lines text-xs text-primary/70 group-hover:text-primary transition-transform group-hover:scale-110"></i>
+                    </button>
                     
                     <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-md" dir="ltr">
                       {sub.studentPhone}
@@ -884,13 +1155,63 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => setRetakeModalSub(sub)}
-                    className="p-2.5 rounded-xl bg-gray-100 hover:bg-amber-100 dark:bg-gray-700 text-gray-600 hover:text-amber-700 font-black text-xs transition-colors cursor-pointer"
+                    onClick={() => setRetakeInlineSubId(prev => prev === sub.id ? null : sub.id)}
+                    className={`p-2.5 rounded-xl font-black text-xs transition-colors cursor-pointer ${
+                      retakeInlineSubId === sub.id
+                        ? 'bg-amber-500 text-white shadow-sm'
+                        : 'bg-gray-100 hover:bg-amber-100 dark:bg-gray-700 text-gray-600 hover:text-amber-700'
+                    }`}
                     title="منح إعادة المحاولة للطالب"
                   >
                     <i className="fas fa-redo-alt"></i>
                   </button>
                 </div>
+
+                {/* خيارات الإعادة المباشرة في نفس مكان الضغط دون الحاجة للتمرير بالماوس */}
+                {retakeInlineSubId === sub.id && (
+                  <div className="w-full mt-3.5 p-3.5 bg-gradient-to-r from-indigo-50/95 via-purple-50/90 to-indigo-50/95 dark:from-gray-800 dark:to-gray-850 border-2 border-indigo-400 dark:border-indigo-600 rounded-2xl shadow-md animate-fade-in text-right space-y-2.5">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-indigo-200 dark:border-gray-700">
+                      <div className="flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs">
+                          🔄
+                        </span>
+                        <span className="text-xs font-black text-indigo-950 dark:text-indigo-200">
+                          منح فرصة جديدة لـ: <strong className="text-primary dark:text-indigo-300">{sub.studentName}</strong>
+                        </span>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setRetakeInlineSubId(null)}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs font-bold px-2 py-0.5 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer"
+                      >
+                        ✕ إغلاق
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] font-bold text-gray-600 dark:text-gray-300">
+                      اختر نوع الإعادة للامتحان (تظهر للطالب فور فتح التطبيق، وتُزال ورقة إجابته الحالية من التصحيح):
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleGrantRetake(sub, 'full')}
+                        className="flex-1 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition-all"
+                      >
+                        <i className="fas fa-sync-alt"></i>
+                        <span>إعادة الامتحان بالكامل 🔄</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleGrantRetake(sub, 'essay_only')}
+                        className="flex-1 py-2.5 px-3 rounded-xl bg-white hover:bg-amber-50 dark:bg-gray-700 hover:dark:bg-gray-650 text-indigo-950 dark:text-indigo-200 font-black text-xs flex items-center justify-center gap-2 border-2 border-indigo-300 dark:border-indigo-500 shadow-xs cursor-pointer active:scale-95 transition-all"
+                      >
+                        <i className="fas fa-pen-fancy text-amber-500"></i>
+                        <span>إعادة المقالي فقط مع حفظ الاختياري ✍️</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })
@@ -952,58 +1273,6 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         </div>
       )}
 
-      {/* 7. نافذة منح إعادة لطالب */}
-      {retakeModalSub && (
-        <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl border-t-8 border-indigo-600 text-right space-y-4 animate-scale-up">
-            <div className="flex items-center gap-3 border-b pb-3 dark:border-gray-700">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center text-xl shrink-0">
-                🔄
-              </div>
-              <div>
-                <h3 className="text-base font-black text-gray-900 dark:text-gray-100">
-                  منح إذن إعادة للطالب
-                </h3>
-                <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
-                  {retakeModalSub.studentName}
-                </p>
-              </div>
-            </div>
-
-            <p className="text-xs font-bold text-gray-600 dark:text-gray-300">
-              اختر نوع الإعادة للامتحان:
-            </p>
-
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={() => handleGrantRetake(retakeModalSub, 'full')}
-                className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-between shadow-sm cursor-pointer"
-              >
-                <span>إعادة الامتحان بالكامل 🔄</span>
-                <i className="fas fa-arrow-left text-xs opacity-70"></i>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleGrantRetake(retakeModalSub, 'essay_only')}
-                className="w-full py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-black text-xs flex items-center justify-between border border-indigo-200 cursor-pointer"
-              >
-                <span>إعادة المقالي فقط مع حفظ الاختياري ✍️</span>
-                <i className="fas fa-arrow-left text-xs opacity-70"></i>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRetakeModalSub(null)}
-                className="w-full py-2 rounded-xl text-gray-500 font-bold text-xs"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* 8. نافذة فحص وإعادة تصحيح إجابات الطالب المقالية مباشرة */}
       {quickEditSub && (
         <StudentEssayReviewModal
@@ -1037,8 +1306,18 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           }}
           onRequestRetake={(sub) => {
             setQuickEditSub(null);
-            setRetakeModalSub(sub);
+            setRetakeInlineSubId(sub.id);
           }}
+        />
+      )}
+
+      {/* نافذة تفصيل ورقة أسئلة الطالب وحله بالكامل تفاعلياً */}
+      {inspectingSub && (
+        <StudentFullExamInspectionModal
+          submission={inspectingSub}
+          data={data}
+          onClose={() => setInspectingSub(null)}
+          isDarkMode={isDarkMode}
         />
       )}
     </div>
