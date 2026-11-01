@@ -15,13 +15,132 @@ export interface EvaluationResult {
  * جلب مفتاح Gemini API المخزن
  */
 export const getGeminiApiKey = (): string => {
+  return getActiveGeminiApiKey();
+};
+
+/**
+ * جلب قائمة مفاتيح Gemini API المخزنة للتدوير التلقائي
+ */
+export const getGeminiApiKeys = (): string[] => {
   try {
-    const fromStorage = localStorage.getItem('gemini_api_key');
-    if (fromStorage && fromStorage.trim()) return fromStorage.trim();
+    const raw = localStorage.getItem('gemini_api_keys');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed.map(k => String(k).trim()).filter(Boolean);
+        if (cleaned.length > 0) return cleaned;
+      }
+    }
+    const legacy = localStorage.getItem('gemini_api_key');
+    if (legacy && legacy.trim()) return [legacy.trim()];
     const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
-    if (envKey && envKey.trim()) return envKey.trim();
+    if (envKey && envKey.trim()) return [envKey.trim()];
+  } catch (e) {}
+  return [];
+};
+
+/**
+ * حفظ قائمة مفاتيح Gemini API في لوحة الإدارة
+ */
+export const setGeminiApiKeys = (keys: string[]): void => {
+  try {
+    const cleaned = Array.from(new Set(keys.map(k => k.trim()).filter(Boolean)));
+    localStorage.setItem('gemini_api_keys', JSON.stringify(cleaned));
+    if (cleaned.length > 0) {
+      localStorage.setItem('gemini_api_key', cleaned[0]);
+    } else {
+      localStorage.removeItem('gemini_api_key');
+    }
+    localStorage.setItem('gemini_active_key_index', '0');
+    if (cleaned.length > 0) {
+      checkGeminiKeyHealth(cleaned[0]);
+    } else {
+      setGeminiKeyHealth('missing');
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gemini_keys_updated', { detail: cleaned }));
+    }
+  } catch (e) {}
+};
+
+/**
+ * جلب المفتاح النشط حالياً من مصفوفة المفاتيح
+ */
+export const getActiveGeminiApiKey = (): string => {
+  const keys = getGeminiApiKeys();
+  if (keys.length === 0) return '';
+  let idx = 0;
+  try {
+    idx = parseInt(localStorage.getItem('gemini_active_key_index') || '0', 10);
+    if (isNaN(idx) || idx < 0 || idx >= keys.length) idx = 0;
+  } catch (e) {}
+  return keys[idx] || keys[0];
+};
+
+/**
+ * التدوير التلقائي للمفتاح التالي عند نفاذ الكوتا أو حدوث أخطاء
+ */
+export const rotateToNextGeminiKey = (): string | null => {
+  const keys = getGeminiApiKeys();
+  if (keys.length <= 1) return null;
+  let currentIdx = 0;
+  try {
+    currentIdx = parseInt(localStorage.getItem('gemini_active_key_index') || '0', 10);
+  } catch (e) {}
+  const nextIdx = (currentIdx + 1) % keys.length;
+  try {
+    localStorage.setItem('gemini_active_key_index', String(nextIdx));
+    localStorage.setItem('gemini_api_key', keys[nextIdx]);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('gemini_key_rotated', { detail: { index: nextIdx, key: keys[nextIdx] } }));
+    }
+  } catch (e) {}
+  return keys[nextIdx];
+};
+
+/**
+ * التحقق من حالة تفعيل التصحيح الآلي بالذكاء الاصطناعي
+ */
+export const isAiGradingEnabled = (): boolean => {
+  try {
+    const val = localStorage.getItem('kanz_ai_grading_enabled');
+    if (val !== null) return val === 'true';
+  } catch (e) {}
+  return true; // مفعل افتراضياً
+};
+
+/**
+ * تفعيل أو إيقاف مؤقت للتصحيح الآلي بالذكاء الاصطناعي
+ */
+export const setAiGradingEnabled = (enabled: boolean): void => {
+  try {
+    localStorage.setItem('kanz_ai_grading_enabled', String(enabled));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('kanz_ai_grading_changed', { detail: enabled }));
+    }
+  } catch (e) {}
+};
+
+/**
+ * جلب برومبت وتوجيهات المعلم الإضافية المخصصة للذكاء الاصطناعي
+ */
+export const getCustomAiPrompt = (): string => {
+  try {
+    return localStorage.getItem('kanz_custom_ai_prompt') || '';
   } catch (e) {}
   return '';
+};
+
+/**
+ * حفظ برومبت وتوجيهات المعلم الإضافية المخصصة للذكاء الاصطناعي
+ */
+export const setCustomAiPrompt = (prompt: string): void => {
+  try {
+    localStorage.setItem('kanz_custom_ai_prompt', prompt.trim());
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('kanz_custom_prompt_changed', { detail: prompt.trim() }));
+    }
+  } catch (e) {}
 };
 
 /**
@@ -29,9 +148,13 @@ export const getGeminiApiKey = (): string => {
  */
 export const setGeminiApiKey = (key: string): void => {
   try {
-    localStorage.setItem('gemini_api_key', key.trim());
-    if (key.trim()) {
-      checkGeminiKeyHealth(key.trim());
+    const trimmed = key.trim();
+    localStorage.setItem('gemini_api_key', trimmed);
+    const existing = getGeminiApiKeys();
+    if (trimmed && !existing.includes(trimmed)) {
+      setGeminiApiKeys([trimmed, ...existing]);
+    } else if (trimmed) {
+      checkGeminiKeyHealth(trimmed);
     } else {
       setGeminiKeyHealth('missing');
     }
@@ -254,6 +377,80 @@ export const checkGroqKeyHealth = async (key?: string): Promise<GroqKeyHealth> =
   } catch (e) {
     return getGroqKeyHealth();
   }
+};
+
+/**
+ * استدعاء نماذج Gemini مع التدوير التلقائي الفوري بين المفاتيح في حال نفاذ الحصة 429
+ */
+export const callGeminiWithRotation = async (
+  prompt: string,
+  candidateModels = [
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro',
+    'gemini-1.5-pro-latest'
+  ]
+): Promise<string> => {
+  const keys = getGeminiApiKeys();
+  if (keys.length === 0) return '';
+
+  let currentIdx = 0;
+  try {
+    currentIdx = parseInt(localStorage.getItem('gemini_active_key_index') || '0', 10);
+    if (isNaN(currentIdx) || currentIdx < 0 || currentIdx >= keys.length) currentIdx = 0;
+  } catch (e) {}
+
+  const orderedIndices = [
+    ...Array.from({ length: keys.length - currentIdx }, (_, i) => currentIdx + i),
+    ...Array.from({ length: currentIdx }, (_, i) => i)
+  ];
+
+  for (const kIdx of orderedIndices) {
+    const key = keys[kIdx];
+    if (!key) continue;
+
+    for (const model of candidateModels) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.2,
+                responseMimeType: "application/json"
+              }
+            }),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            try {
+              localStorage.setItem('gemini_active_key_index', String(kIdx));
+              localStorage.setItem('gemini_api_key', key);
+            } catch (e) {}
+            setGeminiKeyHealth('active');
+            return rawText;
+          }
+        } else {
+          if (response.status === 429 || response.status === 400 || response.status === 403) {
+            // هذا المفتاح استنفذ الحصة أو غير صالح، التدوير للمفتاح التالي فوراً
+            break;
+          }
+        }
+      } catch (err) {}
+    }
+  }
+
+  setGeminiKeyHealth('quota_exhausted');
+  return '';
 };
 
 /**
@@ -1074,7 +1271,7 @@ export const evaluateEssayAnswer = async (
 إذا عبر الطالب بالعامية المصرية ولكن المضمون والمفاهيم التاريخية صحيحة، قيّم فهمه وامنحه الدرجة المستحقة كاملة دون خصم، واكتب له في التوجيه نصيحة تشجيعية بالتحول للصياغة بالفصحى لضمان الدرجة النهائية في الثانوية العامة.`;
   }
 
-  const prompt = `
+  let prompt = `
 أنت كبير مصححي ومراجعي مادة التاريخ للثانوية العامة المصرية بوزارة التربية والتعليم. مهمتك تقييم إجابة الطالب على السؤال المقالي التالي بموضوعية وعدالة تامة:
 
 [نوع السؤال]: ${detectedType}
@@ -1093,7 +1290,14 @@ export const evaluateEssayAnswer = async (
 4. ${dialectInstruction}
 5. احتساب الدرجة بالنسبة والتناسب: حدد درجة عادلة ومستحقة بين 0 و ${maxScore} بنظام النسبة والتناسب الدقيقة لما كتبه الطالب (يُسمح بأرباع وأنصاف الدرجات بدقة مثل: 0.25، 0.5، 0.75، 1، 1.25، 1.5، 1.75، 2).
 6. اكتب ملاحظة تربوية مشجعة للطالب توضح ما أصاب فيه ونقاط التحسين المحددة.
+`;
 
+  const customGuidelines = getCustomAiPrompt();
+  if (customGuidelines && customGuidelines.trim()) {
+    prompt += `\n📌 تعليمات وتوجيهات المعلم الإضافية للتقييم:\n${customGuidelines.trim()}\n`;
+  }
+
+  prompt += `
 أجب بصيغة JSON حصراً بهذا الشكل ودون أي نصوص إضافية:
 {
   "score": 0,
@@ -1103,55 +1307,11 @@ export const evaluateEssayAnswer = async (
 }
 `;
 
-  // 1. المحاولة الأولى: Google Gemini AI
-  if (apiKey && getGeminiKeyHealth() !== 'quota_exhausted' && getGeminiKeyHealth() !== 'invalid') {
+  // 1. المحاولة الأولى: Google Gemini AI مع التدوير التلقائي الفوري بين المفاتيح
+  const keys = getGeminiApiKeys();
+  if (keys.length > 0 && getGeminiKeyHealth() !== 'quota_exhausted' && getGeminiKeyHealth() !== 'invalid') {
     try {
-      const candidateModels = [
-        'gemini-1.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash-8b',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro',
-        'gemini-1.5-pro-latest'
-      ];
-      let rawText = '';
-
-      for (const model of candidateModels) {
-        try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                  temperature: 0.2,
-                  responseMimeType: "application/json"
-                }
-              }),
-            }
-          );
-
-          if (response.ok) {
-            const data = await response.json();
-            rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (rawText) {
-              setGeminiKeyHealth('active');
-              break;
-            }
-          } else {
-            if (response.status === 429) {
-              setGeminiKeyHealth('quota_exhausted');
-              break;
-            } else if (response.status === 400 || response.status === 403) {
-              setGeminiKeyHealth('invalid');
-              break;
-            }
-          }
-        } catch (err) {}
-      }
-
+      const rawText = await callGeminiWithRotation(prompt);
       if (rawText) {
         const parsed = parseAiJsonResponse(rawText);
         const score = Math.max(0, Math.min(maxScore, Number(parsed.score) || 0));
@@ -1165,8 +1325,8 @@ export const evaluateEssayAnswer = async (
           provider: 'gemini',
         };
       }
-    } catch (error) {
-      console.warn("Gemini evaluation failed, falling back to alternative:", error);
+    } catch (err) {
+      console.warn("Gemini evaluation failed, falling back to alternative:", err);
     }
   }
 
@@ -1240,7 +1400,7 @@ export const compareStudentWithModelAnswer = async (
 
   const apiKey = getGeminiApiKey();
 
-  const prompt = `
+  let prompt = `
 أنت كبير مصححي ومراجعي مادة التاريخ للثانوية العامة المصرية بوزارة التربية والتعليم. 
 مهمتك إجراء تقييم تاريخي صارم ودقيق (Strict Evaluation & Diff Analysis) بين "إجابة الطالب" و"نموذج الإجابة المعتمد"، لمساعدة المعلم في رصد الدرجة العادلة بدقة متناهية:
 
@@ -1289,58 +1449,18 @@ ${modelAnswer}
   "verdictSummary": "خلاصة المراجعة السريعة للمعلم",
   "studentFeedback": "توجيه المعلم المباشر والمخصص للطالب موضحاً التقييم والنواقص بدقة"
 }
-  "verdictSummary": "خلاصة المراجعة السريعة للمعلم",
-  "studentFeedback": "توجيه المعلم المباشر والمخصص للطالب موضحاً التقييم والنواقص بدقة"
-}
 `;
 
-  // 1. المحاولة الأولى: Google Gemini AI
-  if (apiKey && getGeminiKeyHealth() !== 'quota_exhausted' && getGeminiKeyHealth() !== 'invalid') {
-    try {
-      const candidateModels = [
-        'gemini-1.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash-8b',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro',
-        'gemini-1.5-pro-latest'
-      ];
-      let rawText = '';
-      for (const model of candidateModels) {
-        try {
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                  temperature: 0.2,
-                  responseMimeType: "application/json"
-                }
-              }),
-            }
-          );
-          if (response.ok) {
-            const data = await response.json();
-            rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (rawText) {
-              setGeminiKeyHealth('active');
-              break;
-            }
-          } else {
-            if (response.status === 429) {
-              setGeminiKeyHealth('quota_exhausted');
-              break;
-            } else if (response.status === 400 || response.status === 403) {
-              setGeminiKeyHealth('invalid');
-              break;
-            }
-          }
-        } catch (e) {}
-      }
+  const customGuidelines = getCustomAiPrompt();
+  if (customGuidelines && customGuidelines.trim()) {
+    prompt += `\n📌 تعليمات وتوجيهات المعلم الإضافية الواجب مراعاتها بدقة:\n${customGuidelines.trim()}\n`;
+  }
 
+  // 1. المحاولة الأولى: Google Gemini AI مع التدوير التلقائي الفوري بين المفاتيح
+  const keys = getGeminiApiKeys();
+  if (keys.length > 0 && getGeminiKeyHealth() !== 'quota_exhausted' && getGeminiKeyHealth() !== 'invalid') {
+    try {
+      const rawText = await callGeminiWithRotation(prompt);
       if (rawText) {
         const parsed = parseAiJsonResponse(rawText);
         const suggested = Math.max(0, Math.min(maxScore, Number(parsed.suggestedScore) || 0));

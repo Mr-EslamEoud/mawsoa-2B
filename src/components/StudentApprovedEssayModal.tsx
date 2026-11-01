@@ -486,42 +486,37 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
               </span>
             </p>
 
-            {/* بطاقة النتيجة والإحصائيات والأخطاء */}
+            {/* بطاقة النتيجة والتقدير العام */}
             <div className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 sm:p-5 mb-4 shadow-xs text-right">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 text-center">
-                <div className="bg-white dark:bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
-                  <span className="block text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">الدرجة المستحقة</span>
-                  <span className="text-lg sm:text-2xl font-black text-indigo-700 dark:text-indigo-300" dir="rtl">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 text-center">
+                <div className="bg-white dark:bg-slate-900/80 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
+                  <span className="block text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">الدرجة المحققة</span>
+                  <span className="text-xl sm:text-2xl font-black text-indigo-700 dark:text-indigo-300" dir="rtl">
                     {toEasternArabic(earnedScore)} من {toEasternArabic(maxScore)}
                   </span>
                 </div>
 
-                <div className="bg-white dark:bg-slate-900/80 p-2.5 sm:p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
-                  <span className="block text-[10px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">النسبة المئوية</span>
-                  <span className={`text-lg sm:text-2xl font-black ${tier.gradeColor}`} dir="ltr">
+                <div className="bg-white dark:bg-slate-900/80 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
+                  <span className="block text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">النسبة المئوية</span>
+                  <span className={`text-xl sm:text-2xl font-black ${tier.gradeColor}`} dir="ltr">
                     {toEasternArabic(perc)}%
                   </span>
                 </div>
 
-                <div className="bg-emerald-50/80 dark:bg-emerald-950/40 p-2.5 sm:p-3 rounded-xl border border-emerald-200 dark:border-emerald-800/60 shadow-2xs">
-                  <span className="block text-[10px] sm:text-xs font-bold text-emerald-800 dark:text-emerald-300 mb-0.5">إجابات صحيحة ✅</span>
-                  <span className="text-lg sm:text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                    {toEasternArabic(examStats.correct)}
-                  </span>
-                </div>
-
-                <div className="bg-rose-50/80 dark:bg-rose-950/40 p-2.5 sm:p-3 rounded-xl border border-rose-200 dark:border-rose-800/60 shadow-2xs">
-                  <span className="block text-[10px] sm:text-xs font-bold text-rose-800 dark:text-rose-300 mb-0.5">عدد الأخطاء ❌</span>
-                  <span className="text-lg sm:text-2xl font-black text-rose-600 dark:text-rose-400">
-                    {toEasternArabic(examStats.wrong)}
+                <div className="bg-white dark:bg-slate-900/80 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-2xs">
+                  <span className="block text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 mb-0.5">التقدير الأكاديمي</span>
+                  <span className={`text-lg sm:text-xl font-black ${tier.gradeColor}`}>
+                    {tier.gradeLabel}
                   </span>
                 </div>
               </div>
 
-              {/* شريط الإجمالي والتقدير العام */}
+              {/* شريط الإجمالي العام */}
               <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs font-bold text-slate-600 dark:text-slate-300">
                 <span>إجمالي أسئلة الاختبار: <b>{toEasternArabic(examStats.total)} سؤال</b></span>
-                <span>التقدير الأكاديمي: <b className={`font-black ${tier.gradeColor}`}>{tier.gradeLabel}</b></span>
+                <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                  <i className="fas fa-check-double ml-1"></i> تم اعتماد النتيجة بنجاح
+                </span>
               </div>
             </div>
 
@@ -539,45 +534,20 @@ export const StudentApprovedEssayModal: React.FC<StudentApprovedEssayModalProps>
               </p>
             </div>
 
-            {/* فقرات وأجزاء الدرس التي تحتاج مراجعة وتركيز */}
-            {wrongParagraphs.length > 0 && (
-              <div className="w-full bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-3.5 sm:p-4 mb-4 text-right shadow-2xs">
-                <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-rose-800 dark:text-rose-300 mb-2">
-                  <i className="fas fa-exclamation-triangle text-rose-600 animate-pulse"></i>
-                  <span>أجزاء وفقرات الدرس المطلوب مراجعتها والتركيز عليها:</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                  {wrongParagraphs.map((para, pIdx) => (
-                    <span key={pIdx} className="bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-200 border border-rose-300 dark:border-rose-800 px-3 py-1 rounded-xl text-xs font-black shadow-2xs flex items-center gap-1.5">
-                      <i className="fas fa-bookmark text-rose-500 text-[10px]"></i>
-                      <span>{para}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* أزرار الإجراءات */}
-            <div className="w-full flex flex-col sm:flex-row items-center gap-2.5">
-              <button
-                onClick={() => setViewMode('details')}
-                className="w-full sm:flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <i className="fas fa-file-alt"></i> عرض إجاباتي وملاحظات المعلم والأخطاء
-              </button>
-
+            {/* أزرار الإجراءات: شهادة التقدير وإغلاق فقط */}
+            <div className="w-full flex flex-col sm:flex-row items-center justify-center gap-3">
               {tier.canDownloadCert && (
                 <button
                   onClick={handleDownloadCertificate}
-                  className="w-full sm:flex-1 py-3 px-4 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-900 font-black text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full sm:flex-1 py-3.5 px-6 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-600 hover:to-yellow-700 text-slate-950 font-black text-sm sm:text-base rounded-2xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 cursor-pointer border border-amber-300"
                 >
-                  <i className="fas fa-award text-base"></i> تحميل شهادة التقدير 📜
+                  <i className="fas fa-award text-lg"></i> تحميل شهادة التقدير 📜
                 </button>
               )}
 
               <button
                 onClick={onClose}
-                className="w-full sm:w-auto py-3 px-6 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs sm:text-sm rounded-xl transition-colors cursor-pointer"
+                className="w-full sm:w-auto py-3.5 px-8 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-black text-sm rounded-2xl transition-colors cursor-pointer"
               >
                 إغلاق
               </button>

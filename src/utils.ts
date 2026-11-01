@@ -38,6 +38,9 @@ export const verifyStaffPassword = async (inputPassword: string, user: StudentBa
   return false;
 };
 
+
+
+
 export const simpleHash = (str: string): string => {
   if (!str) return '';
   let hex = '';
@@ -66,7 +69,7 @@ export const formatPhoneStr = (phone: string): string => {
 // دالة معالجة وتنظيف الدرجات وتحويل الكسور العشرية من جوجل شيتس (مثل 1 أو 0.95 إلى 100% و 95%)
 export const normalizeScore = (scoreRaw: any): number => {
   if (scoreRaw === undefined || scoreRaw === null) return 0;
-  
+
   // إذا كانت القيمة رقماً
   if (typeof scoreRaw === 'number') {
     if (isNaN(scoreRaw)) return 0;
@@ -121,15 +124,15 @@ export const detectArabicGender = (fullName: string, explicitGender?: string): '
 
   // قائمة أسماء البنات العربية الشائعة
   const femaleNames = new Set([
-    'فاطمة', 'مريم', 'عائشة', 'سارة', 'ساره', 'نور', 'نورا', 'نورهان', 'نوران', 'منة', 'منه', 'منة الله', 
-    'سلمى', 'سلمي', 'آية', 'ايه', 'آيات', 'هاجر', 'أسماء', 'اسماء', 'شهد', 'ندى', 'ندي', 'ياسمين', 'ريم', 
-    'ريماس', 'حبيبة', 'حبيبه', 'ملك', 'مليكة', 'إسراء', 'اسراء', 'دعاء', 'هبة', 'هبه', 'إيمان', 'ايمان', 
-    'رحمة', 'رحمه', 'بسملة', 'بسمله', 'جنى', 'جني', 'رنا', 'نهى', 'نهي', 'رضوى', 'رضوي', 'دينا', 'شروق', 
-    'أروى', 'اروي', 'خلود', 'أميرة', 'اميرة', 'أميره', 'اميره', 'داليا', 'روان', 'شمس', 'تسنيم', 
-    'يارا', 'ريناد', 'جودي', 'فريدة', 'فريده', 'حنين', 'جومانة', 'جومانه', 'ميرنا', 'سندس', 'زينب', 
-    'خديجة', 'خديجه', 'صفاء', 'مروة', 'مروه', 'وفاء', 'ولاء', 'شيماء', 'نجلاء', 'حنان', 'رانيا', 'أمل', 
-    'امل', 'منى', 'مني', 'سحر', 'لبنى', 'لبني', 'عبير', 'غادة', 'غاده', 'بسمة', 'بسمه', 'لمياء', 'سهام', 
-    'إلهام', 'الهام', 'صباح', 'عفاف', 'هدير', 'مي', 'مى', 'تغريد', 'جميلة', 'جميله', 'جهاد', 'رغد', 'سما', 
+    'فاطمة', 'مريم', 'عائشة', 'سارة', 'ساره', 'نور', 'نورا', 'نورهان', 'نوران', 'منة', 'منه', 'منة الله',
+    'سلمى', 'سلمي', 'آية', 'ايه', 'آيات', 'هاجر', 'أسماء', 'اسماء', 'شهد', 'ندى', 'ندي', 'ياسمين', 'ريم',
+    'ريماس', 'حبيبة', 'حبيبه', 'ملك', 'مليكة', 'إسراء', 'اسراء', 'دعاء', 'هبة', 'هبه', 'إيمان', 'ايمان',
+    'رحمة', 'رحمه', 'بسملة', 'بسمله', 'جنى', 'جني', 'رنا', 'نهى', 'نهي', 'رضوى', 'رضوي', 'دينا', 'شروق',
+    'أروى', 'اروي', 'خلود', 'أميرة', 'اميرة', 'أميره', 'اميره', 'داليا', 'روان', 'شمس', 'تسنيم',
+    'يارا', 'ريناد', 'جودي', 'فريدة', 'فريده', 'حنين', 'جومانة', 'جومانه', 'ميرنا', 'سندس', 'زينب',
+    'خديجة', 'خديجه', 'صفاء', 'مروة', 'مروه', 'وفاء', 'ولاء', 'شيماء', 'نجلاء', 'حنان', 'رانيا', 'أمل',
+    'امل', 'منى', 'مني', 'سحر', 'لبنى', 'لبني', 'عبير', 'غادة', 'غاده', 'بسمة', 'بسمه', 'لمياء', 'سهام',
+    'إلهام', 'الهام', 'صباح', 'عفاف', 'هدير', 'مي', 'مى', 'تغريد', 'جميلة', 'جميله', 'جهاد', 'رغد', 'سما',
     'شذى', 'ضحى', 'علا', 'ندين', 'نانسي', 'كارما', 'كنزي', 'تاليا', 'لارا', 'ليان', 'ريتاج', 'جاسمين'
   ]);
 
@@ -166,18 +169,18 @@ export const generateDeviceFingerprint = (): string => {
     canvas.height = 50;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      ctx.textBaseline = "top"; 
-      ctx.font = "14px 'Arial'"; 
+      ctx.textBaseline = "top";
+      ctx.font = "14px 'Arial'";
       ctx.textBaseline = "alphabetic";
-      ctx.fillStyle = "#f60"; 
+      ctx.fillStyle = "#f60";
       ctx.fillRect(125, 1, 62, 20);
-      ctx.fillStyle = "#069"; 
+      ctx.fillStyle = "#069";
       ctx.fillText("EdTech-Fingerprint", 2, 15);
-      ctx.fillStyle = "rgba(102, 204, 0, 0.7)"; 
+      ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
       ctx.fillText("EdTech-Fingerprint", 4, 17);
       const b64 = canvas.toDataURL().replace("data:image/png;base64,","");
       const bin = atob(b64);
-      
+
       const crc32 = function(r: string): number {
         const o: number[] = [];
         for (let c = 0; c < 256; c++) {
@@ -193,7 +196,7 @@ export const generateDeviceFingerprint = (): string => {
         }
         return (-1 ^ n) >>> 0;
       };
-      
+
       canvasHash = crc32(bin).toString(16);
     }
   } catch (e) {
@@ -747,4 +750,12 @@ export const checkAnswerAccurately = (
   }
 
   return false;
+};
+
+export const getGradeRating = (perc: number): string => {
+  if (perc >= 90) return 'ممتاز 🌟';
+  if (perc >= 80) return 'جيد جداً 🟢';
+  if (perc >= 65) return 'جيد 🔵';
+  if (perc >= 50) return 'مقبول 🟡';
+  return 'يحتاج تقوية 🔴';
 };

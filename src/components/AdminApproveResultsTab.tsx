@@ -48,12 +48,14 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   // نافذة تأكيد الاعتماد الجماعي
   const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false);
   const [processingBatch, setProcessingBatch] = useState<boolean>(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
 
   // نافذة منح إعادة لطالب
   const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
   // إظهار خيارات الإعادة مباشرة في نفس سطر الطالب (مكان الضغط دون تمرير)
   const [retakeInlineSubId, setRetakeInlineSubId] = useState<string | null>(null);
   const [isReleasingTraining, setIsReleasingTraining] = useState<boolean>(false);
+  const [isWithholdingTraining, setIsWithholdingTraining] = useState<boolean>(false);
 
   // نافذة تعديل درجات طالب سريعاً قبل الاعتماد
   const [quickEditSub, setQuickEditSub] = useState<StudentEssaySubmission | null>(null);
@@ -541,6 +543,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
               };
             }),
             isApproved: true,
+            status: releaseMistakes ? 'معتمد' : 'معتمد (محجوب)',
             studentType: updated.studentType || 'سنتر',
             apiKey: SECRET_API_KEY
           })
@@ -558,6 +561,28 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         });
       }
 
+      // تحديث إتاحة التدريب على الامتحان محلياً فور الاعتماد
+      if (updated.quizTitle) {
+        try {
+          const approvedQuizzes: string[] = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+          const cleanTitle = updated.quizTitle.trim();
+          if (releaseMistakes) {
+            if (!approvedQuizzes.includes(cleanTitle)) {
+              approvedQuizzes.push(cleanTitle);
+            }
+            if (updated.lessonId && !approvedQuizzes.includes(updated.lessonId)) {
+              approvedQuizzes.push(updated.lessonId);
+            }
+          } else {
+            const filtered = approvedQuizzes.filter(t => t !== cleanTitle && t !== updated.lessonId);
+            localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(filtered));
+          }
+          if (releaseMistakes) {
+            localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(approvedQuizzes));
+          }
+        } catch (e) {}
+      }
+
       // تحديث الحالة في الواجهة
       setSubmissions(prev => prev.map(s => s.id === sub.id ? updated : s));
       showToast(`✅ تم اعتماد وإعلان نتيجة: ${updated.studentName}`);
@@ -566,7 +591,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
     }
   };
 
-  // اعتماد جماعي لجميع الطلاب الجاهزين المعروضين
+  // اعتماد جماعي لجميع الطلاب الجاهزين المعروضين بدفعات متوازية سريعة
   const handleApproveBatch = async (releaseMistakes: boolean) => {
     setProcessingBatch(true);
     const toApprove = filteredSubmissions.filter(s => {
@@ -580,10 +605,17 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       return;
     }
 
-    for (const sub of toApprove) {
-      await handleApproveSingle(sub, releaseMistakes);
+    setBatchProgress({ current: 0, total: toApprove.length });
+
+    // معالجة سريعة بدفعات متوازية (5 طلاب في كل دفعة) لاختصار وقت التنفيذ
+    const CHUNK_SIZE = 5;
+    for (let i = 0; i < toApprove.length; i += CHUNK_SIZE) {
+      const chunk = toApprove.slice(i, i + CHUNK_SIZE);
+      await Promise.allSettled(chunk.map(sub => handleApproveSingle(sub, releaseMistakes)));
+      setBatchProgress({ current: Math.min(i + CHUNK_SIZE, toApprove.length), total: toApprove.length });
     }
 
+    setBatchProgress(null);
     setProcessingBatch(false);
     setBatchModalOpen(false);
     showToast(`🎉 تم اعتماد وإعلان نتائج (${toApprove.length}) طالب بنجاح!`);
@@ -684,6 +716,41 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       showToast('❌ حدث خطأ أثناء إتاحة الامتحان.');
     } finally {
       setIsReleasingTraining(false);
+    }
+  };
+
+  // اعتماد تسليمات الامتحان مع حجب الامتحان وبنك التدريب (لمنع تسريب الأسئلة للغائبين)
+  const handleApproveWithheldTraining = async () => {
+    const targetQuiz = selectedQuizFilter !== 'all' ? selectedQuizFilter : null;
+    const matchingSubs = submissions.filter(s => 
+      !targetQuiz || normQuizTitle(s.quizTitle) === normQuizTitle(targetQuiz)
+    );
+
+    if (matchingSubs.length === 0) {
+      showToast('⚠️ لا توجد تسليمات مسجلة لهذا الاختبار حالياً.');
+      return;
+    }
+
+    setIsWithholdingTraining(true);
+    try {
+      for (const sub of matchingSubs) {
+        await handleApproveSingle(sub, false);
+      }
+
+      // التأكد من إزالة الامتحان من التخزين المشترك للتدريب لحمايته
+      try {
+        const approvedQuizzes: string[] = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+        const toRemove = targetQuiz ? [targetQuiz] : matchingSubs.map(s => s.quizTitle.trim());
+        const filtered = approvedQuizzes.filter(t => !toRemove.includes(t));
+        localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(filtered));
+      } catch(e) {}
+
+      showToast(`🔒 تم اعتماد (${matchingSubs.length}) تسليماً وإصدار شهاداتهم مع حجب بنك الأخطاء والامتحان لمنع التسريب!`);
+      await refreshData();
+    } catch (e) {
+      showToast('❌ حدث خطأ أثناء اعتماد وحجب الامتحان.');
+    } finally {
+      setIsWithholdingTraining(false);
     }
   };
 
@@ -797,12 +864,23 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           <button
             type="button"
             onClick={handleReleaseExamForTraining}
-            disabled={isReleasingTraining || isLoadingCloud}
+            disabled={isReleasingTraining || isWithholdingTraining || isLoadingCloud}
             className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
             title="اعتماد كافة تسليمات هذا الامتحان ونشر النتيجة وإتاحة الامتحان فوراً لتدريب ومراجعة الطلاب"
           >
             <i className={`fas fa-paper-plane ${isReleasingTraining ? 'animate-bounce' : ''}`}></i>
-            <span>{isReleasingTraining ? 'جاري الإتاحة...' : (selectedQuizFilter !== 'all' ? `إظهار الامتحان وتدريب الطلاب (${toEasternArabic(filteredSubmissions.length)}) 📢` : 'إظهار الامتحان وتدريب الطلاب 📢')}</span>
+            <span>{isReleasingTraining ? 'جاري الإتاحة...' : (selectedQuizFilter !== 'all' ? `اعتماد وإتاحة التدريب (${toEasternArabic(filteredSubmissions.length)}) 📢` : 'اعتماد وإتاحة التدريب 📢')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleApproveWithheldTraining}
+            disabled={isReleasingTraining || isWithholdingTraining || isLoadingCloud}
+            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
+            title="اعتماد نتائج وشهادات الطلاب فوراً مع حجب الأسئلة وبنك الأخطاء مؤقتاً لمنع تسريب الامتحان للغائبين"
+          >
+            <i className={`fas fa-shield-halved ${isWithholdingTraining ? 'animate-spin' : 'text-amber-400'}`}></i>
+            <span>{isWithholdingTraining ? 'جاري الاعتماد والحجب...' : 'اعتماد وحجب الأسئلة (لمنع التسريب) 🔒'}</span>
           </button>
 
           {stats.totalReady > 0 && (
@@ -1117,15 +1195,27 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 {/* أزرار التحكم والاعتماد بحجم مريح للموبايل وبدون نصوص طويلة */}
                 <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto">
                   {!sub.isFullyApproved && (cat === 'blank_or_pulled' || cat === 'graded_ready') && (
-                    <button
-                      type="button"
-                      onClick={() => handleApproveSingle(sub, true)}
-                      className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs active:scale-95 cursor-pointer"
-                      title="اعتماد ونشر النتيجة فوراً"
-                    >
-                      <i className="fas fa-check"></i>
-                      <span>اعتماد</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveSingle(sub, true)}
+                        className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                        title="اعتماد النتيجة وإتاحة الامتحان وبنك الأخطاء للتدريب فوراً"
+                      >
+                        <i className="fas fa-check"></i>
+                        <span>اعتماد وإتاحة 🔓</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleApproveSingle(sub, false)}
+                        className="flex-1 sm:flex-initial px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-xs transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                        title="اعتماد النتيجة وإصدار الشهادة مع حجب الامتحان وبنك الأخطاء مؤقتاً لمنع التسريب"
+                      >
+                        <i className="fas fa-shield-halved text-amber-400"></i>
+                        <span>اعتماد وحجب 🔒</span>
+                      </button>
+                    </>
                   )}
 
                   {cat === 'needs_grading' && (
@@ -1237,8 +1327,27 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
             </div>
 
             <p className="text-xs font-bold text-gray-600 dark:text-gray-300 leading-relaxed">
-              سيتم اعتماد درجات جميع هؤلاء الطلاب ونشرها فوراً في شيت النتائج وفك حظر الامتحان عنهم.
+              سيتم اعتماد درجات جميع هؤلاء الطلاب ونشرها فوراً في شيت النتائج وتحديث حالة أوراقهم سحابياً.
             </p>
+
+            {/* مؤشر التقدم البصري أثناء الاعتماد الجماعي */}
+            {batchProgress && (
+              <div className="bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-3 space-y-2">
+                <div className="flex justify-between items-center text-xs font-black text-emerald-900 dark:text-emerald-200">
+                  <span className="flex items-center gap-1.5">
+                    <i className="fas fa-spinner fa-spin text-emerald-600"></i>
+                    <span>جاري اعتماد الأوراق سحابياً...</span>
+                  </span>
+                  <span>{toEasternArabic(batchProgress.current)} من {toEasternArabic(batchProgress.total)}</span>
+                </div>
+                <div className="w-full h-2.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-emerald-600 transition-all duration-300 rounded-full"
+                    style={{ width: `${Math.round((batchProgress.current / batchProgress.total) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2 pt-1">
               <button

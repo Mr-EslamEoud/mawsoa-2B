@@ -35,7 +35,8 @@ import {
   getDirectPdfLink,
   getPdfViewerLink,
   downloadWatermarkedPdf,
-  checkAnswerAccurately
+  checkAnswerAccurately,
+  getGradeRating
 } from './utils';
 import { buildCourseData, FlatQuestionRow } from './courseBuilder';
 import defaultQuestionsData from './defaultQuestions.json';
@@ -52,10 +53,24 @@ import { AdminExamScheduleTab } from './components/AdminExamScheduleTab';
 import { StudentApprovedEssayModal } from './components/StudentApprovedEssayModal';
 import { StudentEssayListModal } from './components/StudentEssayListModal';
 import { MistakesNotebookModal } from './components/MistakesNotebookModal';
+import { MistakesBankSelectorModal } from './components/MistakesBankSelectorModal';
 import { FaithPrayerModal } from './components/FaithPrayerModal';
 import { FaithFloatingToast } from './components/FaithFloatingToast';
 import { StudentRetakeNotificationModal } from './components/StudentRetakeNotificationModal';
-import { getGeminiApiKey, setGeminiApiKey, getGroqApiKey, setGroqApiKey, evaluateEssayAnswer } from './aiEvaluationService';
+import { 
+  getGeminiApiKey, 
+  setGeminiApiKey, 
+  getGeminiApiKeys,
+  setGeminiApiKeys,
+  rotateToNextGeminiKey,
+  isAiGradingEnabled,
+  setAiGradingEnabled,
+  getCustomAiPrompt,
+  setCustomAiPrompt,
+  getGroqApiKey, 
+  setGroqApiKey, 
+  evaluateEssayAnswer 
+} from './aiEvaluationService';
 import { 
   getExamConfig, 
   getAllExamConfigs,
@@ -292,6 +307,7 @@ export default function App() {
   const [resultsGenderFilter, setResultsGenderFilter] = useState<'all' | 'male' | 'female'>('all');
   const [resultsUnitFilter, setResultsUnitFilter] = useState<string>('all');
   const [resultsLessonFilter, setResultsLessonFilter] = useState<string>('all');
+  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState<GroupedResult | null>(null);
 
   const [adminActiveTab, setAdminActiveTab] = useState<string>('results');
@@ -398,6 +414,7 @@ export default function App() {
   const [showGroqKey, setShowGroqKey] = useState<boolean>(false);
   const [isTestingGroqKey, setIsTestingGroqKey] = useState<boolean>(false);
   const [groqKeyStatus, setGroqKeyStatus] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [customAiPromptSetting, setCustomAiPromptSetting] = useState<string>(() => getCustomAiPrompt());
 
   const handleTestGeminiKey = async () => {
     if (!geminiKeyInput.trim()) return;
@@ -491,6 +508,7 @@ export default function App() {
   const [approvedSubForModal, setApprovedSubForModal] = useState<StudentEssaySubmission | null>(null);
   const [showStudentEssayListModal, setShowStudentEssayListModal] = useState<boolean>(false);
   const [showMistakesNotebookModal, setShowMistakesNotebookModal] = useState<boolean>(false);
+  const [showMistakesBankSelectorModal, setShowMistakesBankSelectorModal] = useState<boolean>(false);
 
   // حالة بطاقة توجيه إعادة الامتحان الموجهة من المعلم للطالب
   const [retakeDirectiveForModal, setRetakeDirectiveForModal] = useState<StudentRetakeDirective | null>(null);
@@ -1061,7 +1079,8 @@ export default function App() {
   
   // Leaderboard State
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
-  const [leaderboardData, setLeaderboardData] = useState<{name: string, score: number, testsCount: number, avg?: number, tier?: string, trend?: string}[]>([]);
+  const [leaderboardData, setLeaderboardData] = useState<{name: string, score: number, testsCount: number, avg?: number, tier?: string, trend?: string, studentType?: 'online' | 'center'}[]>([]);
+  const [leaderboardCohortFilter, setLeaderboardCohortFilter] = useState<'all' | 'center' | 'online'>('all');
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState<boolean>(false);
   const [currentUserStats, setCurrentUserStats] = useState<{
     testsCount: number;
@@ -1316,34 +1335,69 @@ export default function App() {
       const studentSubs = getStudentSubmissions(clean);
       const hasPending = studentSubs.some(s => !s.isFullyApproved);
 
-      if (hasPending) {
-        // فحص سحابي سريع لتحديث حالة الاعتماد فور اعتماد المعلم دون حاجة لإعادة تسجيل الدخول
+      const checkCloudApproval = () => {
         const noCache = Date.now();
         fetch(`${API_URL}?action=getEssaySubmissions&apiKey=${SECRET_API_KEY}&t=${noCache}`)
           .then(res => res.json())
           .then(data => {
             if (data && data.status === 'success' && Array.isArray(data.data)) {
-              const myApprovedRows = data.data.filter((r: any) => 
-                formatPhoneStr(r.studentPhone) === clean && String(r.status || '').trim() === 'معتمد'
-              );
+              const cleanDigits = clean.replace(/[^\d]/g, '');
+              const myApprovedRows = data.data.filter((r: any) => {
+                const rowDigits = formatPhoneStr(r.studentPhone || '').replace(/[^\d]/g, '');
+                const isPhoneMatch = rowDigits === cleanDigits || 
+                  (rowDigits.length >= 8 && cleanDigits.length >= 8 && (rowDigits.endsWith(cleanDigits) || cleanDigits.endsWith(rowDigits)));
+                const statusStr = String(r.status || '').trim();
+                return isPhoneMatch && statusStr.startsWith('معتمد');
+              });
+
               if (myApprovedRows.length > 0) {
-                const approvedQuizTitles = new Set(myApprovedRows.map((r: any) => String(r.quizTitle || '').trim()));
+                const approvedStatusMap = new Map<string, boolean>();
+                myApprovedRows.forEach((r: any) => {
+                  const title = String(r.quizTitle || '').trim();
+                  const isWithheld = String(r.status || '').includes('محجوب');
+                  approvedStatusMap.set(title, !isWithheld);
+                });
+
                 let changed = false;
                 const updatedSubs = studentSubs.map(s => {
-                  if (!s.isFullyApproved && approvedQuizTitles.has(s.quizTitle.trim())) {
-                    changed = true;
-                    return { ...s, isFullyApproved: true, isMistakesBankReleased: true };
+                  const title = s.quizTitle.trim();
+                  if (approvedStatusMap.has(title)) {
+                    const shouldRelease = approvedStatusMap.get(title) ?? true;
+                    if (!s.isFullyApproved || s.isMistakesBankReleased !== shouldRelease) {
+                      changed = true;
+                      return { ...s, isFullyApproved: true, isMistakesBankReleased: shouldRelease };
+                    }
                   }
                   return s;
                 });
+
                 if (changed) {
                   localStorage.setItem('kanz_pending_essay_submissions', JSON.stringify(updatedSubs));
+                  try {
+                    const approvedQuizzes: string[] = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+                    approvedStatusMap.forEach((isReleased, qTitle) => {
+                      if (isReleased) {
+                        if (!approvedQuizzes.includes(qTitle)) approvedQuizzes.push(qTitle);
+                      } else {
+                        const filtered = approvedQuizzes.filter(t => t !== qTitle);
+                        localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(filtered));
+                      }
+                    });
+                    localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(approvedQuizzes));
+                  } catch (e) {}
                   setSubmissionsVersion(v => v + 1);
                 }
               }
             }
           })
           .catch(() => {});
+      };
+
+      let pollTimer: any = null;
+      if (hasPending) {
+        checkCloudApproval();
+        // نبض فحص ذكي كل 30 ثانية طالما لدى الطالب اختبار بانتظار الاعتماد لاستقبال النتيجة فورياً
+        pollTimer = setInterval(checkCloudApproval, 30000);
       }
 
       const unseen = getUnseenApprovedSubmissions(phone);
@@ -1351,8 +1405,12 @@ export default function App() {
         setApprovedSubForModal(unseen[0]);
         unseen.forEach(s => commitApprovedSubmissionMistakes(s));
       }
+
+      return () => {
+        if (pollTimer) clearInterval(pollTimer);
+      };
     }
-  }, [screen, inputPhone, studentData, data]);
+  }, [screen, inputPhone, studentData, data, submissionsVersion]);
 
   // فحص وجود توجيه إعادة امتحان موجه من المعلم لإشعار الطالب فوراً
   useEffect(() => {
@@ -3750,7 +3808,7 @@ export default function App() {
       const res = await fetch(`${API_URL}?action=getResults&apiKey=${SECRET_API_KEY}&t=${noCache}`);
       const resData = await res.json();
       if (resData.status === 'success') {
-        const grouped: Record<string, { quizzes: Record<string, number>, latestTestOriginalIndex: number, firstAttemptIndices: Record<string, number> }> = {};
+        const grouped: Record<string, { quizzes: Record<string, number>, latestTestOriginalIndex: number, firstAttemptIndices: Record<string, number>, studentType?: 'online' | 'center' }> = {};
         const currentValidLessons = data.flatMap(u => u.lessons.map(l => l.title));
         
         // إعداد قاموس لعدد أسئلة كل درس لتحويل النسب إلى XP مطابق للصفحة الرئيسية
@@ -3777,6 +3835,11 @@ export default function App() {
           }
 
           if (!grouped[correctName]) grouped[correctName] = { quizzes: {}, firstAttemptIndices: {}, latestTestOriginalIndex: -1 };
+          
+          const sType = (r as any).studentType === 'أونلاين' || (adminOnlineStudents || []).some(o => formatPhoneStr(o.phone) === formattedPhone) ? 'online' : 'center';
+          if (!grouped[correctName].studentType) {
+            grouped[correctName].studentType = sType;
+          }
           
           if (isAmbiguousOldQuiz(r.quiz)) return;
 
@@ -3874,7 +3937,7 @@ export default function App() {
             else if (avg <= 75) trend = 'down';
           }
           
-          return { name, score, testsCount, avg, trend, latestTestOriginalIndex: studentLatestTest };
+          return { name, score, testsCount, avg, trend, latestTestOriginalIndex: studentLatestTest, studentType: studentData.studentType || 'center' };
         }).filter((item): item is NonNullable<typeof item> => item !== null);
         
         const sorted = mapped.sort((a, b) => {
@@ -3897,7 +3960,7 @@ export default function App() {
         let silverCount = 0;
         let bronzeCount = 0;
         
-        const limitedSorted: {name: string, score: number, testsCount: number, avg: number, tier: string, trend: string, latestTestOriginalIndex?: number}[] = [];
+        const limitedSorted: {name: string, score: number, testsCount: number, avg: number, tier: string, trend: string, latestTestOriginalIndex?: number, studentType?: 'online' | 'center'}[] = [];
         for (let i = 0; i < sorted.length; i++) {
           const s = sorted[i];
           let tier = '';
@@ -7742,6 +7805,7 @@ function initAllSheetsMenu() {
       if (groqKeyInput.trim()) {
         setGroqApiKey(groqKeyInput.trim());
       }
+      setCustomAiPrompt(customAiPromptSetting);
       setPackagePrices(editPrices);
       setPlatformFee(editPrices.monthly + ' جنيهاً');
       setAnnouncement(announcementInput);
@@ -7876,6 +7940,329 @@ function initAllSheetsMenu() {
         }
       } catch(err) {}
     }
+  };
+
+  // تصدير النتائج إلى إكسيل المنسق (.xls) أو ملف (.csv) مع دعم كامل للعربية وRTL
+  const handleExportResultsExcel = (
+    mode: 'filtered' | 'all',
+    format: 'xls' | 'csv' = 'xls',
+    targetList: GroupedResult[],
+    activeValidLessons: string[],
+    targetUnit: Unit | null | undefined,
+    getStudentGender: (s: GroupedResult) => 'male' | 'female',
+    isStudentOnline: (s: GroupedResult) => boolean,
+    getUniqueActiveTests: (tests: TestResult[]) => string[]
+  ) => {
+    setShowExportMenu(false);
+
+    try {
+      let headers: string[] = [];
+      const dataRows: string[][] = [];
+
+      if (mode === 'filtered') {
+        if (resultsLessonFilter !== 'all') {
+          // كشف درجات الطلاب في درس محدد
+          headers = [
+            'م',
+            'اسم الطالب',
+            'رقم الهاتف',
+            'النوع',
+            'الفئة',
+            'اسم الاختبار',
+            'الدرجة / النسبة',
+            'التقدير',
+            'حالة الأداء',
+            'تاريخ الحل'
+          ];
+
+          targetList.forEach((st, idx) => {
+            const genderStr = getStudentGender(st) === 'female' ? 'أنثى' : 'ذكر';
+            const typeStr = isStudentOnline(st) ? 'أونلاين' : 'سنتر';
+
+            let studentTest: TestResult | undefined;
+            if (st.tests && st.tests.length > 0) {
+              for (const t of st.tests) {
+                if (isAmbiguousOldQuiz(t.quiz)) continue;
+                if (t.quiz.includes('تصفير') || t.quiz.includes('فرصة جديدة') || String(t.score).includes('تصفير')) continue;
+                const mappedTitle = matchQuizToCurrent(t.quiz, [resultsLessonFilter]);
+                if (mappedTitle === resultsLessonFilter) {
+                  studentTest = t;
+                  break;
+                }
+              }
+            }
+
+            if (studentTest) {
+              const scoreNum = normalizeScore(studentTest.score);
+              const rating = getGradeRating(scoreNum);
+              dataRows.push([
+                String(idx + 1),
+                st.name || '',
+                formatPhoneStr(st.phone) || '',
+                genderStr,
+                typeStr,
+                resultsLessonFilter,
+                `${scoreNum}%`,
+                rating,
+                'تم الحل',
+                studentTest.date || '-'
+              ]);
+            } else {
+              dataRows.push([
+                String(idx + 1),
+                st.name || '',
+                formatPhoneStr(st.phone) || '',
+                genderStr,
+                typeStr,
+                resultsLessonFilter,
+                '0%',
+                'لم يؤد الاختبار',
+                'غائب / لم يحل',
+                '-'
+              ]);
+            }
+          });
+        } else {
+          // كشف الطلاب المعروضين بالفلتر النشط (بنين/بنات، سنتر/أونلاين، أو وحدة محددة)
+          headers = [
+            'م',
+            'اسم الطالب',
+            'رقم الهاتف',
+            'النوع',
+            'الفئة',
+            'الوحدة المحددة',
+            'عدد الاختبارات المنجزة',
+            'حالة التفاعل'
+          ];
+
+          targetList.forEach((st, idx) => {
+            const genderStr = getStudentGender(st) === 'female' ? 'أنثى' : 'ذكر';
+            const typeStr = isStudentOnline(st) ? 'أونلاين' : 'سنتر';
+            const realCount = getUniqueActiveTests(st.tests).length;
+            const activityStatus = realCount === 0 ? 'غير متفاعل' : 'متفاعل';
+            const unitLabel = targetUnit ? targetUnit.title : 'جميع الوحدات';
+
+            dataRows.push([
+              String(idx + 1),
+              st.name || '',
+              formatPhoneStr(st.phone) || '',
+              genderStr,
+              typeStr,
+              unitLabel,
+              String(realCount),
+              activityStatus
+            ]);
+          });
+        }
+      } else {
+        // السجل الشامل لكافة نتائج النظام
+        headers = [
+          'م',
+          'اسم الطالب',
+          'رقم الهاتف',
+          'النوع',
+          'الفئة',
+          'اسم الاختبار',
+          'النسبة المئوية',
+          'التقدير',
+          'تاريخ الحل'
+        ];
+
+        let rowIndex = 1;
+        adminResults.forEach(st => {
+          const genderStr = getStudentGender(st) === 'female' ? 'أنثى' : 'ذكر';
+          const typeStr = isStudentOnline(st) ? 'أونلاين' : 'سنتر';
+
+          if (st.tests && st.tests.length > 0) {
+            st.tests.forEach(t => {
+              if (isAmbiguousOldQuiz(t.quiz)) return;
+              if (t.quiz.includes('تصفير') || t.quiz.includes('فرصة جديدة') || String(t.score).includes('تصفير')) return;
+              const scoreNum = normalizeScore(t.score);
+              const rating = getGradeRating(scoreNum);
+              dataRows.push([
+                String(rowIndex++),
+                st.name || '',
+                formatPhoneStr(st.phone) || '',
+                genderStr,
+                typeStr,
+                t.quiz || '',
+                `${scoreNum}%`,
+                rating,
+                t.date || '-'
+              ]);
+            });
+          }
+        });
+      }
+
+      if (dataRows.length === 0) {
+        showAlert('⚠️ لا توجد بيانات متاحة للتصدير في هذا القسم.');
+        return;
+      }
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      let baseFilename = `نتائج_الطلاب_${todayStr}`;
+      if (mode === 'filtered') {
+        if (resultsLessonFilter !== 'all') {
+          baseFilename = `نتائج_درس_${resultsLessonFilter.replace(/[\s/\\:*?"<>|]/g, '_')}_${todayStr}`;
+        } else if (targetUnit) {
+          baseFilename = `نتائج_وحدة_${targetUnit.title.replace(/[\s/\\:*?"<>|]/g, '_')}_${todayStr}`;
+        } else {
+          baseFilename = `كشف_الطلاب_المفلتر_${todayStr}`;
+        }
+      } else {
+        baseFilename = `السجل_الشامل_لنتائج_الطلاب_${todayStr}`;
+      }
+
+      if (format === 'xls') {
+        // تنسيق إكسيل حقيقي متوافق مع اللغة العربية واتجاه اليمين لليسار RTL
+        const sheetName = mode === 'filtered' 
+          ? (resultsLessonFilter !== 'all' ? `درجات ${resultsLessonFilter}` : targetUnit ? `وحدة ${targetUnit.title}` : 'كشف النتائج')
+          : 'السجل الشامل';
+
+        const excelHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta http-equiv="Content-Type" content="application/vnd.ms-excel; charset=UTF-8">
+  <!--[if gte mso 9]>
+  <xml>
+    <x:ExcelWorkbook>
+      <x:ExcelWorksheets>
+        <x:ExcelWorksheet>
+          <x:Name>${sheetName.replace(/[:\/\\?*\[\]]/g, '_').slice(0, 31)}</x:Name>
+          <x:WorksheetOptions>
+            <x:DisplayRightToLeft/>
+          </x:WorksheetOptions>
+        </x:ExcelWorksheet>
+      </x:ExcelWorksheets>
+    </x:ExcelWorkbook>
+  </xml>
+  <![endif]-->
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; direction: rtl; }
+    table { border-collapse: collapse; width: 100%; direction: rtl; text-align: center; }
+    th { 
+      background-color: #047857; 
+      color: #ffffff; 
+      font-weight: bold; 
+      border: 1px solid #065f46; 
+      padding: 10px 14px; 
+      font-size: 13px; 
+      text-align: center;
+      white-space: nowrap;
+    }
+    td { 
+      border: 1px solid #d1d5db; 
+      padding: 7px 10px; 
+      font-size: 12px; 
+      text-align: center; 
+      vertical-align: middle;
+    }
+    .text-val { mso-number-format: "\\@"; text-align: center; } /* يحفظ الصفر في بداية رقم الهاتف */
+    .row-even { background-color: #f9fafb; }
+    .badge-excellent { background-color: #d1fae5; color: #065f46; font-weight: bold; }
+    .badge-vgood { background-color: #e0f2fe; color: #0369a1; font-weight: bold; }
+    .badge-good { background-color: #eff6ff; color: #1d4ed8; font-weight: bold; }
+    .badge-pass { background-color: #fef3c7; color: #92400e; font-weight: bold; }
+    .badge-fail { background-color: #fee2e2; color: #991b1b; font-weight: bold; }
+  </style>
+</head>
+<body dir="rtl">
+  <table>
+    <thead>
+      <tr style="height: 38px;">
+        ${headers.map(h => `<th>${h}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>
+      ${dataRows.map((r, rIdx) => {
+        const trClass = rIdx % 2 === 1 ? 'row-even' : '';
+        return `
+        <tr class="${trClass}" style="height: 30px;">
+          ${r.map((val, cIdx) => {
+            const isPhone = cIdx === 2; // عمود رقم الهاتف
+            const isRating = headers[cIdx] === 'التقدير' || headers[cIdx] === 'حالة الأداء';
+            let cellClass = '';
+            if (isPhone) cellClass += ' text-val';
+            if (isRating) {
+              if (val.includes('ممتاز')) cellClass += ' badge-excellent';
+              else if (val.includes('جيد جداً')) cellClass += ' badge-vgood';
+              else if (val.includes('جيد')) cellClass += ' badge-good';
+              else if (val.includes('مقبول')) cellClass += ' badge-pass';
+              else if (val.includes('تقوية') || val.includes('غائب')) cellClass += ' badge-fail';
+            }
+            return `<td class="${cellClass.trim()}">${val}</td>`;
+          }).join('')}
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+</body>
+</html>`;
+
+        const filename = `${baseFilename}.xls`;
+        const blob = new Blob(['\uFEFF' + excelHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showAlert(`🎉 تم تصدير ملف الإكسيل المنسق (${filename}) بنجاح! متطابق 100% مع اللغة العربية وExcel.`);
+      } else {
+        // تصدير CSV متوافق مع الحفاظ على الصفر في بداية أرقام الهواتف
+        const csvContent = [headers, ...dataRows]
+          .map(row => row.map((val, cIdx) => {
+            if (cIdx === 2 && val && typeof val === 'string' && val.startsWith('0')) {
+              return `="${val}"`;
+            }
+            return `"${String(val ?? '').replace(/"/g, '""')}"`;
+          }).join(','))
+          .join('\r\n');
+
+        const filename = `${baseFilename}.csv`;
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        showAlert(`🎉 تم تصدير ملف (${filename}) بنجاح!`);
+      }
+    } catch (e) {
+      showAlert('❌ حدث خطأ أثناء تصدير ملف النتائج.');
+    }
+  };
+
+  const handleCopyResultsPhones = (targetList: GroupedResult[]) => {
+    setShowExportMenu(false);
+    if (!targetList || targetList.length === 0) {
+      showAlert('⚠️ لا توجد أرقام هواتف لنسخها في الكشف المعروض.');
+      return;
+    }
+
+    const uniquePhones = Array.from(
+      new Set(
+        targetList
+          .map(s => formatPhoneStr(s.phone))
+          .filter(p => p && p.length >= 10)
+      )
+    );
+
+    if (uniquePhones.length === 0) {
+      showAlert('⚠️ لم يتم العثور على أرقام هواتف صالحة.');
+      return;
+    }
+
+    const phoneText = uniquePhones.join('\n');
+    navigator.clipboard.writeText(phoneText);
+    showAlert(`📋 تم نسخ (${toEasternArabic(uniquePhones.length)}) رقم هاتف بنجاح إلى الحافظة! جاهزة للصق في واتساب.`);
   };
   
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -8080,9 +8467,17 @@ function initAllSheetsMenu() {
 
                 let evalResult = { score: 0, feedback: 'لم يتم إجابة السؤال', percentage: 0 };
                 if (!isBlankOrTerminated) {
-                  try {
-                    evalResult = await evaluateEssayAnswer(q, studentText, maxQScore);
-                  } catch(e) {}
+                  if (isAiGradingEnabled()) {
+                    try {
+                      evalResult = await evaluateEssayAnswer(q, studentText, maxQScore);
+                    } catch(e) {}
+                  } else {
+                    evalResult = {
+                      score: 0,
+                      feedback: '⏳ تم تسجيل إجابتك وبانتظار اعتماد ومراجعة المعلم.',
+                      percentage: 0
+                    };
+                  }
                 } else {
                   evalResult = {
                     score: 0,
@@ -8293,87 +8688,131 @@ function initAllSheetsMenu() {
             }
           });
 
+          // في حال كانت إعادة للمقالي فقط مع حفظ درجات الاختياري
+          const isEssayOnlyRetake = activeRetakeDirective?.retakeType === 'essay_only';
+          const preservedScore = isEssayOnlyRetake ? (activeRetakeDirective.preservedMcqScore || 0) : 0;
+          const finalQuestionsToStore = isEssayOnlyRetake && activeRetakeDirective.preservedMcqAnswers && activeRetakeDirective.preservedMcqAnswers.length > 0
+            ? [...activeRetakeDirective.preservedMcqAnswers, ...allItemsForStorage]
+            : allItemsForStorage;
+
+          const effectiveTotalMax = (isEssayOnlyRetake && activeRetakeDirective.maxPossibleScore) 
+            ? activeRetakeDirective.maxPossibleScore 
+            : structure.examTotalScore;
+
+          const submissionId = `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`;
+
+          // 1. الإرسال الفوري لورقة الامتحان سحابياً ومحلياً لضمان عدم فقدانها فور الإنهاء (Cloud-First Guarantee)
+          const mcqMaxScore = structure.mcqTotalScore + structure.tfTotalScore;
+          const mcqEarned = initialEarnedScore + preservedScore;
+          const initialCloudQuestions = [...essayItemsForStorage];
+
+          if (mcqMaxScore > 0) {
+            const mcqSummaryItem: EssayReviewQuestionItem = {
+              qIndex: -1,
+              questionText: 'الأسئلة الموضوعية (الاختياري والصح/خطأ)',
+              essayType: 'اختر من متعدد',
+              modelAnswer: `الدرجة العظمى: ${mcqMaxScore}`,
+              studentText: `حصل الطالب على ${mcqEarned} من أصل ${mcqMaxScore}`,
+              maxScore: mcqMaxScore,
+              teacherScore: mcqEarned,
+              aiScore: mcqEarned,
+              teacherFeedback: `نتيجة الأسئلة الموضوعية المرصودة آلياً: ${mcqEarned} / ${mcqMaxScore}`,
+              isApproved: true
+            };
+            initialCloudQuestions.unshift(mcqSummaryItem);
+          }
+
+          const initialSub: StudentEssaySubmission = {
+            id: submissionId,
+            studentName: studentName || 'طالب',
+            studentPhone: inputPhone || '0000',
+            quizTitle: currentLesson.title,
+            lessonId: currentLesson.id,
+            submissionDate: new Date().toLocaleDateString('ar-EG'),
+            questions: finalQuestionsToStore,
+            isFullyApproved: false,
+            isAutoTerminated: Boolean(isAutoTerminatedByWarnings),
+            terminationReason: isAutoTerminatedByWarnings ? 'مخالفات مغادرة نافذة الامتحان' : undefined,
+            finalScore: initialEarnedScore + preservedScore,
+            maxPossibleScore: effectiveTotalMax
+          };
+
+          // حفظ فوري محلياً + إرسال فوري فائق السرعة للسحابة في أول أجزاء من الثانية
+          savePendingEssaySubmission(initialSub);
+          syncEssaySubmissionToCloud({
+            ...initialSub,
+            questions: initialCloudQuestions
+          });
+
+          if (activeRetakeDirective) {
+            removeRetakeDirective(activeRetakeDirective.id);
+            setActiveRetakeDirective(null);
+          }
+
+          // 2. تشغيل التقييم الذكي بالذكاء الاصطناعي في الخلفية دون تعطيل ورقة الامتحان المودعة بالفعل
           (async () => {
             let essayEarned = 0;
-            for (const item of essayItemsForStorage) {
-              const q = currentLesson.questions[item.qIndex];
-              const isBlankOrTerminated = !item.studentText || 
-                item.studentText.trim() === '' || 
-                item.studentText.includes('لم يتم الإجابة') || 
-                item.studentText.includes('سُحبت');
+            let hasAiGradedAny = false;
+            await Promise.allSettled(
+              essayItemsForStorage.map(async (item) => {
+                const q = currentLesson.questions[item.qIndex];
+                const isBlankOrTerminated = !item.studentText || 
+                  item.studentText.trim() === '' || 
+                  item.studentText.includes('لم يتم الإجابة') || 
+                  item.studentText.includes('سُحبت');
 
-              if (isBlankOrTerminated) {
-                item.aiScore = 0;
-                item.teacherScore = 0;
-                item.aiFeedback = isAutoTerminatedByWarnings
-                  ? `🚫 تم سحب ورقة الاختبار تلقائياً لمخالفات أمنية (0 من ${item.maxScore})`
-                  : `لم يتم الإجابة على هذا السؤال (0 من ${item.maxScore})`;
-                item.teacherFeedback = item.aiFeedback;
-              } else if (q && item.studentText) {
-                try {
-                  const evalRes = await evaluateEssayAnswer(q, item.studentText, item.maxScore);
-                  item.aiScore = evalRes.score;
-                  item.aiFeedback = evalRes.feedback;
-                  essayEarned += evalRes.score;
-                } catch(e) {}
-              }
-            }
-            // في حال كانت إعادة للمقالي فقط مع حفظ درجات الاختياري
-            const isEssayOnlyRetake = activeRetakeDirective?.retakeType === 'essay_only';
-            const preservedScore = isEssayOnlyRetake ? (activeRetakeDirective.preservedMcqScore || 0) : 0;
-            const finalQuestionsToStore = isEssayOnlyRetake && activeRetakeDirective.preservedMcqAnswers && activeRetakeDirective.preservedMcqAnswers.length > 0
-              ? [...activeRetakeDirective.preservedMcqAnswers, ...allItemsForStorage]
-              : allItemsForStorage;
+                if (isBlankOrTerminated) {
+                  item.aiScore = 0;
+                  item.teacherScore = 0;
+                  item.aiFeedback = isAutoTerminatedByWarnings
+                    ? `🚫 تم سحب ورقة الاختبار تلقائياً لمخالفات أمنية (0 من ${item.maxScore})`
+                    : `لم يتم الإجابة على هذا السؤال (0 من ${item.maxScore})`;
+                  item.teacherFeedback = item.aiFeedback;
+                  hasAiGradedAny = true;
+                } else if (q && item.studentText) {
+                  if (isAiGradingEnabled()) {
+                    try {
+                      const evalRes = await evaluateEssayAnswer(q, item.studentText, item.maxScore);
+                      item.aiScore = evalRes.score;
+                      item.aiFeedback = evalRes.feedback;
+                      essayEarned += evalRes.score;
+                      hasAiGradedAny = true;
+                    } catch(e) {}
+                  } else {
+                    item.aiFeedback = '⏳ بانتظار تصحيح المعلم اليدوي';
+                  }
+                }
+              })
+            );
 
-            const effectiveTotalMax = (isEssayOnlyRetake && activeRetakeDirective.maxPossibleScore) 
-              ? activeRetakeDirective.maxPossibleScore 
-              : structure.examTotalScore;
-
-            const evaluatedSub: StudentEssaySubmission = {
-              id: `sub_${Date.now()}_${simpleHash(inputPhone || studentName || 'student')}`,
-              studentName: studentName || 'طالب',
-              studentPhone: inputPhone || '0000',
-              quizTitle: currentLesson.title,
-              lessonId: currentLesson.id,
-              submissionDate: new Date().toLocaleDateString('ar-EG'),
-              questions: finalQuestionsToStore,
-              isFullyApproved: false,
-              isAutoTerminated: Boolean(isAutoTerminatedByWarnings),
-              terminationReason: isAutoTerminatedByWarnings ? 'مخالفات مغادرة نافذة الامتحان' : undefined,
-              finalScore: initialEarnedScore + preservedScore + essayEarned,
-              maxPossibleScore: effectiveTotalMax
-            };
-            savePendingEssaySubmission(evaluatedSub);
-
-            // توثيق ملخص نتيجة الأسئلة الموضوعية (الاختيارية والصح/خطأ) ومزامنتها سحابياً مع المقالي
-            const mcqMaxScore = structure.mcqTotalScore + structure.tfTotalScore;
-            const mcqEarned = initialEarnedScore + preservedScore;
-            const cloudQuestionsToSync = [...essayItemsForStorage];
-
-            if (mcqMaxScore > 0) {
-              const mcqSummaryItem: EssayReviewQuestionItem = {
-                qIndex: -1,
-                questionText: 'الأسئلة الموضوعية (الاختياري والصح/خطأ)',
-                essayType: 'اختر من متعدد',
-                modelAnswer: `الدرجة العظمى: ${mcqMaxScore}`,
-                studentText: `حصل الطالب على ${mcqEarned} من أصل ${mcqMaxScore}`,
-                maxScore: mcqMaxScore,
-                teacherScore: mcqEarned,
-                aiScore: mcqEarned,
-                teacherFeedback: `نتيجة الأسئلة الموضوعية المرصودة آلياً: ${mcqEarned} / ${mcqMaxScore}`,
-                isApproved: true
+            // تحديث السجل بدرجات الذكاء الاصطناعي التمهيدية في حال رصدها
+            if (hasAiGradedAny || essayEarned > 0) {
+              const updatedSub: StudentEssaySubmission = {
+                ...initialSub,
+                questions: finalQuestionsToStore,
+                finalScore: initialEarnedScore + preservedScore + essayEarned
               };
-              cloudQuestionsToSync.unshift(mcqSummaryItem);
-            }
-
-            syncEssaySubmissionToCloud({
-              ...evaluatedSub,
-              questions: cloudQuestionsToSync
-            });
-
-            if (activeRetakeDirective) {
-              removeRetakeDirective(activeRetakeDirective.id);
-              setActiveRetakeDirective(null);
+              savePendingEssaySubmission(updatedSub);
+              const updatedCloudQuestions = [...essayItemsForStorage];
+              if (mcqMaxScore > 0) {
+                const mcqSummaryItem: EssayReviewQuestionItem = {
+                  qIndex: -1,
+                  questionText: 'الأسئلة الموضوعية (الاختياري والصح/خطأ)',
+                  essayType: 'اختر من متعدد',
+                  modelAnswer: `الدرجة العظمى: ${mcqMaxScore}`,
+                  studentText: `حصل الطالب على ${mcqEarned} من أصل ${mcqMaxScore}`,
+                  maxScore: mcqMaxScore,
+                  teacherScore: mcqEarned,
+                  aiScore: mcqEarned,
+                  teacherFeedback: `نتيجة الأسئلة الموضوعية المرصودة آلياً: ${mcqEarned} / ${mcqMaxScore}`,
+                  isApproved: true
+                };
+                updatedCloudQuestions.unshift(mcqSummaryItem);
+              }
+              syncEssaySubmissionToCloud({
+                ...updatedSub,
+                questions: updatedCloudQuestions
+              });
             }
           })();
 
@@ -8501,6 +8940,37 @@ function initAllSheetsMenu() {
                      (studentData as any)?.gender === 'أونلاين' ||
                      (adminOnlineStudents || []).some((o: any) => formatPhoneStr(o.phone) === formattedPhone);
     return isOnline ? 'online' : 'center';
+  };
+
+  const handleStartMistakesBankPractice = (selectedQuestions: Question[], lessonTitle: string) => {
+    const shuffledMistakes = shuffleArray(selectedQuestions).map(q => {
+      if (q.type === 'mcq' && q.options && q.options.length > 0) {
+        return { ...q, options: shuffleOptions(q.options) };
+      }
+      return q;
+    });
+    setActiveLesson({ 
+      id: 'mistakes_bank', 
+      title: `بنك أخطاء: ${lessonTitle} 🎯`, 
+      questions: shuffledMistakes, 
+      completed: false 
+    });
+    setIsReviewMode(false);
+    setIsPracticeMode(true);
+    setCurrentQIndex(0);
+    setUserAnswers([]);
+    setSkippedQuestions([]);
+    setTimeLeft(null);
+    if (securitySettings.offlineModeEnabled && typeof navigator !== 'undefined' && navigator.onLine) {
+      setOfflineGateStatus('require_offline_to_start');
+    } else {
+      setOfflineGateStatus('none');
+    }
+    tabSwitchStrikesRef.current = 0;
+    setTabSwitchStrikes(0);
+    setIsScreenObfuscated(false);
+    setTabSwitchWarningModal(null);
+    setScreen('quiz');
   };
 
   const startQuizForLesson = (lesson: Lesson) => {
@@ -8703,6 +9173,11 @@ function initAllSheetsMenu() {
   
   const renderScreen = () => {
     if (screen === 'returning_welcome') {
+      const studentPhoneForWelcome = inputPhone || localStorage.getItem('loggedInPhone') || (studentData as any)?.phone || '';
+      const hasPendingApproval = studentPhoneForWelcome 
+        ? getStudentSubmissions(studentPhoneForWelcome).some(s => !s.isFullyApproved)
+        : false;
+
       return (
         <div className="min-h-[100dvh] w-full flex items-center justify-center p-4 bg-gray-50 watermark-container">
           <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl text-center max-w-md w-full border-t-8 border-secondary animate-fade-in relative overflow-hidden">
@@ -8712,6 +9187,13 @@ function initAllSheetsMenu() {
             <p className="text-gray-800 text-lg sm:text-xl font-bold mb-6 mt-3 relative z-10 leading-relaxed">
               سعدت بعودتك جاهز يا بطل نكمل
             </p>
+
+            {hasPendingApproval && (
+              <div className="mb-5 p-3.5 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 text-xs sm:text-sm font-black flex items-center justify-center gap-2.5 shadow-2xs relative z-10 animate-pulse text-center">
+                <i className="fas fa-hourglass-half text-amber-600 text-base shrink-0"></i>
+                <span>انتظر اعتماد أ/ إسلام سعود النتيجة لمعاينة أخطائك</span>
+              </div>
+            )}
 
             <div className="flex flex-col gap-3 relative z-10 w-full">
               <button 
@@ -9215,32 +9697,8 @@ function initAllSheetsMenu() {
 
             {visibleMistakesBank.length > 0 && (
               <button 
-                onClick={() => {
-                  const shuffledMistakes = shuffleArray(visibleMistakesBank).map(q => {
-                    if (q.type === 'mcq' && q.options && q.options.length > 0) {
-                      return { ...q, options: shuffleOptions(q.options) };
-                    }
-                    return q;
-                  });
-                  setActiveLesson({ id: 'mistakes_bank', title: 'بنك الأخطاء 🎯', questions: shuffledMistakes, completed: false });
-                  setIsReviewMode(false);
-                  setIsPracticeMode(true);
-                  setCurrentQIndex(0);
-                  setUserAnswers([]);
-                  setSkippedQuestions([]);
-                  setTimeLeft(null);
-                  if (securitySettings.offlineModeEnabled && typeof navigator !== 'undefined' && navigator.onLine) {
-                    setOfflineGateStatus('require_offline_to_start');
-                  } else {
-                    setOfflineGateStatus('none');
-                  }
-                  tabSwitchStrikesRef.current = 0;
-                  setTabSwitchStrikes(0);
-                  setIsScreenObfuscated(false);
-                  setTabSwitchWarningModal(null);
-                  setScreen('quiz');
-                }} 
-                className="w-full mt-2.5 py-2 px-3 rounded-xl flex items-center justify-between shadow-sm transition-all bg-rose-50 border-2 border-rose-400 hover:bg-rose-100 active:scale-[0.99]"
+                onClick={() => setShowMistakesBankSelectorModal(true)} 
+                className="w-full mt-2.5 py-2 px-3 rounded-xl flex items-center justify-between shadow-sm transition-all bg-rose-50 border-2 border-rose-400 hover:bg-rose-100 active:scale-[0.99] cursor-pointer"
                 dir="rtl"
               >
                 <div className="flex items-center gap-2">
@@ -10641,105 +11099,173 @@ function initAllSheetsMenu() {
                 </div>
               )}
             </div>
-            <div className="w-full flex flex-col gap-3">
-              {/* زر مراجعة الإجابات والتعليلات النموذجية */}
-              <button 
-                onClick={() => {
-                  setIsReviewMode(true);
-                  setCurrentQIndex(0);
-                  setScreen('quiz');
-                }} 
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-lg sm:text-xl py-3.5 px-6 rounded-2xl w-full transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-emerald-500"
-              >
-                <i className="fas fa-search-plus text-amber-300"></i> مراجعة الإجابات والتعليلات النموذجية 🔍
-              </button>
+            {(() => {
+              const hasEssay = activeLesson.questions.some(q => q.type === 'essay');
+              const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
+              const studentSubs = getStudentSubmissions(phone);
+              const currentSub = studentSubs.find(s => s.lessonId === activeLesson.id || s.quizTitle?.trim() === activeLesson.title?.trim()) || studentSubs[0];
+              const isApproved = currentSub ? currentSub.isFullyApproved : !hasEssay;
+              const isMistakesReleased = currentSub ? (currentSub.isMistakesBankReleased !== false) : true;
 
-              {/* زر إعادة الاختبار للتدريب والتقوية فقط */}
-              <button 
-                onClick={() => {
-                  setIsPracticeMode(true);
-                  setIsReviewMode(false);
-                  setUserAnswers([]);
-                  setCurrentQIndex(0);
-                  setSkippedQuestions([]);
-                  const shuffledQuestions = shuffleArray(activeLesson.questions).map(q => {
-                    if (q.type === 'mcq' && q.options && q.options.length > 0) {
-                      return { ...q, options: shuffleOptions(q.options) };
-                    }
-                    return q;
-                  });
-                  setActiveLesson({ ...activeLesson, questions: shuffledQuestions });
-                  setTimeLeft(isLessonTimerActive(activeLesson.title, activeLesson.id) ? timerSecondsPerQ : null);
-                  setScreen('quiz');
-                }} 
-                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-lg sm:text-xl py-3.5 px-6 rounded-2xl w-full transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-amber-600"
-              >
-                <i className="fas fa-dumbbell"></i> إعادة الاختبار (للتدريب والتقوية فقط) 🔄
-              </button>
+              // 1. حالة الامتحان قيد المراجعة والاعتماد
+              if (hasEssay && !isApproved) {
+                return (
+                  <div className="w-full flex flex-col gap-3">
+                    <div className="w-full p-4 bg-amber-50 dark:bg-amber-950/60 border-2 border-amber-300 dark:border-amber-700 rounded-2xl text-amber-900 dark:text-amber-200 text-sm font-black flex items-center justify-center gap-2.5 shadow-2xs text-center">
+                      <i className="fas fa-hourglass-half text-amber-600 animate-pulse text-lg"></i>
+                      <span>انتظر اعتماد أ/ إسلام سعود النتيجة لمعاينة أخطائك وشهادة التقدير ⏳</span>
+                    </div>
 
-              <button 
-                onClick={()=>{
-                  setIsReviewMode(false);
-                  setIsPracticeMode(false);
-                  setScreen('index');
-                }} 
-                className="bg-primary text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-gray-900 transition-colors shadow-lg active:scale-95"
-              >
-                العودة للفهرس
-              </button>
+                    <button 
+                      onClick={() => {
+                        setIsReviewMode(false);
+                        setIsPracticeMode(false);
+                        setScreen('index');
+                      }} 
+                      className="bg-primary text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-gray-900 transition-colors shadow-lg active:scale-95 cursor-pointer"
+                    >
+                      العودة للفهرس
+                    </button>
+                  </div>
+                );
+              }
 
-              {activeLesson.questions.some(q => q.type === 'essay') && (
-                <button 
-                  onClick={() => {
-                    const phone = inputPhone || localStorage.getItem('loggedInPhone') || '';
-                    const studentSubs = getStudentSubmissions(phone);
-                    const currentSub = studentSubs.find(s => s.lessonId === activeLesson.id) || studentSubs[0];
-                    if (currentSub) {
-                      setApprovedSubForModal(currentSub);
-                    }
-                  }} 
-                  className="bg-indigo-600 text-white font-black text-lg py-3.5 px-6 rounded-full w-full hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-indigo-500"
-                >
-                  <i className="fas fa-feather-alt text-amber-400"></i> مراجعة تفاصيل ودرجات الأسئلة المقالية 📝
-                </button>
-              )}
-              
-              {perc < 100 && (
-                <button 
-                  onClick={()=>{
-                    const wrongQs = activeLesson.questions.filter((q, idx) => userAnswers[idx] && !userAnswers[idx].isCorrect);
-                    const shuffledWrongQs = shuffleArray(wrongQs).map(q => {
-                      if (q.type === 'mcq' && q.options && q.options.length > 0) {
-                        return { ...q, options: shuffleOptions(q.options) };
-                      }
-                      return q;
-                    });
-                    const newLesson = { ...activeLesson, questions: shuffledWrongQs };
-                    setData(data.map(u=>({...u,lessons:u.lessons.map(l=>l.id===activeLesson.id?newLesson:l)})));
-                    setActiveLesson(newLesson);
-                    setIsReviewMode(false);
-                    setIsPracticeMode(true);
-                    setUserAnswers([]);
-                    setCurrentQIndex(0);
-                    setSkippedQuestions([]);
-                    setTimeLeft(isLessonTimerActive(activeLesson.title, activeLesson.id) ? timerSecondsPerQ : null);
-                    if (securitySettings.offlineModeEnabled && typeof navigator !== 'undefined' && navigator.onLine) {
-                      setOfflineGateStatus('require_offline_to_start');
-                    } else {
-                      setOfflineGateStatus('none');
-                    }
-                    tabSwitchStrikesRef.current = 0;
-                    setTabSwitchStrikes(0);
-                    setIsScreenObfuscated(false);
-                    setTabSwitchWarningModal(null);
-                    setScreen('quiz');
-                  }} 
-                  className="bg-rose-500 text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-rose-700 transition-colors shadow-lg active:scale-95 border-2 border-rose-600"
-                >
-                  إعادة اختبار الأخطاء فقط <i className="fas fa-redo-alt ml-2"></i>
-                </button>
-              )}
-            </div>
+              // 2. حالة اعتماد النتيجة ولكن حجب الأسئلة مؤقتاً لمنع التسريب
+              if (isApproved && !isMistakesReleased) {
+                return (
+                  <div className="w-full flex flex-col gap-3">
+                    {currentSub && (
+                      <button 
+                        onClick={() => setApprovedSubForModal(currentSub)} 
+                        className="bg-indigo-600 text-white font-black text-lg py-4 px-6 rounded-2xl w-full hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-indigo-500"
+                      >
+                        <i className="fas fa-award text-amber-400 text-xl"></i>
+                        <span>استعراض النتيجة وشهادة التقدير 📜</span>
+                      </button>
+                    )}
+
+                    <div className="w-full p-4 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 rounded-2xl text-center space-y-1.5">
+                      <div className="flex items-center justify-center gap-2 text-indigo-900 dark:text-indigo-200 font-black text-sm">
+                        <i className="fas fa-shield-alt text-indigo-600"></i>
+                        <span>تم رصد درجتك بنجاح 📜</span>
+                      </div>
+                      <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300 leading-relaxed">
+                        🔒 حرصاً على تكافؤ الفرص والأمانة الأكاديمية، سيتم فتح مراجعة الأسئلة والتدريب على هذا الاختبار فور انتهاء مهلة الحل لجميع زملائك.
+                      </p>
+                    </div>
+
+                    <button 
+                      onClick={() => {
+                        setIsReviewMode(false);
+                        setIsPracticeMode(false);
+                        setScreen('index');
+                      }} 
+                      className="bg-primary text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-gray-900 transition-colors shadow-lg active:scale-95 cursor-pointer"
+                    >
+                      العودة للفهرس
+                    </button>
+                  </div>
+                );
+              }
+
+              // 3. حالة الاعتماد الكامل مع إتاحة الأسئلة والتدريب
+              return (
+                <div className="w-full flex flex-col gap-3">
+                  {currentSub && isApproved && (
+                    <button 
+                      onClick={() => setApprovedSubForModal(currentSub)} 
+                      className="bg-indigo-600 text-white font-black text-lg py-3.5 px-6 rounded-2xl w-full hover:bg-indigo-700 transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-indigo-500"
+                    >
+                      <i className="fas fa-award text-amber-400 text-xl"></i>
+                      <span>استعراض النتيجة وشهادة التقدير 📜</span>
+                    </button>
+                  )}
+
+                  <button 
+                    onClick={() => {
+                      setIsReviewMode(true);
+                      setCurrentQIndex(0);
+                      setScreen('quiz');
+                    }} 
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-lg sm:text-xl py-3.5 px-6 rounded-2xl w-full transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-emerald-500"
+                  >
+                    <i className="fas fa-search-plus text-amber-300"></i>
+                    <span>مراجعة الإجابات والتعليقات النموذجية 🔍</span>
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setIsPracticeMode(true);
+                      setIsReviewMode(false);
+                      setUserAnswers([]);
+                      setCurrentQIndex(0);
+                      setSkippedQuestions([]);
+                      const shuffledQuestions = shuffleArray(activeLesson.questions).map(q => {
+                        if (q.type === 'mcq' && q.options && q.options.length > 0) {
+                          return { ...q, options: shuffleOptions(q.options) };
+                        }
+                        return q;
+                      });
+                      setActiveLesson({ ...activeLesson, questions: shuffledQuestions });
+                      setTimeLeft(isLessonTimerActive(activeLesson.title, activeLesson.id) ? timerSecondsPerQ : null);
+                      setScreen('quiz');
+                    }} 
+                    className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-lg sm:text-xl py-3.5 px-6 rounded-2xl w-full transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer border-2 border-amber-600"
+                  >
+                    <i className="fas fa-dumbbell"></i>
+                    <span>إعادة الاختبار (للتدريب والتقوية فقط) 🏋️</span>
+                  </button>
+
+                  {perc < 100 && (
+                    <button 
+                      onClick={() => {
+                        const wrongQs = activeLesson.questions.filter((q, idx) => userAnswers[idx] && !userAnswers[idx].isCorrect);
+                        const shuffledWrongQs = shuffleArray(wrongQs).map(q => {
+                          if (q.type === 'mcq' && q.options && q.options.length > 0) {
+                            return { ...q, options: shuffleOptions(q.options) };
+                          }
+                          return q;
+                        });
+                        const newLesson = { ...activeLesson, questions: shuffledWrongQs };
+                        setData(data.map(u => ({ ...u, lessons: u.lessons.map(l => l.id === activeLesson.id ? newLesson : l) })));
+                        setActiveLesson(newLesson);
+                        setIsReviewMode(false);
+                        setIsPracticeMode(true);
+                        setUserAnswers([]);
+                        setCurrentQIndex(0);
+                        setSkippedQuestions([]);
+                        setTimeLeft(isLessonTimerActive(activeLesson.title, activeLesson.id) ? timerSecondsPerQ : null);
+                        if (securitySettings.offlineModeEnabled && typeof navigator !== 'undefined' && navigator.onLine) {
+                          setOfflineGateStatus('require_offline_to_start');
+                        } else {
+                          setOfflineGateStatus('none');
+                        }
+                        tabSwitchStrikesRef.current = 0;
+                        setTabSwitchStrikes(0);
+                        setIsScreenObfuscated(false);
+                        setTabSwitchWarningModal(null);
+                        setScreen('quiz');
+                      }} 
+                      className="bg-rose-500 text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-rose-700 transition-colors shadow-lg active:scale-95 border-2 border-rose-600 cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <span>إعادة اختبار الأخطاء فقط</span>
+                      <i className="fas fa-redo-alt"></i>
+                    </button>
+                  )}
+
+                  <button 
+                    onClick={() => {
+                      setIsReviewMode(false);
+                      setIsPracticeMode(false);
+                      setScreen('index');
+                    }} 
+                    className="bg-primary text-white font-black text-xl md:text-2xl py-4 px-10 rounded-full w-full hover:bg-gray-900 transition-colors shadow-lg active:scale-95 cursor-pointer"
+                  >
+                    العودة للفهرس
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       );
@@ -10989,22 +11515,285 @@ function initAllSheetsMenu() {
             </div>
             
             <div className="flex-1 w-full space-y-6 min-w-0">
-              {adminActiveTab === 'results' && (
-                <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                      <h2 className="text-xl font-black text-primary"><i className="fas fa-chart-line text-blue-500 ml-1"></i> نتائج ومتابعة الطلاب</h2>
-                      <div className="relative w-full sm:w-64">
-                        <input 
-                          type="text" 
-                          placeholder="بحث بالاسم..." 
-                          className="border-2 border-gray-300 rounded-xl px-4 py-2 w-full focus:border-primary outline-none text-sm font-bold pr-10" 
-                          value={resultsSearchQuery} 
-                          onChange={e => setResultsSearchQuery(e.target.value)} 
-                        />
-                        <i className="fas fa-search absolute top-1/2 -translate-y-1/2 right-3 text-gray-400"></i>
+              {adminActiveTab === 'results' && (() => {
+                const currentValidLessons = data.flatMap(u => u.lessons.map(l => l.title));
+                const reqKeywords = ['زراع', 'رع', 'تعدين', 'صناع', 'يولي', 'فلسطين', 'كتوبر', 'صراع', 'يناير'];
+                const requiredCurrentTitles = currentValidLessons.filter(title => 
+                    reqKeywords.some(kw => normalizeLessonName(title).includes(normalizeLessonName(kw)))
+                );
+
+                // الوحدة والدرس المحددين إن وجدا
+                const targetUnit = resultsUnitFilter !== 'all' 
+                  ? data.find(u => u.id === resultsUnitFilter || u.title === resultsUnitFilter) 
+                  : null;
+                const activeValidLessons = resultsLessonFilter !== 'all'
+                  ? [resultsLessonFilter]
+                  : targetUnit 
+                    ? targetUnit.lessons.map(l => l.title) 
+                    : currentValidLessons;
+                const activeUnitLessonsCount = resultsLessonFilter !== 'all'
+                  ? 1
+                  : targetUnit 
+                    ? targetUnit.lessons.length 
+                    : currentValidLessons.length;
+                
+                const getUniqueActiveTests = (tests: TestResult[]) => {
+                    if (!tests || tests.length === 0) return [];
+                    const firstScores: Record<string, number> = {};
+                    tests.forEach(t => {
+                        if (isAmbiguousOldQuiz(t.quiz)) return;
+                        if (t.quiz.includes('تصفير') || t.quiz.includes('فرصة جديدة') || String(t.score).includes('تصفير')) {
+                            if (t.quiz.includes('فرصة جديدة') || t.quiz.includes('تصفير درس')) {
+                                const lessonTitleToReset = t.quiz.replace(/.*(?:فرصة جديدة|تصفير درس).*?:/, '').trim();
+                                const matchedLesson = data.flatMap(u => u.lessons).find(l => 
+                                    normalizeLessonName(l.title).includes(normalizeLessonName(lessonTitleToReset)) || 
+                                    normalizeLessonName(lessonTitleToReset).includes(normalizeLessonName(l.title))
+                                );
+                                if (matchedLesson) {
+                                    delete firstScores[matchedLesson.title];
+                                }
+                            } else if (t.quiz.includes('تصفير الوحدة')) { 
+                                const unitTitleToReset = t.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
+                                const unitToReset = data.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
+                                if (unitToReset) {
+                                    unitToReset.lessons.forEach(l => delete firstScores[l.title]);
+                                }
+                            } else {
+                                for(let key in firstScores) delete firstScores[key];
+                            }
+                            return;
+                        }
+                        const mappedTitle = matchQuizToCurrent(t.quiz, activeValidLessons);
+                        if (mappedTitle && firstScores[mappedTitle] === undefined) {
+                            firstScores[mappedTitle] = normalizeScore(t.score);
+                        }
+                    });
+                    return Object.keys(firstScores);
+                };
+
+                let list = [...adminResults];
+                const activeNames = new Set(adminResults.map(r => r.name ? r.name.trim() : ''));
+                const inactive: GroupedResult[] = [];
+                Object.entries(studentsList).forEach(([phone, arr]) => {
+                  const stArr = Array.isArray(arr) ? arr : [arr];
+                  stArr.forEach(st => {
+                     if (st && st.name && !activeNames.has(st.name.trim())) {
+                       inactive.push({ name: st.name, phone: phone, tests: [], gender: (st as any).gender });
+                     }
+                  });
+                });
+
+                const testCountMap = new Map<any, number>();
+                const getCount = (st: GroupedResult) => {
+                  let c = testCountMap.get(st);
+                  if (c === undefined) {
+                    c = getUniqueActiveTests(st.tests).length;
+                    testCountMap.set(st, c);
+                  }
+                  return c;
+                };
+
+                // دمج جميع الطلاب
+                const allStudentsCombined: GroupedResult[] = [...list];
+                const existingNames = new Set(list.map(s => (s.name || '').trim()));
+                inactive.forEach(st => {
+                  if (!existingNames.has(st.name.trim())) {
+                    allStudentsCombined.push(st);
+                    existingNames.add(st.name.trim());
+                  }
+                });
+
+                let baseList = [...list, ...inactive];
+                if (adminSort === 'none') {
+                   baseList = allStudentsCombined.filter(s => getCount(s) === 0).sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+                } else if (adminSort === 'most') {
+                   baseList = allStudentsCombined.filter(s => getCount(s) > 0).sort((a,b) => getCount(b) - getCount(a));
+                } else if (adminSort === 'least') {
+                   baseList = allStudentsCombined.filter(s => getCount(s) > 0).sort((a,b) => getCount(a) - getCount(b));
+                } else if (adminSort === 'blocked') {
+                   baseList = allStudentsCombined.filter(s => {
+                       const stRecord = studentsList[s.phone];
+                       const stArr = stRecord ? (Array.isArray(stRecord) ? stRecord : [stRecord]) : [];
+                       const matchedSt = stArr.find(st => st.name.trim() === (s.name || '').trim());
+                       return matchedSt && (matchedSt as any).isBlocked;
+                   }).sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+                } else {
+                   baseList = allStudentsCombined.sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+                }
+
+                let displayList: GroupedResult[] = [];
+                if (resultsSearchQuery.trim()) {
+                  const q = resultsSearchQuery.trim().toLowerCase();
+                  displayList = baseList.filter(s => 
+                    (s.name && String(s.name).toLowerCase().includes(q)) || 
+                    (s.phone && String(s.phone).includes(q))
+                  );
+                } else {
+                  displayList = baseList;
+                }
+
+                // فحص وتصفية الفئة (سنتر / أونلاين)
+                const onlinePhoneSet = new Set((adminOnlineStudents || []).map(s => formatPhoneStr(s.phone)));
+                const isStudentOnline = (s: GroupedResult) => {
+                  if (s.studentType === 'أونلاين') return true;
+                  const cleanP = formatPhoneStr(s.phone);
+                  if (onlinePhoneSet.has(cleanP)) return true;
+                  if (s.tests && s.tests.some(t => t.studentType === 'أونلاين')) return true;
+                  return false;
+                };
+
+                if (resultsStudentTypeFilter === 'center') {
+                  displayList = displayList.filter(s => !isStudentOnline(s));
+                } else if (resultsStudentTypeFilter === 'online') {
+                  displayList = displayList.filter(s => isStudentOnline(s));
+                }
+
+                // تصفية النوع (بنين / بنات)
+                const getStudentGender = (s: GroupedResult): 'male' | 'female' => {
+                  const stRecord = studentsList[s.phone];
+                  const stArr = stRecord ? (Array.isArray(stRecord) ? stRecord : [stRecord]) : [];
+                  const matchedSt = stArr.find(st => st.name.trim() === (s.name || '').trim());
+                  return detectArabicGender(s.name, matchedSt?.gender || s.gender);
+                };
+
+                if (resultsGenderFilter === 'male') {
+                  displayList = displayList.filter(s => getStudentGender(s) === 'male');
+                } else if (resultsGenderFilter === 'female') {
+                  displayList = displayList.filter(s => getStudentGender(s) === 'female');
+                }
+
+                // حصر الامتحانات المقالية والهجينة قيد المراجعة والاعتماد لكل طالب
+                const pendingSubmissionsMap = (() => {
+                  const map = new Map<string, number>();
+                  try {
+                    const list = getPendingEssaySubmissions();
+                    list.forEach(sub => {
+                      if (!sub.isFullyApproved) {
+                        const p = formatPhoneStr(sub.studentPhone);
+                        map.set(p, (map.get(p) || 0) + 1);
+                      }
+                    });
+                  } catch(e) {}
+                  return map;
+                })();
+
+                return (
+                  <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col gap-3">
+                      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-xl font-black text-primary flex items-center gap-2">
+                            <i className="fas fa-chart-line text-blue-500"></i>
+                            <span>نتائج ومتابعة الطلاب</span>
+                          </h2>
+                          <span className="text-xs font-bold text-gray-500 bg-gray-200/70 px-2 py-0.5 rounded-lg">
+                            {toEasternArabic(displayList.length)} طالب
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                          {/* قائمة تصدير إكسيل والواتساب الذكية */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setShowExportMenu(!showExportMenu)}
+                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 whitespace-nowrap"
+                              title="تصدير النتائج إلى ملف إكسيل أو نسخ أرقام الواتساب"
+                            >
+                              <i className="fas fa-file-excel text-emerald-200 text-sm"></i>
+                              <span>تصدير إكسيل 📊</span>
+                              <i className={`fas fa-chevron-down text-[10px] transition-transform ${showExportMenu ? 'rotate-180' : ''}`}></i>
+                            </button>
+
+                            {showExportMenu && (
+                              <>
+                                <div 
+                                  className="fixed inset-0 z-40" 
+                                  onClick={() => setShowExportMenu(false)}
+                                />
+                                <div className="absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray-200 p-2 z-50 animate-scale-up space-y-1 text-right">
+                                  <div className="px-3 py-1.5 text-[11px] font-black text-gray-400 border-b border-gray-100 flex items-center justify-between">
+                                    <span>خيارات التصدير الذكية</span>
+                                    <span className="text-emerald-600 font-bold">{toEasternArabic(displayList.length)} طالب محدد</span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleExportResultsExcel('filtered', 'xls', displayList, activeValidLessons, targetUnit, getStudentGender, isStudentOnline, getUniqueActiveTests)}
+                                    className="w-full text-right px-3 py-2.5 rounded-xl hover:bg-emerald-50 text-gray-800 hover:text-emerald-900 font-bold text-xs flex items-center gap-2.5 transition-colors cursor-pointer"
+                                  >
+                                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                      <i className="fas fa-file-excel text-xs"></i>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-black text-xs text-gray-900">تصدير إكسيل المفلتر الحالي (.xls)</div>
+                                      <div className="text-[10px] text-gray-500 truncate">
+                                        {resultsLessonFilter !== 'all' ? `درجات درس: ${resultsLessonFilter}` : targetUnit ? `كشف وحدة: ${targetUnit.title}` : 'الكشف المعروض بحسب الفلاتر (عربي منسق)'}
+                                      </div>
+                                    </div>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleExportResultsExcel('all', 'xls', displayList, activeValidLessons, targetUnit, getStudentGender, isStudentOnline, getUniqueActiveTests)}
+                                    className="w-full text-right px-3 py-2.5 rounded-xl hover:bg-blue-50 text-gray-800 hover:text-blue-900 font-bold text-xs flex items-center gap-2.5 transition-colors cursor-pointer"
+                                  >
+                                    <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                                      <i className="fas fa-table-list text-xs"></i>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-black text-xs text-gray-900">تصدير السجل الشامل لجميع النتائج (.xls)</div>
+                                      <div className="text-[10px] text-gray-500">كافة النتائج والامتحانات المسجلة في النظام</div>
+                                    </div>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleExportResultsExcel('filtered', 'csv', displayList, activeValidLessons, targetUnit, getStudentGender, isStudentOnline, getUniqueActiveTests)}
+                                    className="w-full text-right px-3 py-2 rounded-xl hover:bg-gray-100 text-gray-700 font-bold text-xs flex items-center gap-2.5 transition-colors cursor-pointer"
+                                  >
+                                    <div className="w-7 h-7 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
+                                      <i className="fas fa-file-csv text-xs"></i>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-black text-xs text-gray-800">تصدير بصيغة CSV العامة (.csv)</div>
+                                      <div className="text-[10px] text-gray-400">ملف نصي مفصول بفواصل مع حفظ الأصفار</div>
+                                    </div>
+                                  </button>
+
+                                  <div className="h-[1px] bg-gray-100 my-1"></div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyResultsPhones(displayList)}
+                                    className="w-full text-right px-3 py-2.5 rounded-xl hover:bg-emerald-50 text-gray-800 hover:text-emerald-900 font-bold text-xs flex items-center gap-2.5 transition-colors cursor-pointer"
+                                  >
+                                    <div className="w-7 h-7 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                                      <i className="fab fa-whatsapp text-sm"></i>
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-black text-xs text-gray-900">نسخ أرقام الطلاب المعروضين</div>
+                                      <div className="text-[10px] text-gray-500">لصق مباشر في مجموعات ورسائل الواتساب</div>
+                                    </div>
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {/* مربع البحث */}
+                          <div className="relative w-full sm:w-64">
+                            <input 
+                              type="text" 
+                              placeholder="بحث بالاسم أو الهاتف..." 
+                              className="border-2 border-gray-300 rounded-xl px-4 py-2 w-full focus:border-primary outline-none text-sm font-bold pr-10" 
+                              value={resultsSearchQuery} 
+                              onChange={e => setResultsSearchQuery(e.target.value)} 
+                            />
+                            <i className="fas fa-search absolute top-1/2 -translate-y-1/2 right-3 text-gray-400"></i>
+                          </div>
+                        </div>
                       </div>
-                    </div>
                     <div className="flex flex-wrap items-center gap-2 mt-1">
                       {/* 1. فرز أبجدي */}
                       <button 
@@ -11263,171 +12052,7 @@ function initAllSheetsMenu() {
                     </div>
                   </div>
                   <div className="p-4 space-y-2.5">
-                    {(() => {
-                      const currentValidLessons = data.flatMap(u => u.lessons.map(l => l.title));
-                      const reqKeywords = ['زراع', 'رع', 'تعدين', 'صناع', 'يولي', 'فلسطين', 'كتوبر', 'صراع', 'يناير'];
-                      const requiredCurrentTitles = currentValidLessons.filter(title => 
-                          reqKeywords.some(kw => normalizeLessonName(title).includes(normalizeLessonName(kw)))
-                      );
-
-                      // الوحدة والدرس المحددين إن وجدا
-                      const targetUnit = resultsUnitFilter !== 'all' 
-                        ? data.find(u => u.id === resultsUnitFilter || u.title === resultsUnitFilter) 
-                        : null;
-                      const activeValidLessons = resultsLessonFilter !== 'all'
-                        ? [resultsLessonFilter]
-                        : targetUnit 
-                          ? targetUnit.lessons.map(l => l.title) 
-                          : currentValidLessons;
-                      const activeUnitLessonsCount = resultsLessonFilter !== 'all'
-                        ? 1
-                        : targetUnit 
-                          ? targetUnit.lessons.length 
-                          : currentValidLessons.length;
-                      
-                      const getUniqueActiveTests = (tests: TestResult[]) => {
-                          if (!tests || tests.length === 0) return [];
-                          const firstScores: Record<string, number> = {};
-                          tests.forEach(t => {
-                              if (isAmbiguousOldQuiz(t.quiz)) return;
-                              if (t.quiz.includes('تصفير') || t.quiz.includes('فرصة جديدة') || String(t.score).includes('تصفير')) {
-                                  if (t.quiz.includes('فرصة جديدة') || t.quiz.includes('تصفير درس')) {
-                                      const lessonTitleToReset = t.quiz.replace(/.*(?:فرصة جديدة|تصفير درس).*?:/, '').trim();
-                                      const matchedLesson = data.flatMap(u => u.lessons).find(l => 
-                                          normalizeLessonName(l.title).includes(normalizeLessonName(lessonTitleToReset)) || 
-                                          normalizeLessonName(lessonTitleToReset).includes(normalizeLessonName(l.title))
-                                      );
-                                      if (matchedLesson) {
-                                          delete firstScores[matchedLesson.title];
-                                      }
-                                  } else if (t.quiz.includes('تصفير الوحدة')) { 
-                                      const unitTitleToReset = t.quiz.replace(/.*تصفير الوحدة.*?:/, '').trim();
-                                      const unitToReset = data.find(u => normalizeLessonName(u.title) === normalizeLessonName(unitTitleToReset));
-                                      if (unitToReset) {
-                                          unitToReset.lessons.forEach(l => delete firstScores[l.title]);
-                                      }
-                                  } else {
-                                      for(let key in firstScores) delete firstScores[key];
-                                  }
-                                  return;
-                              }
-                              const mappedTitle = matchQuizToCurrent(t.quiz, activeValidLessons);
-                              if (mappedTitle && firstScores[mappedTitle] === undefined) {
-                                  firstScores[mappedTitle] = normalizeScore(t.score);
-                              }
-                          });
-                          return Object.keys(firstScores);
-                      };
-
-                      let list = [...adminResults];
-                      const activeNames = new Set(adminResults.map(r => r.name ? r.name.trim() : ''));
-                      const inactive: GroupedResult[] = [];
-                      Object.entries(studentsList).forEach(([phone, arr]) => {
-                        const stArr = Array.isArray(arr) ? arr : [arr];
-                        stArr.forEach(st => {
-                           if (st && st.name && !activeNames.has(st.name.trim())) {
-                             inactive.push({ name: st.name, phone: phone, tests: [], gender: (st as any).gender });
-                           }
-                        });
-                      });
-
-                      const testCountMap = new Map<any, number>();
-                      const getCount = (st: GroupedResult) => {
-                        let c = testCountMap.get(st);
-                        if (c === undefined) {
-                          c = getUniqueActiveTests(st.tests).length;
-                          testCountMap.set(st, c);
-                        }
-                        return c;
-                      };
-
-                      // دمج جميع الطلاب
-                      const allStudentsCombined: GroupedResult[] = [...list];
-                      const existingNames = new Set(list.map(s => (s.name || '').trim()));
-                      inactive.forEach(st => {
-                        if (!existingNames.has(st.name.trim())) {
-                          allStudentsCombined.push(st);
-                          existingNames.add(st.name.trim());
-                        }
-                      });
-
-                      let baseList = [...list, ...inactive];
-                      if (adminSort === 'none') {
-                         baseList = allStudentsCombined.filter(s => getCount(s) === 0).sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
-                      } else if (adminSort === 'most') {
-                         baseList = allStudentsCombined.filter(s => getCount(s) > 0).sort((a,b) => getCount(b) - getCount(a));
-                      } else if (adminSort === 'least') {
-                         baseList = allStudentsCombined.filter(s => getCount(s) > 0).sort((a,b) => getCount(a) - getCount(b));
-                      } else if (adminSort === 'blocked') {
-                         baseList = allStudentsCombined.filter(s => {
-                             const stRecord = studentsList[s.phone];
-                             const stArr = stRecord ? (Array.isArray(stRecord) ? stRecord : [stRecord]) : [];
-                             const matchedSt = stArr.find(st => st.name.trim() === (s.name || '').trim());
-                             return matchedSt && (matchedSt as any).isBlocked;
-                         }).sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
-                      } else {
-                         baseList = allStudentsCombined.sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar'));
-                      }
-
-                      let displayList: GroupedResult[] = [];
-                      if (resultsSearchQuery.trim()) {
-                        const q = resultsSearchQuery.trim().toLowerCase();
-                        displayList = baseList.filter(s => 
-                          (s.name && String(s.name).toLowerCase().includes(q)) || 
-                          (s.phone && String(s.phone).includes(q))
-                        );
-                      } else {
-                        displayList = baseList;
-                      }
-
-                      // فحص وتصفية الفئة (سنتر / أونلاين)
-                      const onlinePhoneSet = new Set((adminOnlineStudents || []).map(s => formatPhoneStr(s.phone)));
-                      const isStudentOnline = (s: GroupedResult) => {
-                        if (s.studentType === 'أونلاين') return true;
-                        const cleanP = formatPhoneStr(s.phone);
-                        if (onlinePhoneSet.has(cleanP)) return true;
-                        if (s.tests && s.tests.some(t => t.studentType === 'أونلاين')) return true;
-                        return false;
-                      };
-
-                      if (resultsStudentTypeFilter === 'center') {
-                        displayList = displayList.filter(s => !isStudentOnline(s));
-                      } else if (resultsStudentTypeFilter === 'online') {
-                        displayList = displayList.filter(s => isStudentOnline(s));
-                      }
-
-                      // تصفية النوع (بنين / بنات)
-                      const getStudentGender = (s: GroupedResult): 'male' | 'female' => {
-                        const stRecord = studentsList[s.phone];
-                        const stArr = stRecord ? (Array.isArray(stRecord) ? stRecord : [stRecord]) : [];
-                        const matchedSt = stArr.find(st => st.name.trim() === (s.name || '').trim());
-                        return detectArabicGender(s.name, matchedSt?.gender || s.gender);
-                      };
-
-                      if (resultsGenderFilter === 'male') {
-                        displayList = displayList.filter(s => getStudentGender(s) === 'male');
-                      } else if (resultsGenderFilter === 'female') {
-                        displayList = displayList.filter(s => getStudentGender(s) === 'female');
-                      }
-
-                      // حصر الامتحانات المقالية والهجينة قيد المراجعة والاعتماد لكل طالب
-                      const pendingSubmissionsMap = (() => {
-                        const map = new Map<string, number>();
-                        try {
-                          const list = getPendingEssaySubmissions();
-                          list.forEach(sub => {
-                            if (!sub.isFullyApproved) {
-                              const p = formatPhoneStr(sub.studentPhone);
-                              map.set(p, (map.get(p) || 0) + 1);
-                            }
-                          });
-                        } catch(e) {}
-                        return map;
-                      })();
-
-                      return (
-                        <React.Fragment>
-                          {adminSort === 'none' && (
+                    {adminSort === 'none' && (
                             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 bg-rose-50 border border-rose-200 p-3 rounded-xl gap-3 shadow-sm">
                               <span className="text-rose-800 font-black text-sm">
                                 <i className="fas fa-ghost ml-1"></i>
@@ -11778,12 +12403,10 @@ function initAllSheetsMenu() {
                               </button>
                             </div>
                           )}
-                        </React.Fragment>
-                      );
-                    })()}
                   </div>
                 </div>
-              )}
+              );
+            })()}
               {adminActiveTab === 'lessons' && (
                 <div className="bg-white rounded-2xl shadow-md overflow-hidden">
                   <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -13827,6 +14450,41 @@ function initAllSheetsMenu() {
                             )}
                           </div>
                         </div>
+
+                        {/* مزود 3: توجيهات المعلم المخصصة لتقييم الذكاء الاصطناعي */}
+                        <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-4 space-y-3 mt-4">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-black text-purple-950 mb-1 flex items-center gap-1.5">
+                              <span className="w-5 h-5 rounded-md bg-purple-200 text-purple-900 flex items-center justify-center text-xs">✍️</span>
+                              <span>برومبت وتوجيهات المعلم المخصصة لتقييم الذكاء الاصطناعي:</span>
+                            </label>
+                            <span className="text-[11px] font-bold text-purple-700 bg-purple-100/60 px-2 py-0.5 rounded-full">
+                              حقن تلقائي في كل تصحيح
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-purple-900/80 font-bold leading-relaxed">
+                            💡 تُضاف هذه التوجيهات تلقائياً مع نموذج تصحيح الأسئلة المقالية، لتحديد معاييرك في منح أو خصم الدرجات ومراعاة صياغة الطالب.
+                          </p>
+
+                          <textarea
+                            rows={3}
+                            value={customAiPromptSetting}
+                            onChange={e => setCustomAiPromptSetting(e.target.value)}
+                            placeholder="مثال: التسامح مع الأخطاء الإملائية البسيطة إذا كان المعنى صحيحاً، التشدد في ذكر المصطلح العلمي الدقيق المطلوب..."
+                            className="w-full bg-white border border-purple-300 focus:border-purple-600 outline-none rounded-xl p-3 text-xs font-bold leading-relaxed"
+                          />
+                        </div>
+
+                        {/* إشعار التدوير التلقائي المتقدم في تبويب المقالي */}
+                        <div className="mt-4 p-3 bg-indigo-50/80 border border-indigo-200/90 rounded-xl text-xs font-bold text-indigo-950 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">⚡</span>
+                            <span>
+                              <strong>منظومة التدوير التلقائي للمفاتيح (Auto-Key Rotation):</strong> متوفرة ومتاحة أيضاً من داخل تبويب «تصحيح المقالي» لإضافة وإدارة عدة مفاتيح وتتبع صحتها بنقرة واحدة.
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -14699,19 +15357,42 @@ function initAllSheetsMenu() {
               const hasEssayQuestionsInLesson = lessonModalOptions ? lessonModalOptions.questions.some(q => q.type === 'essay') : false;
               const submissions = getStudentSubmissions(cleanPhone);
               const pendingSub = (!retakeDir && hasEssayQuestionsInLesson && lessonModalOptions) ? submissions.find(s => (s.lessonId === lessonModalOptions.id || s.quizTitle?.trim() === lessonModalOptions.title?.trim()) && !s.isFullyApproved) : null;
-              const isLocked = Boolean((avail && (avail.status === 'upcoming' || avail.status === 'expired' || avail.status === 'not_targeted')) || pendingSub);
+              const approvedSub = (!retakeDir && hasEssayQuestionsInLesson && lessonModalOptions) ? submissions.find(s => (s.lessonId === lessonModalOptions.id || s.quizTitle?.trim() === lessonModalOptions.title?.trim()) && s.isFullyApproved) : null;
+              const isWithheld = Boolean(approvedSub && approvedSub.isMistakesBankReleased === false);
+              const isLocked = Boolean((avail && (avail.status === 'upcoming' || avail.status === 'expired' || avail.status === 'not_targeted')) || pendingSub || isWithheld);
 
               return (
                 <div className="flex flex-col gap-3 mt-2 mt-auto">
+                  {/* زر الوصول السريع للشهادة والنتيجة المعتمدة إن وجدت */}
+                  {approvedSub && (
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setApprovedSubForModal(approvedSub);
+                        setLessonModalOptions(null);
+                      }} 
+                      className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200 dark:hover:bg-indigo-900 border border-indigo-300 dark:border-indigo-700 font-black text-sm py-2.5 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                    >
+                      <i className="fas fa-award text-amber-500 text-base"></i>
+                      <span>استعراض النتيجة وشهادة التقدير 📜</span>
+                    </button>
+                  )}
+
                   <button 
                     onClick={() => {
                       if (!lessonModalOptions) return;
+                      if (isWithheld) {
+                        showAlert('🔒 تم اعتماد درجتك وإصدار شهادتك بنجاح! حرصاً على تكافؤ الفرص، سيتم فتح مراجعة الأسئلة والتدريب على هذا الاختبار فور انتهاء موعد الامتحان لجميع زملائك.');
+                        return;
+                      }
                       startQuizForLesson(lessonModalOptions);
                     }} 
                     className={`w-full font-black text-lg py-3 rounded-xl shadow-md transition-colors flex justify-center items-center gap-2 cursor-pointer ${
                       isLocked
                         ? pendingSub
                           ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30'
+                          : isWithheld
+                          ? 'bg-indigo-700 hover:bg-indigo-800 text-white shadow-indigo-700/30'
                           : avail?.status === 'upcoming'
                           ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30'
                           : avail?.status === 'expired'
@@ -14724,6 +15405,8 @@ function initAllSheetsMenu() {
                       isLocked
                         ? pendingSub
                           ? 'fa-hourglass-half'
+                          : isWithheld
+                          ? 'fa-shield-alt'
                           : avail?.status === 'upcoming'
                           ? 'fa-clock'
                           : avail?.status === 'expired'
@@ -14734,6 +15417,8 @@ function initAllSheetsMenu() {
                     <span>
                       {pendingSub
                         ? 'الامتحان قيد مراجعة المعلم ⏳'
+                        : isWithheld
+                        ? 'تم رصد درجتك (المراجعة مغلقة مؤقتاً) 🔒'
                         : isLocked
                         ? avail?.status === 'upcoming'
                           ? `يبدأ: ${formatScheduleDate(avail?.startDate)} ⏳`
@@ -15405,23 +16090,60 @@ function initAllSheetsMenu() {
       )}
 
       {showLeaderboard && (
-        <div className="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-4 animate-fade-in" dir="rtl">
-          <div className={`rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative text-center flex flex-col max-h-[90dvh] ${isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white'}`}>
+        <div className="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-3 sm:p-5 animate-fade-in" dir="rtl">
+          <div className={`rounded-3xl p-5 sm:p-7 max-w-md sm:max-w-2xl w-full shadow-2xl relative text-center flex flex-col max-h-[92dvh] ${isDarkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white'}`}>
             <button 
               onClick={() => setShowLeaderboard(false)} 
-              className={`absolute top-4 left-4 cursor-pointer transition-colors ${isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'}`}
+              className={`absolute top-4 left-4 cursor-pointer transition-colors z-10 ${isDarkMode ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'}`}
             >
               <i className="fas fa-times-circle text-2xl"></i>
             </button>
             
             <div className="shrink-0">
-              <i className="fas fa-crown text-5xl text-gold mb-3 block drop-shadow-md"></i>
-              <h2 className={`text-2xl sm:text-3xl font-black mb-1 ${isDarkMode ? 'text-gray-100' : 'text-primary'}`}>لوحة الشرف (أوائل الكنز)</h2>
-              <p className={`text-sm font-bold mb-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>أبطال المنصة مقسمين حسب متوسط درجاتهم</p>
+              <i className="fas fa-crown text-4xl sm:text-5xl text-gold mb-2 block drop-shadow-md"></i>
+              <h2 className={`text-xl sm:text-2xl font-black mb-1 ${isDarkMode ? 'text-gray-100' : 'text-primary'}`}>لوحة الشرف (أوائل الكنز) 🏆</h2>
+              <p className={`text-xs sm:text-sm font-bold mb-3 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>أبطال المنصة مقسمين حسب معدلاتهم ونقاط تميزهم التراكمية</p>
+            </div>
+
+            {/* أزرار الفلترة حسب الفئة: الكل / السنتر / الأونلاين */}
+            <div className="flex items-center justify-center gap-1.5 p-1 bg-gray-100 dark:bg-gray-700/60 rounded-2xl mb-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setLeaderboardCohortFilter('all')}
+                className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  leaderboardCohortFilter === 'all'
+                    ? 'bg-white dark:bg-gray-800 text-primary dark:text-gold shadow-xs'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-800'
+                }`}
+              >
+                الكل 🌟 ({toEasternArabic(leaderboardData.length)})
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeaderboardCohortFilter('center')}
+                className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  leaderboardCohortFilter === 'center'
+                    ? 'bg-white dark:bg-gray-800 text-amber-700 dark:text-amber-300 shadow-xs'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-800'
+                }`}
+              >
+                طلاب السنتر 🏢 ({toEasternArabic(leaderboardData.filter(s => s.studentType !== 'online').length)})
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeaderboardCohortFilter('online')}
+                className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  leaderboardCohortFilter === 'online'
+                    ? 'bg-white dark:bg-gray-800 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-800'
+                }`}
+              >
+                طلاب الأونلاين 🌐 ({toEasternArabic(leaderboardData.filter(s => s.studentType === 'online').length)})
+              </button>
             </div>
 
             {leaderboardData.length > 0 && (
-              <div className="w-full bg-slate-900 overflow-hidden py-3 px-3 rounded-xl mb-4 flex items-center shadow-inner border border-slate-700 relative shrink-0">
+              <div className="w-full bg-slate-900 overflow-hidden py-2.5 px-3 rounded-xl mb-3 flex items-center shadow-inner border border-slate-700 relative shrink-0">
                 <style>{`
                   @keyframes stockTickerRight {
                     0% { transform: translateX(-150%); }
@@ -15437,7 +16159,7 @@ function initAllSheetsMenu() {
                   }
                 `}</style>
                 <div className="absolute right-0 top-0 bottom-0 bg-slate-900 z-10 px-3 flex items-center shadow-[-5px_0_15px_rgba(15,23,42,1)] border-l border-slate-700">
-                  <i className="fas fa-chart-line text-xl text-emerald-400 animate-pulse"></i>
+                  <i className="fas fa-chart-line text-lg text-emerald-400 animate-pulse"></i>
                   <span className="mr-2 font-black text-xs text-white">بورصة الأبطال</span>
                 </div>
                 <div className="flex-1 overflow-hidden relative mr-28" dir="ltr">
@@ -15462,71 +16184,108 @@ function initAllSheetsMenu() {
                   <i className="fas fa-spinner fa-spin text-3xl text-secondary"></i>
                   <p className={`font-bold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>جاري جلب بيانات الأبطال...</p>
                 </div>
-              ) : leaderboardData.length > 0 ? (
-                <div className="flex flex-col gap-3 pb-2">
-                  {leaderboardData.map((student, idx) => {
-                    const prevTier = idx > 0 ? leaderboardData[idx - 1].tier : '';
-                    const showHeader = student.tier !== prevTier;
-                    
-                    const isGold = student.tier === 'gold';
-                    const isSilver = student.tier === 'silver';
-                    const isBronze = student.tier === 'bronze';
-                    
-                    return (
-                    <React.Fragment key={idx}>
-                      {showHeader && isGold && (
-                        <div className="flex flex-col items-center mt-2 mb-2 gap-2">
-                          <div className="text-center font-black text-gold text-lg">🏆 القائمة الذهبية (أول ١٠ أبطال) 🏆</div>
-                          <button onClick={() => downloadTierBoard('gold', 'القائمة الذهبية', '#d97706')} className="bg-amber-100 text-amber-800 text-xs font-black py-1.5 px-4 rounded-full border border-amber-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
-                        </div>
-                      )}
-                      {showHeader && isSilver && (
-                        <div className="flex flex-col items-center mt-6 mb-2 gap-2">
-                          <div className="text-center font-black text-slate-500 text-lg">🥈 القائمة الفضية (من ١١ إلى ٢٠) 🥈</div>
-                          <button onClick={() => downloadTierBoard('silver', 'القائمة الفضية', '#64748b')} className="bg-slate-100 text-slate-700 text-xs font-black py-1.5 px-4 rounded-full border border-slate-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
-                        </div>
-                      )}
-                      {showHeader && isBronze && (
-                        <div className="flex flex-col items-center mt-6 mb-2 gap-2">
-                          <div className="text-center font-black text-orange-600 text-lg">🥉 القائمة البرونزية (من ٢١ إلى ٣٠) 🥉</div>
-                          <button onClick={() => downloadTierBoard('bronze', 'القائمة البرونزية', '#ea580c')} className="bg-orange-100 text-orange-800 text-xs font-black py-1.5 px-4 rounded-full border border-orange-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
-                        </div>
-                      )}
-                      
-                      <div className={`flex items-center justify-between p-3 rounded-2xl border-2 transition-transform hover:-translate-y-1 ${isGold ? (isDarkMode ? 'bg-amber-900/30 border-gold' : 'bg-amber-50 border-gold') : isSilver ? (isDarkMode ? 'bg-slate-800 border-slate-400' : 'bg-slate-50 border-slate-300') : (isDarkMode ? 'bg-orange-950/30 border-orange-700' : 'bg-orange-50 border-orange-300')}`}>
-                      <div className="flex items-center gap-3">
-                          <div className="relative shrink-0">
-                            {isGold && <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[12px]"><i className="fas fa-crown text-amber-400 drop-shadow-sm"></i></div>}
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-lg shadow-inner ${isGold ? 'bg-gold text-white shadow-yellow-400/50' : isSilver ? 'bg-slate-400 text-white' : 'bg-orange-600 text-white'}`}>
-                              {idx + 1}
-                            </div>
-                          </div>
-                        <div className="flex flex-col items-start text-right">
-                          <span className={`font-black text-sm sm:text-base ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>{student.name.split(' ').slice(0, 4).join(' ')}</span>
-                          <span className={`text-[10px] sm:text-xs font-bold ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{student.testsCount} اختبارات | متوسط %{toEasternArabic(student.avg || 0)}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 shrink-0 pl-1">
-                        <div className="flex flex-col items-center justify-center w-8">
-                          {student.trend === 'up' && <i className="fas fa-arrow-trend-up text-emerald-500 animate-bounce text-xl" title="مستوى صاعد"></i>}
-                          {student.trend === 'down' && <i className="fas fa-arrow-trend-down text-rose-500 animate-pulse text-xl" title="مستوى هابط"></i>}
-                          {student.trend === 'flat' && <i className="fas fa-minus text-gray-400 text-lg" title="مستوى مستقر"></i>}
-                        </div>
-                        <div className="flex flex-col items-end w-14">
-                          <span className={`font-black text-lg ${isGold ? 'text-gold' : (isDarkMode ? 'text-secondary' : 'text-primary')}`} dir="ltr">{toEasternArabic(student.score)}</span>
-                        <span className={`text-[9px] font-bold ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>نقطة</span>
-                        </div>
-                      </div>
+              ) : (() => {
+                const currentFiltered = leaderboardData.filter(s => {
+                  if (leaderboardCohortFilter === 'online') return s.studentType === 'online';
+                  if (leaderboardCohortFilter === 'center') return s.studentType !== 'online';
+                  return true;
+                });
+
+                if (currentFiltered.length === 0) {
+                  return (
+                    <div className={`py-10 font-bold px-4 leading-relaxed ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      لا توجد بيانات متاحة في هذه الفئة حالياً.
                     </div>
-                    </React.Fragment>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className={`py-10 font-bold px-4 leading-relaxed ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  لا توجد بيانات متاحة في هذه الفئات بعد.
-                </div>
-              )}
+                  );
+                }
+
+                return (
+                  <div className="flex flex-col gap-2.5 pb-2">
+                    {currentFiltered.map((student, idx) => {
+                      const prevTier = idx > 0 ? currentFiltered[idx - 1].tier : '';
+                      const showHeader = student.tier !== prevTier;
+                      
+                      const isGold = student.tier === 'gold';
+                      const isSilver = student.tier === 'silver';
+                      const isBronze = student.tier === 'bronze';
+                      const isCurrentUser = Boolean(studentName && student.name.trim() === studentName.trim());
+                      
+                      return (
+                      <React.Fragment key={idx}>
+                        {showHeader && isGold && (
+                          <div className="flex flex-col items-center mt-2 mb-2 gap-2">
+                            <div className="text-center font-black text-gold text-base sm:text-lg">🏆 القائمة الذهبية (أول ١٠ أبطال) 🏆</div>
+                            <button onClick={() => downloadTierBoard('gold', 'القائمة الذهبية', '#d97706')} className="bg-amber-100 text-amber-800 text-xs font-black py-1.5 px-4 rounded-full border border-amber-300 shadow-sm active:scale-95 transition-all flex items-center gap-2 cursor-pointer"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
+                          </div>
+                        )}
+                        {showHeader && isSilver && (
+                          <div className="flex flex-col items-center mt-5 mb-2 gap-2">
+                            <div className="text-center font-black text-slate-500 text-base sm:text-lg">🥈 القائمة الفضية (من ١١ إلى ٢٠) 🥈</div>
+                            <button onClick={() => downloadTierBoard('silver', 'القائمة الفضية', '#64748b')} className="bg-slate-100 text-slate-700 text-xs font-black py-1.5 px-4 rounded-full border border-slate-300 shadow-sm active:scale-95 transition-all flex items-center gap-2 cursor-pointer"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
+                          </div>
+                        )}
+                        {showHeader && isBronze && (
+                          <div className="flex flex-col items-center mt-5 mb-2 gap-2">
+                            <div className="text-center font-black text-orange-600 text-base sm:text-lg">🥉 القائمة البرونزية (من ٢١ إلى ٣٠) 🥉</div>
+                            <button onClick={() => downloadTierBoard('bronze', 'القائمة البرونزية', '#ea580c')} className="bg-orange-100 text-orange-800 text-xs font-black py-1.5 px-4 rounded-full border border-orange-300 shadow-sm active:scale-95 transition-all flex items-center gap-2 cursor-pointer"><i className="fas fa-download"></i> تنزيل ومشاركة القائمة</button>
+                          </div>
+                        )}
+                        
+                        <div className={`flex items-center justify-between p-3 rounded-2xl border-2 transition-transform hover:-translate-y-0.5 ${
+                          isCurrentUser
+                            ? 'ring-2 ring-indigo-500 shadow-md bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-400'
+                            : isGold 
+                              ? (isDarkMode ? 'bg-amber-900/30 border-gold' : 'bg-amber-50 border-gold') 
+                              : isSilver 
+                                ? (isDarkMode ? 'bg-slate-800 border-slate-400' : 'bg-slate-50 border-slate-300') 
+                                : (isDarkMode ? 'bg-orange-950/30 border-orange-700' : 'bg-orange-50 border-orange-300')
+                        }`}>
+                        <div className="flex items-center gap-3">
+                            <div className="relative shrink-0">
+                              {isGold && <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[12px]"><i className="fas fa-crown text-amber-400 drop-shadow-sm"></i></div>}
+                              <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center font-black text-base sm:text-lg shadow-inner ${isGold ? 'bg-gold text-white shadow-yellow-400/50' : isSilver ? 'bg-slate-400 text-white' : 'bg-orange-600 text-white'}`}>
+                                {idx + 1}
+                              </div>
+                            </div>
+                          <div className="flex flex-col items-start text-right">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`font-black text-xs sm:text-sm ${isDarkMode ? 'text-gray-100' : 'text-gray-800'}`}>
+                                {student.name.split(' ').slice(0, 4).join(' ')}
+                              </span>
+                              {isCurrentUser && (
+                                <span className="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                                  أنت 📍
+                                </span>
+                              )}
+                              <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md ${
+                                student.studentType === 'online' 
+                                  ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300' 
+                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
+                              }`}>
+                                {student.studentType === 'online' ? 'أونلاين 🌐' : 'سنتر 🏢'}
+                              </span>
+                            </div>
+                            <span className={`text-[10px] sm:text-xs font-bold ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{student.testsCount} اختبارات | متوسط %{toEasternArabic(student.avg || 0)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 sm:gap-4 shrink-0 pl-1">
+                          <div className="flex flex-col items-center justify-center w-7">
+                            {student.trend === 'up' && <i className="fas fa-arrow-trend-up text-emerald-500 animate-bounce text-lg" title="مستوى صاعد"></i>}
+                            {student.trend === 'down' && <i className="fas fa-arrow-trend-down text-rose-500 animate-pulse text-lg" title="مستوى هابط"></i>}
+                            {student.trend === 'flat' && <i className="fas fa-minus text-gray-400 text-base" title="مستوى مستقر"></i>}
+                          </div>
+                          <div className="flex flex-col items-end w-14">
+                            <span className={`font-black text-base sm:text-lg ${isGold ? 'text-gold' : (isDarkMode ? 'text-secondary' : 'text-primary')}`} dir="ltr">{toEasternArabic(student.score)}</span>
+                          <span className={`text-[9px] font-bold ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>نقطة</span>
+                          </div>
+                        </div>
+                      </div>
+                      </React.Fragment>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {!isLoadingLeaderboard && studentName && (currentUserStats?.globalRank ?? 0) > 0 && (
                 <div className={`mt-4 pt-4 border-t ${isDarkMode ? 'border-gray-700' : 'border-gray-200'} flex flex-col items-center gap-3 shrink-0`}>
@@ -15777,6 +16536,11 @@ function initAllSheetsMenu() {
         const certScore = certModalData?.score ?? (certType === 'unit' ? unitPerc : lessonPerc);
         const certTitle = certModalData?.title || (certType === 'unit' ? unitTitle : activeLesson.title);
 
+        const isFemale = detectArabicGender(studentName) === 'female';
+        const certGrantText = `يسر الأستاذ إسلام سعود أن يمنح هذه الشهادة ${isFemale ? 'للطالبة المتميزة' : 'للطالب المتميز'}:`;
+        const certEncouragement = isFemale ? 'أكملي يا بطلتي فحقا فخور بكِ ❤️' : 'أكمل يا بطلي فحقا فخور بك ❤️';
+        const certBadgeSubtitle = isFemale ? 'بطلة متألقة' : 'بطل متألق';
+
         let certHeadline = 'شكر وتقدير';
         let certBadgeIcon = 'fa-award text-gold';
         let certCanvasDesc = '';
@@ -15784,105 +16548,232 @@ function initAllSheetsMenu() {
         if (certType === 'lesson') {
           certHeadline = 'شهادة تفوق وتميز';
           certBadgeIcon = 'fa-scroll text-teal-600';
-          certCanvasDesc = `نظراً لتفوقه وتميزه في اختبار: (${certTitle})`;
+          certCanvasDesc = `نظراً ${isFemale ? 'لتفوقها وتميزها' : 'لتفوقه وتميزه'} في اختبار: (${certTitle})`;
         } else if (certType === 'comprehensive') {
           certHeadline = 'وسام النبوغ والتفوق';
           certBadgeIcon = 'fa-crown text-purple-600';
-          certCanvasDesc = `نظراً لنبوغه وتفوقه في: (${certTitle})`;
+          certCanvasDesc = `نظراً ${isFemale ? 'لنبوغها وتفوقها الباهر' : 'لنبوغه وتفوقه الباهر'} في: (${certTitle})`;
         } else {
           certHeadline = 'شهادة إتمام وحدة دراسية';
           certBadgeIcon = 'fa-trophy text-gold';
-          certCanvasDesc = `نظراً لإتمام واجتياز جميع دروس: (${certTitle})`;
+          certCanvasDesc = `نظراً ${isFemale ? 'لمجهودها وتفانيها لإتمام واجتياز جميع دروس' : 'لمجهوده وتفانيه لإتمام واجتياز جميع دروس'}: (${certTitle})`;
         }
 
+        const buildCertificateCanvas = (): HTMLCanvasElement | null => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 1200;
+          canvas.height = 800;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return null;
+
+          ctx.direction = "rtl";
+          const gradient = ctx.createLinearGradient(0, 0, 1200, 800);
+          gradient.addColorStop(0, '#f8fafc');
+          gradient.addColorStop(0.5, '#ffffff');
+          gradient.addColorStop(1, '#f1f5f9');
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, 1200, 800);
+
+          // إطار خارجي ذهبي مزدوج فخم
+          ctx.strokeStyle = '#d97706';
+          ctx.lineWidth = 18;
+          ctx.strokeRect(30, 30, 1140, 740);
+
+          ctx.strokeStyle = '#1e3a8a';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(52, 52, 1096, 696);
+
+          ctx.strokeStyle = '#fef3c7';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(62, 62, 1076, 676);
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+
+          // ظل خفيف للعنوان الرئيسي
+          ctx.shadowColor = 'rgba(30, 58, 138, 0.2)';
+          ctx.shadowBlur = 8;
+          ctx.shadowOffsetY = 4;
+          ctx.fillStyle = '#1e3a8a';
+          ctx.font = '900 75px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(certHeadline, 600, 140);
+          ctx.shadowColor = 'transparent';
+
+          ctx.fillStyle = '#475569';
+          ctx.font = 'bold 32px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(certGrantText, 600, 245);
+
+          // اسم الطالب/الطالبة
+          ctx.shadowColor = 'rgba(217, 119, 6, 0.25)';
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = '#d97706';
+          ctx.font = '900 62px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(studentName, 600, 340);
+          ctx.shadowColor = 'transparent';
+
+          // وصف الإنجاز
+          ctx.fillStyle = '#334155';
+          ctx.font = 'bold 27px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(certCanvasDesc, 600, 430);
+
+          ctx.fillStyle = '#1e3a8a';
+          ctx.font = '900 28px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(`ببراعة واقتدار بنسبة ${toEasternArabic(certScore)}%`, 600, 480);
+
+          // جملة التشجيع
+          ctx.fillStyle = '#db2777';
+          ctx.font = '900 38px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(certEncouragement, 600, 560);
+
+          // خط فاصل
+          ctx.beginPath();
+          ctx.moveTo(180, 620);
+          ctx.lineTo(1020, 620);
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // التوقيعات والختم
+          ctx.fillStyle = '#0f172a';
+          ctx.font = '900 32px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText('أ/ إسلام سعود', 950, 680);
+          ctx.fillStyle = '#64748b';
+          ctx.font = 'bold 22px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText('معلم مادة التاريخ', 950, 720);
+
+          // وسام النسبة في المنتصف
+          ctx.fillStyle = '#16a34a';
+          ctx.font = '900 46px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(`${toEasternArabic(certScore)}%`, 600, 680);
+          ctx.fillStyle = '#047857';
+          ctx.font = 'bold 20px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(certBadgeSubtitle, 600, 720);
+
+          // التاريخ
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 24px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText('تاريخ الاعتماد', 250, 680);
+          ctx.fillStyle = '#64748b';
+          ctx.font = 'bold 22px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif';
+          ctx.fillText(new Date().toLocaleDateString('ar-EG'), 250, 720);
+
+          return canvas;
+        };
+
+        const handleDownloadCertificate = () => {
+          const canvas = buildCertificateCanvas();
+          if (!canvas) return;
+          const cleanTitle = certTitle.replace(/[\/\s:()]+/g, '_').substring(0, 30);
+          const cleanStudent = studentName.split(' ')[0] || 'طالب';
+          const link = document.createElement('a');
+          link.download = `شهادة_${cleanStudent}_${cleanTitle}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        };
+
+        const handleShareCertificate = async () => {
+          const canvas = buildCertificateCanvas();
+          if (!canvas) return;
+          const cleanTitle = certTitle.replace(/[\/\s:()]+/g, '_').substring(0, 30);
+          const cleanStudent = studentName.split(' ')[0] || 'طالب';
+          const shareText = `🎓 مبارك ${isFemale ? 'للطالبة' : 'للطالب'} (${studentName}) التفوق والحصول على ${certHeadline} في ${certTitle} بنسبة ${toEasternArabic(certScore)}% من منصة موسوعة الكنز التعليمي! 🏆✨`;
+
+          try {
+            if (navigator.share && canvas.toBlob) {
+              canvas.toBlob(async (blob) => {
+                if (blob) {
+                  const file = new File([blob], `شهادة_${cleanStudent}.png`, { type: 'image/png' });
+                  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    try {
+                      await navigator.share({
+                        files: [file],
+                        title: certHeadline,
+                        text: shareText
+                      });
+                      return;
+                    } catch (err) {}
+                  }
+                }
+                // Fallback: download + open WhatsApp
+                handleDownloadCertificate();
+                window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`, '_blank');
+              }, 'image/png');
+              return;
+            }
+          } catch (e) {}
+
+          // Standard fallback
+          handleDownloadCertificate();
+          window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`, '_blank');
+        };
+
         return (
-          <div className="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-4 animate-fade-in" dir="rtl">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl relative text-center flex flex-col items-center">
+          <div className="fixed inset-0 bg-black/80 z-[1000] flex items-center justify-center p-3 sm:p-5 animate-fade-in" dir="rtl">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl p-5 sm:p-8 max-w-2xl w-full shadow-2xl relative text-center flex flex-col items-center">
             <button
               onClick={() => setShowCertModal(false)}
-              className="absolute top-4 left-4 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors z-10"
+              className="absolute top-4 left-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer transition-colors z-10"
             >
               <i className="fas fa-times-circle text-3xl"></i>
             </button>
 
             {/* HTML Certificate Preview (For UI Viewing) */}
-            <div className="w-full relative bg-gradient-to-br from-slate-50 to-slate-200 border-8 border-double border-gold p-6 sm:p-10 mb-6 mt-4 shadow-inner rounded-xl overflow-hidden">
-              <div className="absolute inset-0 border-2 border-primary m-2 rounded-lg opacity-50 pointer-events-none"></div>
-              <i className={`fas ${certBadgeIcon} text-5xl sm:text-6xl mb-3 sm:mb-4 drop-shadow-md`}></i>
-              <h2 className="text-2xl sm:text-4xl font-black text-primary mb-3 sm:mb-4" style={{ fontFamily: 'Cairo, sans-serif' }}>{certHeadline}</h2>
-              <p className="text-gray-600 font-bold mb-3 sm:mb-4 text-xs sm:text-base">يسر الأستاذ إسلام سعود أن يمنح هذه الشهادة لـ :</p>
-              <h3 className="text-2xl sm:text-4xl font-black text-gold mb-4 sm:mb-6">{studentName}</h3>
+            <div className="w-full relative bg-gradient-to-br from-slate-50 to-slate-200 dark:from-gray-900 dark:to-gray-800 border-8 border-double border-gold p-5 sm:p-8 mb-5 mt-3 shadow-inner rounded-2xl overflow-hidden">
+              <div className="absolute inset-0 border-2 border-primary m-2 rounded-lg opacity-40 pointer-events-none"></div>
+              <i className={`fas ${certBadgeIcon} text-5xl sm:text-6xl mb-3 drop-shadow-md`}></i>
+              <h2 className="text-2xl sm:text-4xl font-black text-primary dark:text-gold mb-2 sm:mb-3" style={{ fontFamily: 'Cairo, sans-serif' }}>{certHeadline}</h2>
+              <p className="text-gray-600 dark:text-gray-300 font-bold mb-2 sm:mb-3 text-xs sm:text-base">{certGrantText}</p>
+              <h3 className="text-2xl sm:text-4xl font-black text-gold mb-3 sm:mb-5">{studentName}</h3>
               
-              <p className="text-gray-700 font-bold mb-2 text-xs sm:text-base leading-relaxed">
+              <p className="text-gray-700 dark:text-gray-200 font-bold mb-2 text-xs sm:text-base leading-relaxed">
                 {certType === 'lesson' && (
-                  <>نظراً لتفوقه وتميزه في اختبار <span className="text-secondary font-black">({certTitle})</span> ببراعة واقتدار بنسبة <span className="text-primary font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
+                  <>نظراً {isFemale ? 'لتفوقها وتميزها' : 'لتفوقه وتميزه'} في اختبار <span className="text-secondary font-black">({certTitle})</span> ببراعة واقتدار بنسبة <span className="text-primary dark:text-emerald-400 font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
                 )}
                 {certType === 'comprehensive' && (
-                  <>نظراً لنبوغه وتفوقه الباهر في <span className="text-secondary font-black">({certTitle})</span> ببراعة بنسبة <span className="text-primary font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
+                  <>نظراً {isFemale ? 'لنبوغها وتفوقها الباهر' : 'لنبوغه وتفوقه الباهر'} في <span className="text-secondary font-black">({certTitle})</span> ببراعة بنسبة <span className="text-primary dark:text-emerald-400 font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
                 )}
                 {certType === 'unit' && (
-                  <>نظراً لمجهوده وتفانيه لإتمام واجتياز جميع دروس <span className="text-secondary font-black">({certTitle})</span> ببراعة بنسبة <span className="text-primary font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
+                  <>نظراً {isFemale ? 'لمجهودها وتفانيها' : 'لمجهوده وتفانيه'} لإتمام واجتياز جميع دروس <span className="text-secondary font-black">({certTitle})</span> ببراعة بنسبة <span className="text-primary dark:text-emerald-400 font-black" dir="ltr">{toEasternArabic(certScore)}%</span>.</>
                 )}
               </p>
-              <p className="text-pink-600 font-black mb-4 sm:mb-6 text-sm sm:text-lg">أكمل يا بطلي فحقا فخور بك ❤️</p>
+              <p className="text-pink-600 dark:text-pink-400 font-black mb-4 text-sm sm:text-lg">{certEncouragement}</p>
               
-              <div className="flex justify-between items-end mt-4 sm:mt-8 pt-4 border-t-2 border-gray-300 border-dashed">
+              <div className="flex justify-between items-end mt-4 sm:mt-6 pt-3 border-t-2 border-gray-300 dark:border-gray-600 border-dashed">
                 <div className="text-center w-1/3">
-                  <p className="text-gray-800 font-black text-sm sm:text-lg mb-1">أ/ إسلام سعود</p>
-                  <p className="text-gray-500 font-bold text-[8px] sm:text-xs">معلم مادة التاريخ</p>
+                  <p className="text-gray-800 dark:text-gray-200 font-black text-xs sm:text-base mb-0.5">أ/ إسلام سعود</p>
+                  <p className="text-gray-500 dark:text-gray-400 font-bold text-[9px] sm:text-xs">معلم مادة التاريخ</p>
                 </div>
-                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gold text-white rounded-full flex items-center justify-center font-black text-sm sm:text-xl shadow-lg transform -rotate-12 border-2 border-yellow-200">
-                  {toEasternArabic(certScore)}%
+                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gold text-white rounded-full flex flex-col items-center justify-center font-black shadow-lg transform -rotate-12 border-2 border-yellow-200">
+                  <span className="text-xs sm:text-lg">{toEasternArabic(certScore)}%</span>
+                  <span className="text-[7px] sm:text-[9px] font-bold">{certBadgeSubtitle}</span>
                 </div>
                 <div className="text-center w-1/3">
-                  <p className="text-gray-500 font-bold text-[9px] sm:text-sm mb-1">تاريخ الاجتياز</p>
-                  <p className="text-gray-800 font-black text-[10px] sm:text-sm" dir="ltr">{new Date().toLocaleDateString('ar-EG')}</p>
+                  <p className="text-gray-500 dark:text-gray-400 font-bold text-[9px] sm:text-xs mb-0.5">تاريخ الاعتماد</p>
+                  <p className="text-gray-800 dark:text-gray-200 font-black text-[10px] sm:text-xs" dir="ltr">{new Date().toLocaleDateString('ar-EG')}</p>
                 </div>
               </div>
             </div>
 
-            {/* Button to Generate and Download Canvas Image */}
-            <button
-              onClick={() => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 1000; canvas.height = 700;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
+            {/* أزرار التحميل والمشاركة الثنائية */}
+            <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={handleShareCertificate}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm sm:text-base py-3.5 px-4 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <i className="fas fa-share-nodes text-lg"></i>
+                <span>مشاركة الشهادة 🚀</span>
+              </button>
 
-                ctx.direction = "rtl";
-                const gradient = ctx.createLinearGradient(0, 0, 1000, 700);
-                gradient.addColorStop(0, '#f8fafc'); gradient.addColorStop(1, '#e2e8f0');
-                ctx.fillStyle = gradient; ctx.fillRect(0, 0, 1000, 700);
-
-                ctx.strokeStyle = '#d97706'; ctx.lineWidth = 15; ctx.strokeRect(30, 30, 940, 640);
-                ctx.strokeStyle = '#1e3a8a'; ctx.lineWidth = 3; ctx.strokeRect(50, 50, 900, 600);
-
-                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                
-                ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 70px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(certHeadline, 500, 130);
-                ctx.fillStyle = '#475569'; ctx.font = 'bold 30px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('يسر الأستاذ إسلام سعود أن يمنح هذه الشهادة لـ :', 500, 230);
-                ctx.fillStyle = '#d97706'; ctx.font = '900 55px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(studentName, 500, 320);
-                ctx.fillStyle = '#475569'; ctx.font = 'bold 24px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(certCanvasDesc, 500, 400);
-                ctx.font = 'bold 24px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(`ببراعة واقتدار بنسبة ${toEasternArabic(certScore)}%`, 500, 445);
-                ctx.fillStyle = '#db2777'; ctx.font = '900 35px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أكمل يا بطلي فحقا فخور بك ❤️', 500, 510);
-
-                ctx.beginPath(); ctx.moveTo(150, 560); ctx.lineTo(850, 560); ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2; ctx.stroke();
-
-                ctx.fillStyle = '#0f172a'; ctx.font = '900 30px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText('أ/ إسلام سعود', 800, 610);
-                ctx.fillStyle = '#16a34a'; ctx.font = '900 40px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(`${toEasternArabic(certScore)}٪`, 500, 610);
-                ctx.fillStyle = '#64748b'; ctx.font = 'bold 25px "Cairo", "Tajawal", "Segoe UI", Arial, sans-serif'; ctx.fillText(new Date().toLocaleDateString('ar-EG'), 200, 610);
-
-                const cleanTitle = certTitle.replace(/[\/\s:()]+/g, '_').substring(0, 30);
-                const cleanStudent = studentName.split(' ')[0] || 'طالب';
-                const link = document.createElement('a');
-                link.download = `شهادة_${cleanStudent}_${cleanTitle}.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-              }}
-              className="w-full bg-primary text-white font-black text-lg sm:text-xl py-4 rounded-2xl hover:bg-gray-900 transition-colors shadow-md flex items-center justify-center gap-3 cursor-pointer"
-            >
-              <i className="fas fa-download"></i> تحميل الشهادة كصورة للمشاركة
-            </button>
+              <button
+                type="button"
+                onClick={handleDownloadCertificate}
+                className="w-full bg-primary hover:bg-gray-900 text-white font-black text-sm sm:text-base py-3.5 px-4 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <i className="fas fa-download text-lg"></i>
+                <span>تحميل الشهادة كصورة 💾</span>
+              </button>
+            </div>
           </div>
         </div>
         );
@@ -16063,6 +16954,16 @@ function initAllSheetsMenu() {
         studentPhone={inputPhone || localStorage.getItem('loggedInPhone') || (studentData as any)?.phone || ''}
         subjectName={subjectName || 'التاريخ'}
         gradeName={gradeName || '2 بكالوريا'}
+      />
+
+      {/* نافذة اختيار وتدريب بنك الأخطاء مبوباً حسب الدروس مع التذكرة التربوية */}
+      <MistakesBankSelectorModal
+        isOpen={showMistakesBankSelectorModal}
+        onClose={() => setShowMistakesBankSelectorModal(false)}
+        mistakes={visibleMistakesBank}
+        unitsData={data}
+        isDarkMode={isDarkMode}
+        onStartPractice={handleStartMistakesBankPractice}
       />
 
       {/* نوافذ الأدعية الإيمانية (البدء والختام) */}

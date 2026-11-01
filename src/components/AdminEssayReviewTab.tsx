@@ -20,7 +20,26 @@ import {
 import { HighlightText } from './HighlightText';
 import { FormatQuestionText } from './FormatQuestionText';
 import { StudentFullExamInspectionModal } from './StudentFullExamInspectionModal';
-import { compareStudentWithModelAnswer, EssayDiffComparison, getGeminiApiKey, getGroqApiKey } from '../aiEvaluationService';
+import { 
+  compareStudentWithModelAnswer, 
+  EssayDiffComparison, 
+  getGeminiApiKey, 
+  setGeminiApiKey,
+  getGeminiApiKeys,
+  setGeminiApiKeys,
+  rotateToNextGeminiKey,
+  getActiveGeminiApiKey,
+  isAiGradingEnabled,
+  setAiGradingEnabled,
+  getCustomAiPrompt,
+  setCustomAiPrompt,
+  checkGeminiKeyHealth,
+  getGeminiKeyHealth,
+  getGroqApiKey,
+  setGroqApiKey,
+  checkGroqKeyHealth,
+  getGroqKeyHealth
+} from '../aiEvaluationService';
 import { toEasternArabic, API_URL, SECRET_API_KEY, formatPhoneStr, detectArabicGender } from '../utils';
 
 interface AdminEssayReviewTabProps {
@@ -315,6 +334,19 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [retakeModalSub, setRetakeModalSub] = useState<StudentEssaySubmission | null>(null);
   const [inspectingSub, setInspectingSub] = useState<StudentEssaySubmission | null>(null);
+
+  // إدارة منظومة الذكاء الاصطناعي وتدوير المفاتيح التلقائي
+  const [isAiEnabled, setIsAiEnabled] = useState<boolean>(() => isAiGradingEnabled());
+  const [showAiSettingsModal, setShowAiSettingsModal] = useState<boolean>(false);
+  const [geminiKeysList, setGeminiKeysList] = useState<string[]>(() => getGeminiApiKeys());
+  const [newGeminiKeyInput, setNewGeminiKeyInput] = useState<string>('');
+  const [activeKeyStr, setActiveKeyStr] = useState<string>(() => getActiveGeminiApiKey());
+  const [groqKeyVal, setGroqKeyVal] = useState<string>(() => getGroqApiKey());
+  const [customPromptVal, setCustomPromptVal] = useState<string>(() => getCustomAiPrompt());
+  const [testingKeyIdx, setTestingKeyIdx] = useState<number | null>(null);
+  const [testingGroq, setTestingGroq] = useState<boolean>(false);
+  const [keyHealthMap, setKeyHealthMap] = useState<Record<string, string>>({});
+  const [groqHealthStatus, setGroqHealthStatus] = useState<string>('');
 
   // إذا لم تكن هناك إجابات بانتظار التصحيح في البداية، نعرض الكل تلقائياً
   const [hasAutoSwitchedToAll, setHasAutoSwitchedToAll] = useState(false);
@@ -623,6 +655,106 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  // تبديل حالة تشغيل الذكاء الاصطناعي
+  const handleToggleAiGrading = () => {
+    const next = !isAiEnabled;
+    setAiGradingEnabled(next);
+    setIsAiEnabled(next);
+    showToast(next ? '🟢 تم تفعيل التصحيح التلقائي بالذكاء الاصطناعي' : '⏸️ تم إيقاف التصحيح التلقائي بالذكاء الاصطناعي مؤقتاً');
+  };
+
+  // إضافة مفتاح Gemini جديد لمنظومة التدوير التلقائي
+  const handleAddGeminiKey = () => {
+    const trimmed = newGeminiKeyInput.trim();
+    if (!trimmed) return;
+    if (geminiKeysList.includes(trimmed)) {
+      showToast('⚠️ هذا المفتاح مضاف مسبقاً في القائمة');
+      return;
+    }
+    const updated = [...geminiKeysList, trimmed];
+    setGeminiKeysList(updated);
+    setGeminiApiKeys(updated);
+    setActiveKeyStr(getActiveGeminiApiKey());
+    setNewGeminiKeyInput('');
+    showToast('✅ تم إضافة المفتاح بنجاح إلى منظومة التدوير التلقائي');
+  };
+
+  // حذف مفتاح Gemini من القائمة
+  const handleRemoveGeminiKey = (indexToRemove: number) => {
+    const updated = geminiKeysList.filter((_, i) => i !== indexToRemove);
+    setGeminiKeysList(updated);
+    setGeminiApiKeys(updated);
+    setActiveKeyStr(getActiveGeminiApiKey());
+    showToast('🗑️ تم حذف المفتاح من المنظومة');
+  };
+
+  // تعيين مفتاح كمفتاح أساسي نشط
+  const handleSetActiveKey = (indexToActivate: number) => {
+    try {
+      localStorage.setItem('gemini_active_key_index', String(indexToActivate));
+      if (geminiKeysList[indexToActivate]) {
+        localStorage.setItem('gemini_api_key', geminiKeysList[indexToActivate]);
+        setActiveKeyStr(geminiKeysList[indexToActivate]);
+      }
+    } catch (e) {}
+    showToast('⭐ تم تعيين المفتاح كمفتاح أساسي نشط');
+  };
+
+  // فحص صحة واتصال مفتاح Gemini مفرد
+  const handleTestSingleKey = async (key: string, idx: number) => {
+    setTestingKeyIdx(idx);
+    try {
+      const res = await checkGeminiKeyHealth(key);
+      if (res === 'active') {
+        setKeyHealthMap(prev => ({ ...prev, [key]: 'active' }));
+        showToast('✅ المفتاح متصل بنجاح وجاهز للاستخدام');
+      } else if (res === 'quota_exhausted') {
+        setKeyHealthMap(prev => ({ ...prev, [key]: 'quota' }));
+        showToast('⚠️ المفتاح استنفد الكوتا مؤقتاً وسيتم التدوير تلقائياً لغيره');
+      } else {
+        setKeyHealthMap(prev => ({ ...prev, [key]: 'invalid' }));
+        showToast('❌ المفتاح غير صالح أو ملغي من جوجل');
+      }
+    } catch {
+      setKeyHealthMap(prev => ({ ...prev, [key]: 'invalid' }));
+    } finally {
+      setTestingKeyIdx(null);
+    }
+  };
+
+  // حفظ مفتاح Groq الاحتياطي
+  const handleSaveGroqKey = () => {
+    setGroqApiKey(groqKeyVal.trim());
+    showToast('💾 تم حفظ مفتاح Groq الاحتياطي بنجاح');
+  };
+
+  // اختبار مفتاح Groq
+  const handleTestGroq = async () => {
+    if (!groqKeyVal.trim()) return;
+    setTestingGroq(true);
+    setGroqHealthStatus('checking');
+    try {
+      const res = await checkGroqKeyHealth(groqKeyVal.trim());
+      if (res === 'active') {
+        setGroqHealthStatus('active');
+        showToast('✅ متصل بنجاح بسيرفرات Groq AI الاحتياطية');
+      } else {
+        setGroqHealthStatus('invalid');
+        showToast('❌ تعذر الاتصال بمفتاح Groq - يرجى التأكد من صلاحيته');
+      }
+    } catch {
+      setGroqHealthStatus('invalid');
+    } finally {
+      setTestingGroq(false);
+    }
+  };
+
+  // حفظ التوجيهات والبرومبت المخصص
+  const handleSaveCustomPrompt = () => {
+    setCustomAiPrompt(customPromptVal);
+    showToast('💾 تم حفظ توجيهات وبرومبت المعلم للذكاء الاصطناعي بنجاح');
   };
 
   // استبعاد الطلاب الذين لم يحلوا أي سؤال مقالي إطلاقاً (كل المقالي فارغ أو مسحوب)
@@ -968,7 +1100,44 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           </h2>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          {/* زر تفعيل / إيقاف الذكاء الاصطناعي الفوري */}
+          <button
+            type="button"
+            onClick={handleToggleAiGrading}
+            className={`font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
+              isAiEnabled
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
+            }`}
+            title={isAiEnabled ? "التصحيح التلقائي بالذكاء الاصطناعي مفعل (انقر للإيقاف المؤقت)" : "التصحيح التلقائي بالذكاء الاصطناعي موقوف (انقر للتفعيل)"}
+          >
+            <span className={`w-2.5 h-2.5 rounded-full ${isAiEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+            <span>{isAiEnabled ? "الذكاء الاصطناعي: نشط 🟢" : "الذكاء الاصطناعي: موقوف ⏸️"}</span>
+          </button>
+
+          {/* زر إدارة منظومة AI وتدوير المفاتيح */}
+          <button
+            type="button"
+            onClick={() => {
+              setGeminiKeysList(getGeminiApiKeys());
+              setActiveKeyStr(getActiveGeminiApiKey());
+              setGroqKeyVal(getGroqApiKey());
+              setCustomPromptVal(getCustomAiPrompt());
+              setShowAiSettingsModal(true);
+            }}
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            title="إعدادات مفاتيح الذكاء الاصطناعي والتدوير التلقائي وبرومبت التقييم"
+          >
+            <i className="fas fa-brain text-indigo-600"></i>
+            <span>منظومة AI ⚙️</span>
+            {geminiKeysList.length > 0 && (
+              <span className="bg-indigo-600 text-white text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full">
+                {toEasternArabic(geminiKeysList.length)}
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => fetchCloudSubmissions(true)}
@@ -1734,6 +1903,17 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
               });
             }
 
+            // تحديث إتاحة التدريب محلياً إذا لم يكن بنك الأخطاء محجوباً
+            if (updated.isMistakesBankReleased !== false && updated.quizTitle) {
+              try {
+                const approvedQuizzes: string[] = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+                const title = updated.quizTitle.trim();
+                if (!approvedQuizzes.includes(title)) approvedQuizzes.push(title);
+                if (updated.lessonId && !approvedQuizzes.includes(updated.lessonId)) approvedQuizzes.push(updated.lessonId);
+                localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(approvedQuizzes));
+              } catch(e) {}
+            }
+
             // تحديث القائمة الحية فوراً ليظهر الطالب معتمداً بشارة خضراء
             setSubmissions(prev => prev.map(s => s.id === updated.id ? updated : s));
 
@@ -1783,6 +1963,18 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
                 studentPhone: updated.studentPhone,
               });
             }
+
+            // تحديث إتاحة التدريب محلياً إذا لم يكن بنك الأخطاء محجوباً
+            if (updated.isMistakesBankReleased !== false && updated.quizTitle) {
+              try {
+                const approvedQuizzes: string[] = JSON.parse(localStorage.getItem('kanz_approved_training_quizzes') || '[]');
+                const cleanTitle = updated.quizTitle.trim();
+                if (!approvedQuizzes.includes(cleanTitle)) approvedQuizzes.push(cleanTitle);
+                if (updated.lessonId && !approvedQuizzes.includes(updated.lessonId)) approvedQuizzes.push(updated.lessonId);
+                localStorage.setItem('kanz_approved_training_quizzes', JSON.stringify(approvedQuizzes));
+              } catch(e) {}
+            }
+
             setSelectedSubForReview(null);
             showToast(`✅ تم اعتماد وتحديث درجات: ${updated.studentName}`);
           }}
@@ -1965,6 +2157,325 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           onClose={() => setInspectingSub(null)}
           isDarkMode={isDarkMode}
         />
+      )}
+
+      {/* نافذة إدارة منظومة الذكاء الاصطناعي وتدوير المفاتيح */}
+      {showAiSettingsModal && (
+        <div className="fixed inset-0 z-[100000] bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5" dir="rtl">
+          <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border-t-8 border-indigo-600 overflow-hidden animate-fade-in">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between shrink-0 bg-indigo-50/50 dark:bg-indigo-950/20">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-lg shadow-sm">
+                  <i className="fas fa-brain"></i>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                    منظومة الذكاء الاصطناعي وتدوير المفاتيح ⚡
+                  </h3>
+                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                    تدوير تلقائي للمفاتيح عند نفاذ الكوتا (429)، مزود بديل Groq، وتوجيهات المعلم
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAiSettingsModal(false)}
+                className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 text-gray-500 hover:text-gray-800 flex items-center justify-center transition-all cursor-pointer"
+              >
+                <i className="fas fa-times text-sm"></i>
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5 text-right flex-1">
+              
+              {/* قسم 1: حالة تفعيل التصحيح الآلي */}
+              <div className="p-4 rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded-full ${isAiEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+                    <span className="font-black text-sm text-gray-900 dark:text-gray-100">
+                      حالة التصحيح التلقائي بالذكاء الاصطناعي:
+                    </span>
+                    <span className={`text-xs font-black px-2 py-0.5 rounded-full ${
+                      isAiEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {isAiEnabled ? 'مفعل ويعمل 🟢' : 'موقوف مؤقتاً ⏸️'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 font-bold mt-1 leading-relaxed">
+                    عند الإيقاف، تُحفظ تسليمات الطلاب مباشرة بانتظار التصحيح اليدوي دون استهلاك أي كوتا أو إرسال طلبات للـ API.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleAiGrading}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer shrink-0 ${
+                    isAiEnabled
+                      ? 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  {isAiEnabled ? 'إيقاف مؤقت ⏸️' : 'تفعيل الذكاء الاصطناعي 🟢'}
+                </button>
+              </div>
+
+              {/* قسم 2: مفاتيح Google Gemini والتدوير التلقائي */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs shadow-xs">
+                      ⚡
+                    </span>
+                    <h4 className="font-black text-sm text-indigo-950 dark:text-indigo-200">
+                      مفاتيح Google Gemini (التدوير التلقائي الذكي):
+                    </h4>
+                  </div>
+                  <span className="text-[11px] font-black bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 px-2.5 py-0.5 rounded-full">
+                    {toEasternArabic(geminiKeysList.length)} مفتاح مسجل
+                  </span>
+                </div>
+
+                <div className="p-3 bg-white dark:bg-gray-800 rounded-xl border border-indigo-100 dark:border-gray-700 text-xs font-bold text-indigo-900 dark:text-indigo-300 leading-relaxed">
+                  <i className="fas fa-circle-info text-indigo-500 ml-1.5"></i>
+                  <span>
+                    <strong>التدوير التلقائي عند نفاذ الكوتا (429 Auto-Rotation):</strong> يمكنك إضافة عدة مفاتيح مجانية من Google AI Studio. فور استهلاك كوتا أي مفتاح ينتقل النظام تلقائياً للمفتاح التالي دون توقف التصحيح.
+                  </span>
+                </div>
+
+                {/* حقل إضافة مفتاح جديد */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    dir="ltr"
+                    placeholder="AIzaSy... (أدخل مفتاح Google Gemini جديد)"
+                    value={newGeminiKeyInput}
+                    onChange={e => setNewGeminiKeyInput(e.target.value)}
+                    className="flex-1 bg-white dark:bg-gray-800 border border-indigo-300 dark:border-gray-600 focus:border-indigo-600 outline-none rounded-xl px-3 py-2 text-xs font-mono font-bold text-left"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddGeminiKey}
+                    disabled={!newGeminiKeyInput.trim()}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs px-4 py-2 rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
+                  >
+                    <i className="fas fa-plus ml-1"></i> إضافة المفتاح
+                  </button>
+                </div>
+
+                {/* قائمة المفاتيح الحالية */}
+                <div className="space-y-2 mt-2">
+                  {geminiKeysList.length === 0 ? (
+                    <div className="p-3 text-center text-xs font-bold text-gray-500 bg-white/60 dark:bg-gray-800/60 rounded-xl border border-dashed border-gray-300">
+                      لا يوجد أي مفتاح مسجل حالياً. يرجى إضافة مفتاح واحد على الأقل.
+                    </div>
+                  ) : (
+                    geminiKeysList.map((key, idx) => {
+                      const isActive = key === activeKeyStr;
+                      const health = keyHealthMap[key];
+                      const masked = key.length > 12 ? `${key.substring(0, 7)}...${key.substring(key.length - 4)}` : key;
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-2.5 sm:p-3 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 transition-all ${
+                            isActive
+                              ? 'bg-indigo-100/70 dark:bg-indigo-900/40 border-indigo-400 dark:border-indigo-600'
+                              : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-gray-800 dark:text-gray-200" dir="ltr">
+                              {masked}
+                            </span>
+                            {isActive && (
+                              <span className="text-[10px] font-black bg-indigo-600 text-white px-2 py-0.5 rounded-full">
+                                الأساسي النشط ⭐
+                              </span>
+                            )}
+                            {health === 'active' && (
+                              <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                                🟢 متصل
+                              </span>
+                            )}
+                            {health === 'quota' && (
+                              <span className="text-[10px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                                ⚠️ كوتا مستنفدة
+                              </span>
+                            )}
+                            {health === 'invalid' && (
+                              <span className="text-[10px] font-black bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full">
+                                ❌ غير صالح
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                            {!isActive && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetActiveKey(idx)}
+                                className="px-2.5 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 text-indigo-700 dark:text-indigo-300 text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+                                title="تعيين كمفتاح رئيسي"
+                              >
+                                تفعيل أولاً
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleTestSingleKey(key, idx)}
+                              disabled={testingKeyIdx === idx}
+                              className="px-2.5 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 text-gray-700 dark:text-gray-300 text-[11px] font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                              title="فحص الاتصال"
+                            >
+                              <i className={testingKeyIdx === idx ? "fas fa-spinner fa-spin" : "fas fa-bolt text-amber-500"}></i>
+                              <span className="mr-1">{testingKeyIdx === idx ? 'جاري الفحص...' : 'فحص'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveGeminiKey(idx)}
+                              className="px-2 py-1 bg-white dark:bg-gray-700 border border-rose-200 hover:bg-rose-50 text-rose-600 text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+                              title="حذف المفتاح"
+                            >
+                              <i className="fas fa-trash-alt"></i>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* قسم 3: المزود الاحتياطي Groq Cloud AI */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center text-xs shadow-xs">
+                      🚀
+                    </span>
+                    <h4 className="font-black text-sm text-amber-950 dark:text-amber-200">
+                      المزود الاحتياطي فائق السرعة Groq AI (Llama 3.3):
+                    </h4>
+                  </div>
+                  <a
+                    href="https://console.groq.com/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] font-bold text-amber-700 hover:underline flex items-center gap-1"
+                  >
+                    <span>لوحة مفاتيح Groq</span>
+                    <i className="fas fa-external-link-alt text-[9px]"></i>
+                  </a>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    dir="ltr"
+                    placeholder="gsk_..."
+                    value={groqKeyVal}
+                    onChange={e => setGroqKeyVal(e.target.value)}
+                    className="flex-1 bg-white dark:bg-gray-800 border border-amber-300 dark:border-gray-600 focus:border-amber-600 outline-none rounded-xl px-3 py-2 text-xs font-mono font-bold text-left"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveGroqKey}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-black text-xs px-3.5 py-2 rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
+                  >
+                    حفظ المفتاح 💾
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTestGroq}
+                    disabled={testingGroq || !groqKeyVal.trim()}
+                    className="bg-white dark:bg-gray-700 border border-amber-300 text-amber-900 dark:text-amber-200 hover:bg-amber-100 font-bold text-xs px-3 py-2 rounded-xl transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    <i className={testingGroq ? "fas fa-spinner fa-spin" : "fas fa-bolt text-amber-500"}></i>
+                    <span className="mr-1">{testingGroq ? 'فحص...' : 'اختبار'}</span>
+                  </button>
+                </div>
+
+                {groqHealthStatus === 'active' && (
+                  <span className="inline-block text-[11px] font-black bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-lg border border-emerald-300">
+                    ✅ متصل بنجاح بسيرفرات Groq AI الاحتياطية
+                  </span>
+                )}
+                {groqHealthStatus === 'invalid' && (
+                  <span className="inline-block text-[11px] font-black bg-rose-100 text-rose-800 px-2.5 py-0.5 rounded-lg border border-rose-300">
+                    ❌ تعذر الاتصال بمفتاح Groq - تأكد من صحة المفتاح
+                  </span>
+                )}
+              </div>
+
+              {/* قسم 4: توجيهات وبرومبت المعلم المخصصة */}
+              <div className="p-4 sm:p-5 rounded-2xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center text-xs shadow-xs">
+                      ✍️
+                    </span>
+                    <h4 className="font-black text-sm text-purple-950 dark:text-purple-200">
+                      توجيهات وبرومبت المعلم المخصصة للتصحيح (Teacher Custom Guidelines):
+                    </h4>
+                  </div>
+                </div>
+
+                <p className="text-xs text-purple-900/80 dark:text-purple-300/80 font-bold leading-relaxed">
+                  💡 تُحقن هذه التوجيهات آلياً مع كل طلب تصحيح للذكاء الاصطناعي لجميع الأسئلة المقالية، لتحديد معاييرك الخاصة في منح أو خصم الدرجات.
+                </p>
+
+                <textarea
+                  rows={4}
+                  value={customPromptVal}
+                  onChange={e => setCustomPromptVal(e.target.value)}
+                  placeholder="مثال:&#10;- التسامح مع الأخطاء الإملائية البسيطة طالما المعنى سليم ومفهوم.&#10;- منح نصف الدرجة إذا ذكر الطالب الفكرة العامة دون تفصيل.&#10;- التشدد في ذكر المصطلح العلمي الدقيق المطلوب."
+                  className="w-full bg-white dark:bg-gray-800 border border-purple-300 dark:border-gray-600 focus:border-purple-600 outline-none rounded-xl p-3 text-xs font-bold leading-relaxed"
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveCustomPrompt}
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-black text-xs px-4 py-2 rounded-xl transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    <i className="fas fa-save"></i>
+                    <span>حفظ التوجيهات الخاصة 💾</span>
+                  </button>
+
+                  {customPromptVal && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPromptVal('');
+                        setCustomAiPrompt('');
+                        showToast('🔄 تم مسح التوجيهات والعودة للتقييم القياسي');
+                      }}
+                      className="text-xs font-bold text-gray-500 hover:text-rose-600 transition-colors cursor-pointer"
+                    >
+                      إعادة الضبط للافتراضي
+                    </button>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3.5 sm:p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowAiSettingsModal(false)}
+                className="px-5 py-2 rounded-xl bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-black text-xs transition-colors cursor-pointer"
+              >
+                إغلاق النافذة
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

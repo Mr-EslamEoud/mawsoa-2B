@@ -376,7 +376,7 @@ function doGet(e) {
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
-    lock.waitLock(10000); 
+    lock.waitLock(25000); 
     
     var payload = JSON.parse(e.postData.contents);
     if (payload.apiKey !== SECRET_API_KEY) {
@@ -405,11 +405,17 @@ function doPost(e) {
           var rowPhone = cleanPhone(rData[ri][2]);
           var rowQuiz = String(rData[ri][3] || '').trim();
           var isRowReset = rowQuiz.indexOf('تصفير') > -1 || rowQuiz.indexOf('فرصة جديدة') > -1 || String(rData[ri][4]).indexOf('تصفير') > -1;
-          if (rowPhone === targetPhone && !isRowReset && normTitle(rowQuiz) === normTitle(targetQuiz)) {
-            resultsSheet.getRange(ri + 1, 1).setValue(payload.date || new Date().toLocaleString('ar-EG'));
-            resultsSheet.getRange(ri + 1, 2).setValue(payload.name);
-            resultsSheet.getRange(ri + 1, 5).setValue(payload.score);
-            if (sType) resultsSheet.getRange(ri + 1, 6).setValue(sType);
+          var isPhoneMatch = rowPhone === targetPhone || (rowPhone.length >= 8 && targetPhone.length >= 8 && (rowPhone.endsWith(targetPhone) || targetPhone.endsWith(rowPhone)));
+          if (isPhoneMatch && !isRowReset && normTitle(rowQuiz) === normTitle(targetQuiz)) {
+            // تحديث جماعي دفعة واحدة (Batch 1-RPC) بدلاً من استدعاءات الخلايا المنفصلة
+            resultsSheet.getRange(ri + 1, 1, 1, 6).setValues([[
+              payload.date || new Date().toLocaleString('ar-EG'),
+              payload.name || rData[ri][1],
+              rData[ri][2],
+              rData[ri][3],
+              payload.score,
+              sType || rData[ri][5] || ''
+            ]]);
             updated = true;
             break;
           }
@@ -438,15 +444,18 @@ function doPost(e) {
       if (targetPhone && targetQuiz) {
         var eData = essaySheet.getDataRange().getValues();
         for (var di = eData.length - 1; di >= 1; di--) {
-          if (cleanPhone(eData[di][2]) === targetPhone && normTitle(eData[di][3]) === normTitle(targetQuiz)) {
+          var ePhone = cleanPhone(eData[di][2]);
+          var isPhoneMatch = ePhone === targetPhone || (ePhone.length >= 8 && targetPhone.length >= 8 && (ePhone.endsWith(targetPhone) || targetPhone.endsWith(ePhone)));
+          if (isPhoneMatch && normTitle(eData[di][3]) === normTitle(targetQuiz)) {
             essaySheet.deleteRow(di + 1);
           }
         }
       }
 
-      if (Array.isArray(questions)) {
+      if (Array.isArray(questions) && questions.length > 0) {
+        var batchRows = [];
         questions.forEach(function(q) {
-          essaySheet.appendRow([
+          batchRows.push([
             payload.date || new Date().toLocaleString('ar-EG'),
             payload.studentName,
             payload.studentPhone,
@@ -455,10 +464,14 @@ function doPost(e) {
             q.studentText || q.studentAnswerText || "",
             q.teacherScore !== undefined ? q.teacherScore : (q.aiScore !== undefined ? q.aiScore : ""),
             q.teacherFeedback || q.aiFeedback || "",
-            payload.isApproved ? "معتمد" : "قيد المراجعة",
+            payload.status || (payload.isApproved ? "معتمد" : "قيد المراجعة"),
             sType
           ]);
         });
+        if (batchRows.length > 0) {
+          var lastRow = essaySheet.getLastRow();
+          essaySheet.getRange(lastRow + 1, 1, batchRows.length, 10).setValues(batchRows);
+        }
       }
       return respondJSON({status: 'success'});
     }
@@ -472,14 +485,20 @@ function doPost(e) {
         var targetQuiz = String(payload.quizTitle || '').trim();
         var targetQText = payload.questionText ? String(payload.questionText).trim() : null;
         for (var ei = 1; ei < eData.length; ei++) {
-          if (cleanPhone(eData[ei][2]) === targetPhone && (!targetQuiz || normTitle(eData[ei][3]) === normTitle(targetQuiz))) {
+          var rowPhone = cleanPhone(eData[ei][2]);
+          var isPhoneMatch = rowPhone === targetPhone || (rowPhone.length >= 8 && targetPhone.length >= 8 && (rowPhone.endsWith(targetPhone) || targetPhone.endsWith(rowPhone)));
+          if (isPhoneMatch && (!targetQuiz || normTitle(eData[ei][3]) === normTitle(targetQuiz))) {
             var rowQText = String(eData[ei][4] || '').trim();
             // إذا كان التحديث لسؤال محدد بالاسم أو تحديث الحالة العامة فقط دون مساس بالدرجات الفردية
             if (!targetQText || rowQText === targetQText || normTitle(rowQText) === normTitle(targetQText)) {
-              if (payload.teacherScore !== undefined && targetQText) essaySheet.getRange(ei + 1, 7).setValue(payload.teacherScore);
-              if (payload.teacherFeedback !== undefined && targetQText) essaySheet.getRange(ei + 1, 8).setValue(payload.teacherFeedback);
-              if (payload.isApproved !== undefined) essaySheet.getRange(ei + 1, 9).setValue(payload.isApproved ? "معتمد" : "قيد المراجعة");
-              else if (payload.status) essaySheet.getRange(ei + 1, 9).setValue(payload.status);
+              var curScore = eData[ei][6];
+              var curFeedback = eData[ei][7];
+              var curStatus = eData[ei][8];
+              var newScore = (payload.teacherScore !== undefined && targetQText) ? payload.teacherScore : curScore;
+              var newFeedback = (payload.teacherFeedback !== undefined && targetQText) ? payload.teacherFeedback : curFeedback;
+              var newStatus = payload.isApproved !== undefined ? (payload.isApproved ? "معتمد" : "قيد المراجعة") : (payload.status ? payload.status : curStatus);
+              // تحديث جماعي للأعمدة 7، 8، 9 بدفعة واحدة
+              essaySheet.getRange(ei + 1, 7, 1, 3).setValues([[newScore, newFeedback, newStatus]]);
             }
           }
         }
