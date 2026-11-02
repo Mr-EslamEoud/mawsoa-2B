@@ -874,6 +874,15 @@ export default function App() {
   const [selectedPdfForView, setSelectedPdfForView] = useState<{ title: string; url: string } | null>(null);
   const [pdfZoom, setPdfZoom] = useState<number>(100);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
+  const [isPdfPanMode, setIsPdfPanMode] = useState<boolean>(true);
+  const pdfScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const pdfTouchStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+
+  const handleScrollPdfToStart = () => {
+    if (pdfScrollContainerRef.current) {
+      pdfScrollContainerRef.current.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  };
 
   const handleDownloadWatermarkedPdf = async (url: string, title: string) => {
     setIsDownloadingPdf(true);
@@ -11453,65 +11462,65 @@ function initAllSheetsMenu() {
                 <div className="text-[10px] sm:text-xs font-bold flex gap-1"><span className="text-gray-300">الإدارة</span></div>
               </div>
             </div>
-            <div className="flex flex-wrap justify-end gap-2 shrink-0">
-              <button onClick={() => setScreen('index')} className="bg-blue-600 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm hover:bg-blue-500 transition-all shadow-sm border border-blue-500 flex items-center gap-2"><i className="fas fa-book-reader"></i> طالب</button>
+            <div className="flex flex-wrap justify-end gap-1.5 sm:gap-2 shrink-0">
+              <button onClick={() => setScreen('index')} className="bg-blue-600 text-white font-black px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-sm hover:bg-blue-500 transition-all shadow-xs sm:shadow-sm border border-blue-500 flex items-center gap-1 sm:gap-2 cursor-pointer active:scale-95"><i className="fas fa-book-reader"></i> طالب</button>
               <button 
                 onClick={fetchAdminData} 
                 disabled={isLoading}
-                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm transition-all shadow-sm border border-emerald-500 flex items-center gap-2 cursor-pointer active:scale-95"
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-sm transition-all shadow-xs sm:shadow-sm border border-emerald-500 flex items-center gap-1 sm:gap-2 cursor-pointer active:scale-95"
               >
                 <i className={`fas fa-sync-alt ${isLoading ? 'fa-spin' : ''}`}></i>
                 <span>{isLoading ? 'جاري التحديث...' : 'تحديث'}</span>
               </button>
-              <button onClick={() => { setInputPhone(''); setInputPassword(''); setShowPasswordInput(false); setScreen('home'); }} className="bg-rose-600 text-white font-black px-4 py-2 rounded-xl text-xs sm:text-sm hover:bg-rose-500 transition-all shadow-sm border border-rose-500 flex items-center gap-2"><i className="fas fa-sign-out-alt"></i> خروج</button>
+              <button onClick={() => { setInputPhone(''); setInputPassword(''); setShowPasswordInput(false); setScreen('home'); }} className="bg-rose-600 text-white font-black px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-sm hover:bg-rose-500 transition-all shadow-xs sm:shadow-sm border border-rose-500 flex items-center gap-1 sm:gap-2 cursor-pointer active:scale-95"><i className="fas fa-sign-out-alt"></i> خروج</button>
             </div>
           </div>
           
           <div 
-            className="flex-1 overflow-y-auto p-4 z-10 flex flex-col md:flex-row gap-6"
+            className="flex-1 overflow-y-auto p-2.5 sm:p-4 z-10 flex flex-col md:flex-row gap-3 sm:gap-6"
             ref={adminScrollRef}
             onScroll={(e) => setShowAdminScrollTop(e.currentTarget.scrollTop > 300)}
           >
-            <div className="w-full md:w-64 shrink-0 bg-white rounded-2xl shadow-sm border border-gray-100 p-2.5 flex flex-row md:flex-col overflow-x-auto custom-scrollbar gap-2">
-              <button onClick={() => setAdminActiveTab('results')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='results'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-chart-bar w-5 text-center"></i> النتائج والمتابعة</button>
-              <button onClick={() => setAdminActiveTab('lessons')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='lessons'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-layer-group w-5 text-center text-emerald-500"></i> إدارة ونشر الدروس</button>
-              <button onClick={() => setAdminActiveTab('schedules')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='schedules'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-calendar-alt w-5 text-center text-indigo-500"></i> جدولة الامتحانات 📅</button>
+            <div className="w-full md:w-64 shrink-0 bg-white rounded-xl md:rounded-2xl shadow-xs md:shadow-sm border border-gray-100 p-1.5 md:p-2.5 flex flex-row md:flex-col overflow-x-auto custom-scrollbar gap-1.5 md:gap-2">
+              <button onClick={() => setAdminActiveTab('results')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='results'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-chart-bar w-4 md:w-5 text-center text-xs md:text-sm"></i> النتائج والمتابعة</button>
+              <button onClick={() => setAdminActiveTab('lessons')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='lessons'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-layer-group w-4 md:w-5 text-center text-emerald-500 text-xs md:text-sm"></i> إدارة ونشر الدروس</button>
+              <button onClick={() => setAdminActiveTab('schedules')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='schedules'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-calendar-alt w-4 md:w-5 text-center text-indigo-500 text-xs md:text-sm"></i> جدولة الامتحانات 📅</button>
               <button 
                 onClick={() => {
                   setEssayReviewInitialQuiz(undefined);
                   setAdminActiveTab('essay_review');
                 }} 
-                className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${
+                className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 relative shrink-0 cursor-pointer ${
                   adminActiveTab==='essay_review'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'
                 }`}
               >
-                <i className="fas fa-feather-alt w-5 text-center text-amber-500"></i> 
+                <i className="fas fa-feather-alt w-4 md:w-5 text-center text-amber-500 text-xs md:text-sm"></i> 
                 <span>تصحيح المقالي</span>
                 {needsGradingCount > 0 && (
-                  <span className="absolute top-2 left-2 bg-amber-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse">
+                  <span className="absolute top-1 left-1 md:top-2 md:left-2 bg-amber-500 text-white text-[10px] md:text-xs font-bold w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center animate-pulse">
                     {needsGradingCount}
                   </span>
                 )}
               </button>
               <button 
                 onClick={() => setAdminActiveTab('approve_results')} 
-                className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${
+                className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 relative shrink-0 cursor-pointer ${
                   adminActiveTab==='approve_results'?'bg-emerald-700 text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'
                 }`}
               >
-                <i className="fas fa-stamp w-5 text-center text-emerald-500"></i> 
+                <i className="fas fa-stamp w-4 md:w-5 text-center text-emerald-500 text-xs md:text-sm"></i> 
                 <span>اعتماد النتائج 🎯</span>
                 {readyToApproveCount > 0 && (
-                  <span className="absolute top-2 left-2 bg-emerald-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse">
+                  <span className="absolute top-1 left-1 md:top-2 md:left-2 bg-emerald-500 text-white text-[10px] md:text-xs font-bold w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center animate-pulse">
                     {readyToApproveCount}
                   </span>
                 )}
               </button>
-              <button onClick={() => setAdminActiveTab('leaderboard')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='leaderboard'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-trophy w-5 text-center text-gold"></i> لوحة الشرف</button>
-              <button onClick={() => setAdminActiveTab('certificates')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='certificates'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-award w-5 text-center text-blue-400"></i> شهادات التقدير</button>
-              <button onClick={() => setAdminActiveTab('online')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 relative ${adminActiveTab==='online' || adminActiveTab==='requests'?'bg-emerald-700 text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-globe w-5 text-center text-emerald-400"></i> مشتركو الأونلاين 🌐 {adminPendingReqs.length>0&&<span className="absolute top-2 left-2 bg-amber-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center animate-pulse">{adminPendingReqs.length}</span>}</button>
-              <button onClick={() => setAdminActiveTab('search')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='search'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-school w-5 text-center text-blue-500"></i> اشتراكات السنتر</button>
-              <button onClick={() => setAdminActiveTab('settings')} className={`px-4 py-3 rounded-xl font-black text-sm whitespace-nowrap text-right transition-all flex items-center gap-2.5 ${adminActiveTab==='settings'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-cog w-5 text-center"></i> الإعدادات</button>
+              <button onClick={() => setAdminActiveTab('leaderboard')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='leaderboard'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-trophy w-4 md:w-5 text-center text-gold text-xs md:text-sm"></i> لوحة الشرف</button>
+              <button onClick={() => setAdminActiveTab('certificates')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='certificates'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-award w-4 md:w-5 text-center text-blue-400 text-xs md:text-sm"></i> شهادات التقدير</button>
+              <button onClick={() => setAdminActiveTab('online')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 relative shrink-0 cursor-pointer ${adminActiveTab==='online' || adminActiveTab==='requests'?'bg-emerald-700 text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-globe w-4 md:w-5 text-center text-emerald-400 text-xs md:text-sm"></i> مشتركو الأونلاين 🌐 {adminPendingReqs.length>0&&<span className="absolute top-1 left-1 md:top-2 md:left-2 bg-amber-500 text-white text-[10px] md:text-xs font-bold w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center animate-pulse">{adminPendingReqs.length}</span>}</button>
+              <button onClick={() => setAdminActiveTab('search')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='search'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-school w-4 md:w-5 text-center text-blue-500 text-xs md:text-sm"></i> اشتراكات السنتر</button>
+              <button onClick={() => setAdminActiveTab('settings')} className={`px-2.5 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl font-black text-xs md:text-sm whitespace-nowrap text-right transition-all flex items-center gap-1.5 md:gap-2.5 shrink-0 cursor-pointer ${adminActiveTab==='settings'?'bg-primary text-white shadow-md':'text-gray-600 bg-gray-50 border border-transparent hover:bg-gray-100 border-gray-200'}`}><i className="fas fa-cog w-4 md:w-5 text-center text-xs md:text-sm"></i> الإعدادات</button>
             </div>
             
             <div className="flex-1 w-full space-y-6 min-w-0">
@@ -11678,31 +11687,31 @@ function initAllSheetsMenu() {
                 })();
 
                 return (
-                  <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                    <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col gap-3">
-                      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-xl font-black text-primary flex items-center gap-2">
-                            <i className="fas fa-chart-line text-blue-500"></i>
+                  <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm sm:shadow-md overflow-hidden">
+                    <div className="bg-gray-50 px-3 py-3 sm:px-4 sm:py-4 border-b border-gray-200 flex flex-col gap-2.5 sm:gap-3">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-4">
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-1.5 sm:gap-2">
+                            <i className="fas fa-chart-line text-blue-500 text-sm sm:text-base"></i>
                             <span>نتائج ومتابعة الطلاب</span>
                           </h2>
-                          <span className="text-xs font-bold text-gray-500 bg-gray-200/70 px-2 py-0.5 rounded-lg">
+                          <span className="text-[11px] sm:text-xs font-bold text-gray-500 bg-gray-200/70 px-1.5 py-0.5 sm:px-2 rounded-md sm:rounded-lg">
                             {toEasternArabic(displayList.length)} طالب
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
                           {/* قائمة تصدير إكسيل والواتساب الذكية */}
                           <div className="relative">
                             <button
                               type="button"
                               onClick={() => setShowExportMenu(!showExportMenu)}
-                              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 whitespace-nowrap"
+                              className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] sm:text-xs md:text-sm flex items-center gap-1 sm:gap-1.5 shadow-xs sm:shadow-sm transition-all cursor-pointer active:scale-95 whitespace-nowrap"
                               title="تصدير النتائج إلى ملف إكسيل أو نسخ أرقام الواتساب"
                             >
-                              <i className="fas fa-file-excel text-emerald-200 text-sm"></i>
+                              <i className="fas fa-file-excel text-emerald-200 text-xs sm:text-sm"></i>
                               <span>تصدير إكسيل 📊</span>
-                              <i className={`fas fa-chevron-down text-[10px] transition-transform ${showExportMenu ? 'rotate-180' : ''}`}></i>
+                              <i className={`fas fa-chevron-down text-[9px] sm:text-[10px] transition-transform ${showExportMenu ? 'rotate-180' : ''}`}></i>
                             </button>
 
                             {showExportMenu && (
@@ -11786,31 +11795,31 @@ function initAllSheetsMenu() {
                             <input 
                               type="text" 
                               placeholder="بحث بالاسم أو الهاتف..." 
-                              className="border-2 border-gray-300 rounded-xl px-4 py-2 w-full focus:border-primary outline-none text-sm font-bold pr-10" 
+                              className="border border-gray-300 sm:border-2 rounded-lg sm:rounded-xl px-3 py-1.5 sm:px-4 sm:py-2 w-full focus:border-primary outline-none text-xs sm:text-sm font-bold pr-8 sm:pr-10 shadow-2xs" 
                               value={resultsSearchQuery} 
                               onChange={e => setResultsSearchQuery(e.target.value)} 
                             />
-                            <i className="fas fa-search absolute top-1/2 -translate-y-1/2 right-3 text-gray-400"></i>
+                            <i className="fas fa-search absolute top-1/2 -translate-y-1/2 right-2.5 sm:right-3 text-gray-400 text-xs sm:text-sm"></i>
                           </div>
                         </div>
                       </div>
-                    <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-0.5 sm:mt-1">
                       {/* 1. فرز أبجدي */}
                       <button 
                         type="button"
                         onClick={() => setAdminSort('alpha')} 
-                        className={`flex-1 min-w-[95px] px-3 py-2 rounded-xl text-xs sm:text-sm font-black shadow-sm transition-all flex justify-center items-center gap-1.5 border-2 cursor-pointer ${
+                        className={`flex-1 min-w-[75px] sm:min-w-[95px] px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black shadow-2xs sm:shadow-sm transition-all flex justify-center items-center gap-1 sm:gap-1.5 border sm:border-2 cursor-pointer ${
                           adminSort === 'alpha' 
                             ? 'bg-blue-600 border-blue-700 text-white shadow-blue-200' 
                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-blue-300'
                         }`}
                       >
-                        <i className="fas fa-sort-alpha-down"></i>
+                        <i className="fas fa-sort-alpha-down text-xs sm:text-sm"></i>
                         <span>الأبجدية</span>
                       </button>
 
                       {/* 2. فرز التفاعل المدمج الذكي (الأكثر تفاعلاً 🔥 | الأقل تفاعلاً 🪫) */}
-                      <div className={`flex-[1.4] min-w-[200px] p-0.5 rounded-xl border-2 flex items-center justify-between gap-1 transition-all shadow-sm ${
+                      <div className={`flex-[1.4] min-w-[165px] sm:min-w-[200px] p-0.5 rounded-lg sm:rounded-xl border sm:border-2 flex items-center justify-between gap-0.5 sm:gap-1 transition-all shadow-2xs sm:shadow-sm ${
                         adminSort === 'most'
                           ? 'bg-emerald-50/80 border-emerald-500 shadow-emerald-100'
                           : adminSort === 'least'
@@ -11820,31 +11829,31 @@ function initAllSheetsMenu() {
                         <button
                           type="button"
                           onClick={() => setAdminSort(adminSort === 'most' ? 'least' : 'most')}
-                          className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          className={`flex-1 py-1 px-1.5 sm:py-1.5 sm:px-2.5 rounded-md sm:rounded-lg text-[10px] sm:text-xs md:text-sm font-black transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer ${
                             adminSort === 'most'
                               ? 'bg-emerald-600 text-white shadow-xs'
                               : 'text-gray-600 hover:text-emerald-700 hover:bg-emerald-50'
                           }`}
                           title="فرز الطلاب تنازلياً من الأكثر تفاعلاً إلى الأقل"
                         >
-                          <i className="fas fa-fire text-xs"></i>
+                          <i className="fas fa-fire text-[11px] sm:text-xs"></i>
                           <span>الأكثر تفاعلاً</span>
-                          <i className="fas fa-arrow-down text-[9px] opacity-75"></i>
+                          <i className="fas fa-arrow-down text-[8px] sm:text-[9px] opacity-75"></i>
                         </button>
-                        <div className="w-[1px] h-4 bg-gray-200 shrink-0"></div>
+                        <div className="w-[1px] h-3.5 sm:h-4 bg-gray-200 shrink-0"></div>
                         <button
                           type="button"
                           onClick={() => setAdminSort(adminSort === 'least' ? 'most' : 'least')}
-                          className={`flex-1 py-1.5 px-2.5 rounded-lg text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          className={`flex-1 py-1 px-1.5 sm:py-1.5 sm:px-2.5 rounded-md sm:rounded-lg text-[10px] sm:text-xs md:text-sm font-black transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer ${
                             adminSort === 'least'
                               ? 'bg-amber-600 text-white shadow-xs'
                               : 'text-gray-600 hover:text-amber-700 hover:bg-amber-50'
                           }`}
                           title="فرز الطلاب تصاعدياً من الأقل تفاعلاً (تكاسلاً) إلى الأكثر"
                         >
-                          <i className="fas fa-battery-quarter text-xs"></i>
+                          <i className="fas fa-battery-quarter text-[11px] sm:text-xs"></i>
                           <span>الأقل تفاعلاً</span>
-                          <i className="fas fa-arrow-up text-[9px] opacity-75"></i>
+                          <i className="fas fa-arrow-up text-[8px] sm:text-[9px] opacity-75"></i>
                         </button>
                       </div>
 
@@ -11852,14 +11861,14 @@ function initAllSheetsMenu() {
                       <button 
                         type="button"
                         onClick={() => setAdminSort('none')} 
-                        className={`flex-1 min-w-[95px] px-3 py-2 rounded-xl text-xs sm:text-sm font-black shadow-sm transition-all flex justify-center items-center gap-1.5 border-2 cursor-pointer ${
+                        className={`flex-1 min-w-[75px] sm:min-w-[95px] px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black shadow-2xs sm:shadow-sm transition-all flex justify-center items-center gap-1 sm:gap-1.5 border sm:border-2 cursor-pointer ${
                           adminSort === 'none' 
                             ? 'bg-rose-600 border-rose-700 text-white shadow-rose-200' 
                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-rose-300'
                         }`}
                         title="الطلاب الذين لم يؤدوا أي اختبار"
                       >
-                        <i className="fas fa-ghost"></i>
+                        <i className="fas fa-ghost text-xs sm:text-sm"></i>
                         <span>لم يدخلوا</span>
                       </button>
 
@@ -11867,25 +11876,25 @@ function initAllSheetsMenu() {
                       <button 
                         type="button"
                         onClick={() => setAdminSort('blocked')} 
-                        className={`flex-1 min-w-[95px] px-3 py-2 rounded-xl text-xs sm:text-sm font-black shadow-sm transition-all flex justify-center items-center gap-1.5 border-2 cursor-pointer ${
+                        className={`flex-1 min-w-[75px] sm:min-w-[95px] px-2 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black shadow-2xs sm:shadow-sm transition-all flex justify-center items-center gap-1 sm:gap-1.5 border sm:border-2 cursor-pointer ${
                           adminSort === 'blocked' 
                             ? 'bg-gray-900 border-black text-white shadow-gray-200' 
                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 hover:border-gray-900'
                         }`}
                         title="الطلاب المحظورين"
                       >
-                        <i className="fas fa-user-lock"></i>
+                        <i className="fas fa-user-lock text-xs sm:text-sm"></i>
                         <span>المحظورين</span>
                       </button>
                     </div>
 
                     {/* شريط الفلاتر الشامل: الوحدات، الدروس، النوع (بنين/بنات)، الفئة (سنتر/أونلاين) */}
-                    <div className="pt-3 border-t border-gray-200/80 space-y-2.5">
+                    <div className="pt-2.5 sm:pt-3 border-t border-gray-200/80 space-y-2 sm:space-y-2.5">
                       {/* 1. فلتر اختيار الوحدات والدروس كقوائم منسدلة أنيقة ومتجاورة */}
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                         {/* قائمة اختيار الوحدة */}
-                        <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 shadow-2xs hover:border-primary/50 transition-colors">
-                          <span className="text-xs font-black text-gray-700 flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg sm:rounded-xl px-2 py-1 sm:px-2.5 sm:py-1.5 shadow-2xs hover:border-primary/50 transition-colors">
+                          <span className="text-[11px] sm:text-xs font-black text-gray-700 flex items-center gap-1 shrink-0">
                             <i className="fas fa-layer-group text-primary"></i> الوحدة:
                           </span>
                           <select
@@ -11902,7 +11911,7 @@ function initAllSheetsMenu() {
                                 }
                               }
                             }}
-                            className="text-xs font-bold text-gray-800 bg-transparent border-none outline-none cursor-pointer pr-1"
+                            className="text-[11px] sm:text-xs font-bold text-gray-800 bg-transparent border-none outline-none cursor-pointer pr-1"
                           >
                             <option value="all">جميع الوحدات ({toEasternArabic(data.length)})</option>
                             {data.map((u, uIdx) => (
@@ -11923,14 +11932,14 @@ function initAllSheetsMenu() {
                               })();
 
                           return (
-                            <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 shadow-2xs hover:border-indigo-400 transition-colors">
-                              <span className="text-xs font-black text-indigo-700 flex items-center gap-1 shrink-0">
+                            <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-lg sm:rounded-xl px-2 py-1 sm:px-2.5 sm:py-1.5 shadow-2xs hover:border-indigo-400 transition-colors">
+                              <span className="text-[11px] sm:text-xs font-black text-indigo-700 flex items-center gap-1 shrink-0">
                                 <i className="fas fa-book-reader text-indigo-600"></i> الدرس:
                               </span>
                               <select
                                 value={resultsLessonFilter}
                                 onChange={(e) => setResultsLessonFilter(e.target.value)}
-                                className="text-xs font-bold text-gray-800 bg-transparent border-none outline-none cursor-pointer max-w-[200px] sm:max-w-[280px] truncate pr-1"
+                                className="text-[11px] sm:text-xs font-bold text-gray-800 bg-transparent border-none outline-none cursor-pointer max-w-[150px] xs:max-w-[190px] sm:max-w-[280px] truncate pr-1"
                               >
                                 <option value="all">جميع الدروس ({toEasternArabic(currentAvailableLessons.length)})</option>
                                 {currentAvailableLessons.map((lTitle, lIdx) => (
@@ -11951,39 +11960,39 @@ function initAllSheetsMenu() {
                               setResultsUnitFilter('all');
                               setResultsLessonFilter('all');
                             }}
-                            className="text-[11px] font-bold text-gray-500 hover:text-rose-600 bg-gray-100 hover:bg-rose-50 border border-gray-200 px-2.5 py-1.5 rounded-xl transition-colors flex items-center gap-1 cursor-pointer active:scale-95"
+                            className="text-[10px] sm:text-[11px] font-bold text-gray-500 hover:text-rose-600 bg-gray-100 hover:bg-rose-50 border border-gray-200 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl transition-colors flex items-center gap-1 cursor-pointer active:scale-95"
                             title="إعادة ضبط تصفية الوحدات والدروس لعرض الكل"
                           >
-                            <i className="fas fa-undo-alt text-[9px]"></i> عرض الكل
+                            <i className="fas fa-undo-alt text-[8px] sm:text-[9px]"></i> عرض الكل
                           </button>
                         )}
                       </div>
 
                       {/* 2. فلتر النوع وفلتر الفئة */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-dashed border-gray-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 pt-2 border-t border-dashed border-gray-200">
                         {/* فلتر النوع (بنين / بنات) */}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-black text-gray-700 flex items-center gap-1 ml-1">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+                          <span className="text-[11px] sm:text-xs font-black text-gray-700 flex items-center gap-1 ml-1">
                             <i className="fas fa-venus-mars text-indigo-500"></i> تصفية النوع:
                           </span>
                           <button
                             type="button"
                             onClick={() => setResultsGenderFilter('all')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1 cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 cursor-pointer ${
                               resultsGenderFilter === 'all'
                                 ? 'bg-indigo-600 text-white shadow-xs'
                                 : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
                             }`}
                           >
-                            <i className="fas fa-users text-xs"></i>
+                            <i className="fas fa-users text-[10px] sm:text-xs"></i>
                             <span>الكل</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => setResultsGenderFilter('male')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 sm:gap-1.5 cursor-pointer ${
                               resultsGenderFilter === 'male'
-                                ? 'bg-blue-600 text-white shadow-xs ring-2 ring-blue-200'
+                                ? 'bg-blue-600 text-white shadow-xs ring-1 sm:ring-2 ring-blue-200'
                                 : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
                             }`}
                           >
@@ -11992,9 +12001,9 @@ function initAllSheetsMenu() {
                           <button
                             type="button"
                             onClick={() => setResultsGenderFilter('female')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 sm:gap-1.5 cursor-pointer ${
                               resultsGenderFilter === 'female'
-                                ? 'bg-pink-600 text-white shadow-xs ring-2 ring-pink-200'
+                                ? 'bg-pink-600 text-white shadow-xs ring-1 sm:ring-2 ring-pink-200'
                                 : 'bg-white text-pink-700 border border-pink-200 hover:bg-pink-50'
                             }`}
                           >
@@ -12003,14 +12012,14 @@ function initAllSheetsMenu() {
                         </div>
 
                         {/* فلتر الفئة (سنتر / أونلاين) */}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-black text-gray-700 flex items-center gap-1 ml-1">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+                          <span className="text-[11px] sm:text-xs font-black text-gray-700 flex items-center gap-1 ml-1">
                             <i className="fas fa-filter text-primary"></i> الفئة:
                           </span>
                           <button 
                             type="button"
                             onClick={() => setResultsStudentTypeFilter('all')} 
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all cursor-pointer ${
                               resultsStudentTypeFilter === 'all' 
                                 ? 'bg-primary text-white shadow-xs' 
                                 : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
@@ -12021,26 +12030,26 @@ function initAllSheetsMenu() {
                           <button 
                             type="button"
                             onClick={() => setResultsStudentTypeFilter('center')} 
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 sm:gap-1.5 cursor-pointer ${
                               resultsStudentTypeFilter === 'center' 
                                 ? 'bg-blue-600 text-white shadow-xs' 
                                 : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
                             }`}
                           >
-                            <i className="fas fa-school text-xs"></i> طلاب السنتر
+                            <i className="fas fa-school text-[10px] sm:text-xs"></i> طلاب السنتر
                           </button>
                           <button 
                             type="button"
                             onClick={() => setResultsStudentTypeFilter('online')} 
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                            className={`px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center gap-1 sm:gap-1.5 cursor-pointer ${
                               resultsStudentTypeFilter === 'online' 
                                 ? 'bg-emerald-600 text-white shadow-xs' 
                                 : 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
                             }`}
                           >
-                            <i className="fas fa-globe text-xs"></i> مشتركو الأونلاين
+                            <i className="fas fa-globe text-[10px] sm:text-xs"></i> مشتركو الأونلاين
                             {adminOnlineStudents.length > 0 && (
-                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                              <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                                 resultsStudentTypeFilter === 'online' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
                               }`}>
                                 {toEasternArabic(adminOnlineStudents.length)}
@@ -12051,7 +12060,7 @@ function initAllSheetsMenu() {
                       </div>
                     </div>
                   </div>
-                  <div className="p-4 space-y-2.5">
+                  <div className="p-2.5 sm:p-4 space-y-2 sm:space-y-2.5">
                     {adminSort === 'none' && (
                             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 bg-rose-50 border border-rose-200 p-3 rounded-xl gap-3 shadow-sm">
                               <span className="text-rose-800 font-black text-sm">
@@ -12233,7 +12242,7 @@ function initAllSheetsMenu() {
                                   <div 
                                     key={student.phone + '_' + student.name + '_' + i} 
                                     onClick={() => setSelectedStudentForAnalytics(student)}
-                                    className={`group bg-white rounded-xl px-3 py-2 sm:py-2.5 border transition-all duration-150 hover:shadow-xs cursor-pointer relative overflow-hidden flex items-center justify-between gap-2 ${
+                                    className={`group bg-white rounded-lg sm:rounded-xl px-2 py-1.5 sm:px-3 sm:py-2.5 border transition-all duration-150 hover:shadow-xs cursor-pointer relative overflow-hidden flex items-center justify-between gap-1.5 sm:gap-2 ${
                                       isBlocked 
                                         ? 'border-red-300 bg-red-50/20 hover:border-red-400' 
                                         : 'border-gray-200 hover:border-primary/50 hover:bg-blue-50/15'
@@ -12245,9 +12254,9 @@ function initAllSheetsMenu() {
                                     }`} />
 
                                     {/* بيانات الطالب في سطر واحد دون هاتف أو كود: الأفاتار، الاسم، شارة النوع، شارة الفئة، شارة الحظر */}
-                                    <div className="flex items-center gap-2 min-w-0 pr-1.5 flex-1">
+                                    <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 pr-1 flex-1">
                                       {/* أيقونة مصغرة للنوع */}
-                                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs shadow-2xs shrink-0 ${
+                                      <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-md sm:rounded-lg flex items-center justify-center text-[10px] sm:text-xs shadow-2xs shrink-0 ${
                                         isFemale 
                                           ? 'bg-pink-100 text-pink-700 border border-pink-200' 
                                           : 'bg-blue-100 text-blue-700 border border-blue-200'
@@ -12261,7 +12270,7 @@ function initAllSheetsMenu() {
                                       </h3>
 
                                       {/* شارة النوع المدمجة */}
-                                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md hidden xs:inline-flex items-center shrink-0 ${
+                                      <span className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-md hidden xs:inline-flex items-center shrink-0 ${
                                         isFemale ? 'bg-pink-50 text-pink-700 border border-pink-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
                                       }`}>
                                         {isFemale ? 'أنثى' : 'ذكر'}
@@ -12269,18 +12278,18 @@ function initAllSheetsMenu() {
 
                                       {/* شارة السنتر / الأونلاين */}
                                       {isStudentOnline(student) ? (
-                                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded-md text-[10px] font-black shrink-0 hidden sm:inline-flex items-center gap-1">
+                                        <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black shrink-0 hidden sm:inline-flex items-center gap-1">
                                           <i className="fas fa-globe text-emerald-600 text-[8px]"></i> أونلاين
                                         </span>
                                       ) : (
-                                        <span className="bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded-md text-[10px] font-black shrink-0 hidden sm:inline-flex items-center gap-1">
+                                        <span className="bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black shrink-0 hidden sm:inline-flex items-center gap-1">
                                           <i className="fas fa-school text-amber-600 text-[8px]"></i> سنتر
                                         </span>
                                       )}
 
                                       {/* شارة الحظر */}
                                       {isBlocked && (
-                                        <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-md text-[10px] font-black shadow-2xs shrink-0 flex items-center gap-1">
+                                        <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-md text-[9px] sm:text-[10px] font-black shadow-2xs shrink-0 flex items-center gap-1">
                                           <i className="fas fa-lock text-[8px]"></i> محظور
                                         </span>
                                       )}
@@ -12293,40 +12302,40 @@ function initAllSheetsMenu() {
                                             e.stopPropagation();
                                             setAdminActiveTab('essay_review');
                                           }}
-                                          className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs animate-pulse"
+                                          className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.5 sm:px-2 rounded-md text-[9px] sm:text-[10px] font-black shrink-0 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs animate-pulse"
                                           title="يوجد اختبار قيد المراجعة - اضغط للانتقال للتصحيح والاعتماد"
                                         >
-                                          <i className="fas fa-hourglass-half text-amber-600 text-[9px]"></i>
+                                          <i className="fas fa-hourglass-half text-amber-600 text-[8px] sm:text-[9px]"></i>
                                           <span>{studentPendingCount > 1 ? `${toEasternArabic(studentPendingCount)} اختبارات قيد الاعتماد` : 'امتحان قيد المراجعة'}</span>
                                         </button>
                                       )}
                                     </div>
 
                                     {/* الجانب الأيسر: نتيجة الدرس المحدد أو عداد الاختبارات + زر التقرير السريع */}
-                                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                                       {/* في حال اختيار درس محدد من الفلتر: عرض نتيجة الطالب فيه */}
                                       {resultsLessonFilter !== 'all' ? (
                                         studentLessonScore !== null ? (
-                                          <div className="px-2 sm:px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                                            <i className="fas fa-check-circle text-emerald-600 text-[10px]"></i>
+                                          <div className="px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                                            <i className="fas fa-check-circle text-emerald-600 text-[9px] sm:text-[10px]"></i>
                                             <span>{toEasternArabic(studentLessonScore)}٪</span>
                                           </div>
                                         ) : (
-                                          <div className="px-2 sm:px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 flex items-center gap-1">
-                                            <i className="fas fa-times-circle text-rose-500 text-[10px]"></i>
+                                          <div className="px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 flex items-center gap-1">
+                                            <i className="fas fa-times-circle text-rose-500 text-[9px] sm:text-[10px]"></i>
                                             <span>لم يحل</span>
                                           </div>
                                         )
                                       ) : (
                                         /* عداد الاختبارات العادي */
-                                        <div className={`px-2 sm:px-2.5 py-1 rounded-lg font-black text-xs flex items-center gap-1 ${
+                                        <div className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg font-black text-[10px] sm:text-xs flex items-center gap-1 ${
                                           realTestCount === 0 
                                             ? 'bg-rose-50 text-rose-700 border border-rose-200' 
                                             : realTestCount >= (activeUnitLessonsCount || 5) 
                                               ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
                                               : 'bg-blue-50 text-blue-800 border border-blue-200'
                                         }`}>
-                                          <i className={`fas ${realTestCount === 0 ? 'fa-ghost text-[10px]' : 'fa-check-circle text-[10px]'}`}></i>
+                                          <i className={`fas ${realTestCount === 0 ? 'fa-ghost text-[9px]' : 'fa-check-circle text-[9px]'}`}></i>
                                           <span>
                                             {targetUnit 
                                               ? `${toEasternArabic(realTestCount)} / ${toEasternArabic(activeUnitLessonsCount)} اختبار`
@@ -12343,12 +12352,12 @@ function initAllSheetsMenu() {
                                           e.stopPropagation();
                                           setSelectedStudentForAnalytics(student);
                                         }}
-                                        className="bg-primary/10 hover:bg-primary text-primary hover:text-white px-2.5 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1 group-hover:bg-primary group-hover:text-white shadow-2xs active:scale-95 cursor-pointer"
+                                        className="bg-primary/10 hover:bg-primary text-primary hover:text-white px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black transition-all flex items-center gap-1 group-hover:bg-primary group-hover:text-white shadow-2xs active:scale-95 cursor-pointer"
                                         title="عرض التقرير الإحصائي وتنزيل الصورة"
                                       >
-                                        <i className="fas fa-chart-pie text-[11px]"></i>
+                                        <i className="fas fa-chart-pie text-[10px] sm:text-[11px]"></i>
                                         <span className="hidden xs:inline">التقرير</span>
-                                        <i className="fas fa-arrow-left text-[9px] transition-transform group-hover:-translate-x-0.5"></i>
+                                        <i className="fas fa-arrow-left text-[8px] sm:text-[9px] transition-transform group-hover:-translate-x-0.5"></i>
                                       </button>
                                     </div>
                                   </div>
@@ -12409,60 +12418,60 @@ function initAllSheetsMenu() {
             })()}
               {adminActiveTab === 'lessons' && (
                 <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="bg-gray-50 px-3.5 sm:px-4 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-3">
                     <div>
-                      <h2 className="text-xl font-black text-primary flex items-center gap-2">
+                      <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-1.5 sm:gap-2">
                         <i className="fas fa-layer-group text-emerald-600"></i> إدارة تفعيل ونشر الدروس للطلاب
                       </h2>
-                      <p className="text-xs text-gray-500 font-bold mt-1">
+                      <p className="text-[11px] sm:text-xs text-gray-500 font-bold mt-0.5 sm:mt-1">
                         تحكم في إظهار أو إخفاء الدروس للاختبارات ولوحة الشرف بضغطة زر واحدة.
                       </p>
                     </div>
                     <button
                       onClick={handleSavePublishedLessons}
                       disabled={isSavingLessons}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm px-5 py-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2 shrink-0"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl shadow-xs active:scale-95 transition-all flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer"
                     >
                       <i className={isSavingLessons ? "fas fa-spinner fa-spin" : "fas fa-cloud-arrow-up"}></i>
                       حفظ وتحديث للطلاب 🚀
                     </button>
                   </div>
 
-                  <div className="p-4 space-y-6">
+                  <div className="p-3 sm:p-4 space-y-4 sm:space-y-6">
                     {/* إحصائيات سريعة للدروس */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-center">
-                        <span className="text-xs text-blue-600 font-bold block mb-1">إجمالي الدروس بالإكسيل</span>
-                        <span className="text-xl font-black text-blue-800">{lessonStats.total}</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-2.5 sm:p-3 text-center">
+                        <span className="text-[10px] sm:text-xs text-blue-600 font-bold block mb-0.5 sm:mb-1">إجمالي الدروس بالإكسيل</span>
+                        <span className="text-lg sm:text-xl font-black text-blue-800">{lessonStats.total}</span>
                       </div>
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
-                        <span className="text-xs text-emerald-600 font-bold block mb-1">الدروس المنشورة حالياً</span>
-                        <span className="text-xl font-black text-emerald-800">{lessonStats.published}</span>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 sm:p-3 text-center">
+                        <span className="text-[10px] sm:text-xs text-emerald-600 font-bold block mb-0.5 sm:mb-1">الدروس المنشورة حالياً</span>
+                        <span className="text-lg sm:text-xl font-black text-emerald-800">{lessonStats.published}</span>
                       </div>
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-                        <span className="text-xs text-amber-600 font-bold block mb-1">الدروس المخفية (مسودات)</span>
-                        <span className="text-xl font-black text-amber-800">{lessonStats.hidden}</span>
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 sm:p-3 text-center">
+                        <span className="text-[10px] sm:text-xs text-amber-600 font-bold block mb-0.5 sm:mb-1">الدروس المخفية (مسودات)</span>
+                        <span className="text-lg sm:text-xl font-black text-amber-800">{lessonStats.hidden}</span>
                       </div>
-                      <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-center">
-                        <span className="text-xs text-purple-600 font-bold block mb-1">الوحدات الدراسية</span>
-                        <span className="text-xl font-black text-purple-800">{lessonStats.unitsCount}</span>
+                      <div className="bg-purple-50 border border-purple-200 rounded-xl p-2.5 sm:p-3 text-center">
+                        <span className="text-[10px] sm:text-xs text-purple-600 font-bold block mb-0.5 sm:mb-1">الوحدات الدراسية</span>
+                        <span className="text-lg sm:text-xl font-black text-purple-800">{lessonStats.unitsCount}</span>
                       </div>
                     </div>
 
                     {/* قائمة الوحدات والدروس */}
-                    <div className="space-y-4">
+                    <div className="space-y-3 sm:space-y-4">
                       <div className="flex flex-wrap justify-between items-center gap-2 px-1">
-                        <span className="text-sm font-black text-gray-700">اضغط على اسم الوحدة لفتح أو طي الدروس:</span>
-                        <div className="flex items-center gap-2">
+                        <span className="text-xs sm:text-sm font-black text-gray-700">اضغط على اسم الوحدة لفتح أو طي الدروس:</span>
+                        <div className="flex items-center gap-1.5 sm:gap-2">
                           <button
                             onClick={() => setAdminExpandedUnits(data.map(u => u.id))}
-                            className="text-xs font-bold px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl transition-all flex items-center gap-1.5 border border-blue-200"
+                            className="text-[11px] sm:text-xs font-bold px-2.5 py-1 sm:px-3 sm:py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg sm:rounded-xl transition-all flex items-center gap-1 sm:gap-1.5 border border-blue-200 cursor-pointer"
                           >
                             <i className="fas fa-folder-open"></i> فتح الكل
                           </button>
                           <button
                             onClick={() => setAdminExpandedUnits([])}
-                            className="text-xs font-bold px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-xl transition-all flex items-center gap-1.5 border border-gray-300"
+                            className="text-[11px] sm:text-xs font-bold px-2.5 py-1 sm:px-3 sm:py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg sm:rounded-xl transition-all flex items-center gap-1 sm:gap-1.5 border border-gray-300 cursor-pointer"
                           >
                             <i className="fas fa-folder"></i> طي الكل
                           </button>
@@ -12475,28 +12484,28 @@ function initAllSheetsMenu() {
                         const isExpanded = adminExpandedUnits.includes(unit.id);
 
                         return (
-                          <div key={unit.id} className="border-2 border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm transition-all">
+                          <div key={unit.id} className="border-2 border-gray-200 rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-2xs transition-all">
                             <div 
                               onClick={() => toggleAdminUnit(unit.id)}
-                              className="bg-gray-100/70 hover:bg-gray-100 px-4 py-3.5 border-b border-gray-200 flex flex-wrap justify-between items-center gap-2 cursor-pointer transition-colors select-none"
+                              className="bg-gray-100/70 hover:bg-gray-100 px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-gray-200 flex flex-wrap justify-between items-center gap-2 cursor-pointer transition-colors select-none"
                             >
-                              <div className="flex items-center gap-2.5">
-                                <i className={`fas fa-chevron-${isExpanded ? 'up text-primary' : 'down text-gray-400'} text-sm transition-transform duration-200`}></i>
-                                <span className="font-black text-base text-gray-800">{unit.title}</span>
-                                <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-bold">
+                              <div className="flex items-center gap-2 sm:gap-2.5">
+                                <i className={`fas fa-chevron-${isExpanded ? 'up text-primary' : 'down text-gray-400'} text-xs sm:text-sm transition-transform duration-200`}></i>
+                                <span className="font-black text-sm sm:text-base text-gray-800">{unit.title}</span>
+                                <span className="text-[10px] sm:text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-bold">
                                   ({unitPublishedCount} من {unitLessonCount} منشور)
                                 </span>
                               </div>
-                              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                              <div className="flex items-center gap-1.5 sm:gap-2" onClick={e => e.stopPropagation()}>
                                 <button
                                   onClick={() => handleToggleUnitAll(unit.id, true)}
-                                  className="text-xs font-bold px-3 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-lg transition-colors"
+                                  className="text-[10px] sm:text-xs font-bold px-2.5 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-md sm:rounded-lg transition-colors cursor-pointer"
                                 >
                                   نشر كل الوحدة
                                 </button>
                                 <button
                                   onClick={() => handleToggleUnitAll(unit.id, false)}
-                                  className="text-xs font-bold px-3 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg transition-colors"
+                                  className="text-[10px] sm:text-xs font-bold px-2.5 py-1 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-md sm:rounded-lg transition-colors cursor-pointer"
                                 >
                                   إخفاء كل الوحدة
                                 </button>
@@ -12504,17 +12513,17 @@ function initAllSheetsMenu() {
                             </div>
 
                             {isExpanded && (
-                              <div className="p-3 divide-y divide-gray-100 animate-fade-in">
+                              <div className="p-2 sm:p-3 divide-y divide-gray-100 animate-fade-in">
                                 {unit.lessons.map(lesson => {
                                   const isPublished = isLessonActive(lesson.id);
                                   return (
-                                    <div key={lesson.id} className="py-2.5 px-2 flex items-center justify-between hover:bg-gray-50 rounded-xl transition-colors">
-                                      <div className="flex items-center gap-3">
-                                        <span className={`w-3 h-3 rounded-full ${isPublished ? 'bg-emerald-500 shadow-sm' : 'bg-gray-300'}`}></span>
-                                        <span className={`text-sm font-bold ${isPublished ? 'text-gray-900 font-black' : 'text-gray-400'}`}>
+                                    <div key={lesson.id} className="py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-gray-50 rounded-xl transition-colors">
+                                      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                                        <span className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full shrink-0 ${isPublished ? 'bg-emerald-500 shadow-sm' : 'bg-gray-300'}`}></span>
+                                        <span className={`text-xs sm:text-sm font-bold ${isPublished ? 'text-gray-900 font-black' : 'text-gray-400'}`}>
                                           {lesson.title}
                                         </span>
-                                        <span className="text-[10px] text-gray-400 font-bold">({lesson.questions.length} سؤال)</span>
+                                        <span className="text-[10px] text-gray-400 font-bold shrink-0">({lesson.questions.length} سؤال)</span>
                                         {((lesson.pdfFiles && lesson.pdfFiles.length > 0) || !!lesson.pdf) && (
                                           <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] px-2 py-0.5 rounded-full font-black flex items-center gap-1 shadow-2xs shrink-0">
                                             <i className="fas fa-file-pdf text-rose-600"></i>
@@ -12523,12 +12532,12 @@ function initAllSheetsMenu() {
                                         )}
                                       </div>
 
-                                      <div className="flex items-center gap-2 flex-wrap">
+                                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto pt-1 sm:pt-0 border-t sm:border-t-0 border-gray-100">
                                         {/* زر إدارة وتعديل وحذف مذكرات PDF المستقل */}
                                         <button
                                           type="button"
                                           onClick={() => setSelectedLessonForPdf({ lesson, unitTitle: unit.title })}
-                                          className={`text-xs font-black px-3.5 py-1.5 rounded-full border transition-all flex items-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer ${
+                                          className={`text-[11px] sm:text-xs font-black px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg sm:rounded-full border transition-all flex items-center justify-center gap-1 sm:gap-1.5 shadow-2xs active:scale-95 cursor-pointer ${
                                             ((lesson.pdfFiles && lesson.pdfFiles.length > 0) || !!lesson.pdf)
                                               ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-600 hover:text-white'
                                               : 'bg-white text-gray-700 border-gray-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300'
@@ -12548,7 +12557,7 @@ function initAllSheetsMenu() {
                                         <button
                                           type="button"
                                           onClick={() => setSelectedExamForConfig({ lesson, unitTitle: unit.title })}
-                                          className="text-xs font-black px-3.5 py-1.5 rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50/70 hover:bg-indigo-600 hover:text-white transition-all flex items-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer"
+                                          className="text-[11px] sm:text-xs font-black px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg sm:rounded-full border border-indigo-200 text-indigo-700 bg-indigo-50/70 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-1 sm:gap-1.5 shadow-2xs active:scale-95 cursor-pointer"
                                           title="تخصيص درجات الامتحان، مواعيد الجدولة، وسياسة النشر والتصحيح"
                                         >
                                           <i className="fas fa-sliders-h text-indigo-500"></i>
@@ -12559,7 +12568,7 @@ function initAllSheetsMenu() {
                                         <button
                                           type="button"
                                           onClick={() => handleToggleLesson(lesson.id)}
-                                          className={`text-xs font-black px-4 py-1.5 rounded-full border transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 ${
+                                          className={`text-[11px] sm:text-xs font-black px-3 py-1 sm:px-4 sm:py-1.5 rounded-lg sm:rounded-full border transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer active:scale-95 ${
                                             isPublished
                                               ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300'
                                               : 'bg-gray-100 text-gray-500 border-gray-300 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300'
@@ -12567,7 +12576,7 @@ function initAllSheetsMenu() {
                                           title={isPublished ? "الدرس منشور وظاهر للطلاب - انقر لإخفائه" : "الدرس مخفي - انقر لنشره"}
                                         >
                                           <i className={`fas ${isPublished ? 'fa-eye' : 'fa-eye-slash'}`}></i>
-                                          <span>{isPublished ? 'منشور (ظاهر للطالب)' : 'مخفي (مسودة)'}</span>
+                                          <span>{isPublished ? 'منشور (ظاهر)' : 'مخفي (مسودة)'}</span>
                                         </button>
                                       </div>
                                     </div>
@@ -12584,7 +12593,7 @@ function initAllSheetsMenu() {
                       <button
                         onClick={handleSavePublishedLessons}
                         disabled={isSavingLessons}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm px-6 py-3 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-2"
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-4 py-2.5 sm:px-6 sm:py-3 rounded-lg sm:rounded-xl shadow-xs active:scale-95 transition-all flex items-center gap-1.5 sm:gap-2 cursor-pointer"
                       >
                         <i className={isSavingLessons ? "fas fa-spinner fa-spin" : "fas fa-cloud-arrow-up"}></i>
                         حفظ ونشر التعديلات للطلاب 🚀
@@ -12708,23 +12717,23 @@ function initAllSheetsMenu() {
 
               {adminActiveTab === 'leaderboard' && (
                 <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="bg-gray-50 px-3.5 sm:px-4 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-3">
                     <div>
-                      <h2 className="text-xl font-black text-primary flex items-center gap-2">
+                      <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-1.5 sm:gap-2">
                         <i className="fas fa-trophy text-gold"></i> أوائل الكنز (لوحة الشرف الذكية)
                       </h2>
-                      <p className="text-xs text-gray-500 font-bold mt-1">
+                      <p className="text-[11px] sm:text-xs text-gray-500 font-bold mt-0.5 sm:mt-1">
                         شرط التأهل: إتمام الدروس المنشورة ({lessonStats.published} دروس) ومعدل ≥ 80% (الذهبية ≥ 90%).
                       </p>
                     </div>
                     <button
                       onClick={() => setAdminActiveTab('lessons')}
-                      className="bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center gap-1.5"
+                      className="bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-[11px] sm:text-xs font-bold px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl transition-all flex items-center gap-1 sm:gap-1.5 cursor-pointer"
                     >
                       <i className="fas fa-sliders-h"></i> تعديل الدروس المشروطة
                     </button>
                   </div>
-                  <div className="p-4 space-y-3">
+                  <div className="p-3 sm:p-4 space-y-2.5 sm:space-y-3">
                     {(() => {
                       const list = adminLeaderboardList;
                       if (list.length === 0) return <div className="text-center py-6 text-gray-500 font-bold">لا يوجد أبطال مؤهلين في القوائم حالياً.</div>;
@@ -12739,42 +12748,42 @@ function initAllSheetsMenu() {
                         return (
                           <React.Fragment key={idx}>
                             {showHeader && isGold && (
-                              <div className="flex flex-col items-center mt-2 mb-2 gap-2">
-                                <div className="text-center font-black text-gold text-lg">🏆 القائمة الذهبية (أول ١٠ أبطال) 🏆</div>
-                                <button onClick={() => handleAdminCongratulateTier('gold')} className="bg-emerald-100 text-emerald-800 text-xs font-black py-1.5 px-4 rounded-full border border-emerald-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
+                              <div className="flex flex-col items-center mt-2 mb-2 gap-1.5 sm:gap-2">
+                                <div className="text-center font-black text-gold text-base sm:text-lg">🏆 القائمة الذهبية (أول ١٠ أبطال) 🏆</div>
+                                <button onClick={() => handleAdminCongratulateTier('gold')} className="bg-emerald-100 text-emerald-800 text-[11px] sm:text-xs font-black py-1 px-3 sm:py-1.5 sm:px-4 rounded-full border border-emerald-300 shadow-2xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
                               </div>
                             )}
                             {showHeader && isSilver && (
-                              <div className="flex flex-col items-center mt-4 mb-2 gap-2">
-                                <div className="text-center font-black text-slate-500 text-lg">🥈 القائمة الفضية (من ١١ إلى ٢٠) 🥈</div>
-                                <button onClick={() => handleAdminCongratulateTier('silver')} className="bg-emerald-100 text-emerald-800 text-xs font-black py-1.5 px-4 rounded-full border border-emerald-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
+                              <div className="flex flex-col items-center mt-3 sm:mt-4 mb-2 gap-1.5 sm:gap-2">
+                                <div className="text-center font-black text-slate-500 text-base sm:text-lg">🥈 القائمة الفضية (من ١١ إلى ٢٠) 🥈</div>
+                                <button onClick={() => handleAdminCongratulateTier('silver')} className="bg-emerald-100 text-emerald-800 text-[11px] sm:text-xs font-black py-1 px-3 sm:py-1.5 sm:px-4 rounded-full border border-emerald-300 shadow-2xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
                               </div>
                             )}
                             {showHeader && isBronze && (
-                              <div className="flex flex-col items-center mt-4 mb-2 gap-2">
-                                <div className="text-center font-black text-orange-600 text-lg">🥉 القائمة البرونزية (من ٢١ إلى ٣٠) 🥉</div>
-                                <button onClick={() => handleAdminCongratulateTier('bronze')} className="bg-emerald-100 text-emerald-800 text-xs font-black py-1.5 px-4 rounded-full border border-emerald-300 shadow-sm active:scale-95 transition-all flex items-center gap-2"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
+                              <div className="flex flex-col items-center mt-3 sm:mt-4 mb-2 gap-1.5 sm:gap-2">
+                                <div className="text-center font-black text-orange-600 text-base sm:text-lg">🥉 القائمة البرونزية (من ٢١ إلى ٣٠) 🥉</div>
+                                <button onClick={() => handleAdminCongratulateTier('bronze')} className="bg-emerald-100 text-emerald-800 text-[11px] sm:text-xs font-black py-1 px-3 sm:py-1.5 sm:px-4 rounded-full border border-emerald-300 shadow-2xs active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"><i className="fab fa-whatsapp"></i> تهنئة القائمة عبر واتساب</button>
                               </div>
                             )}
                             
-                            <div className={`flex items-center justify-between p-3 rounded-xl border-2 ${isGold ? 'bg-amber-50 border-gold' : isSilver ? 'bg-slate-50 border-slate-300' : 'bg-orange-50 border-orange-300'}`}>
-                              <div className="flex items-center gap-3 min-w-0">
+                            <div className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl border-2 ${isGold ? 'bg-amber-50 border-gold' : isSilver ? 'bg-slate-50 border-slate-300' : 'bg-orange-50 border-orange-300'}`}>
+                              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                                 <div className="relative shrink-0">
                                   {isGold && <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px]"><i className="fas fa-crown text-amber-500 drop-shadow-sm"></i></div>}
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${isGold ? 'bg-gold text-white' : isSilver ? 'bg-slate-400 text-white' : 'bg-orange-600 text-white'}`}>
+                                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-black text-xs sm:text-sm ${isGold ? 'bg-gold text-white' : isSilver ? 'bg-slate-400 text-white' : 'bg-orange-600 text-white'}`}>
                                     {idx + 1}
                                   </div>
                                 </div>
                                 <div className="flex flex-col items-start truncate min-w-0 pr-1">
-                                  <span className="font-black text-sm text-gray-800 truncate max-w-[150px] sm:max-w-[200px]" title={st.name}>{st.name}</span>
-                                  <span className="text-[10px] font-bold text-gray-500">{toEasternArabic(st.testsCount)} اختبارات | {toEasternArabic(st.score)} نقطة</span>
+                                  <span className="font-black text-xs sm:text-sm text-gray-800 truncate max-w-[150px] sm:max-w-[200px]" title={st.name}>{st.name}</span>
+                                  <span className="text-[9px] sm:text-[10px] font-bold text-gray-500">{toEasternArabic(st.testsCount)} اختبارات | {toEasternArabic(st.score)} نقطة</span>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-3 shrink-0">
+                              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                                 <div className="flex flex-col items-center justify-center w-6">
-                                  {st.trend === 'up' && <i className="fas fa-arrow-trend-up text-emerald-500 animate-bounce text-lg" title="مستوى صاعد"></i>}
-                                  {st.trend === 'down' && <i className="fas fa-arrow-trend-down text-rose-500 animate-pulse text-lg" title="مستوى هابط"></i>}
-                                  {st.trend === 'flat' && <i className="fas fa-minus text-gray-400 text-sm" title="مستوى مستقر"></i>}
+                                  {st.trend === 'up' && <i className="fas fa-arrow-trend-up text-emerald-500 animate-bounce text-base sm:text-lg" title="مستوى صاعد"></i>}
+                                  {st.trend === 'down' && <i className="fas fa-arrow-trend-down text-rose-500 animate-pulse text-base sm:text-lg" title="مستوى هابط"></i>}
+                                  {st.trend === 'flat' && <i className="fas fa-minus text-gray-400 text-xs sm:text-sm" title="مستوى مستقر"></i>}
                                 </div>
                               </div>
                             </div>
@@ -12787,14 +12796,14 @@ function initAllSheetsMenu() {
               )}
               {adminActiveTab === 'certificates' && (
                 <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-4 border-b border-gray-200 flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="bg-gray-50 px-3.5 sm:px-4 py-3 sm:py-4 border-b border-gray-200 flex flex-col gap-2.5 sm:gap-3">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-3">
                       <div>
-                        <h2 className="text-xl font-black text-primary flex items-center gap-2">
-                          <i className="fas fa-award text-gold text-2xl"></i>
+                        <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-1.5 sm:gap-2">
+                          <i className="fas fa-award text-gold text-xl sm:text-2xl"></i>
                           <span>متابعة شهادات التقدير</span>
                         </h2>
-                        <p className="text-xs text-gray-500 font-bold mt-0.5">
+                        <p className="text-[11px] sm:text-xs text-gray-500 font-bold mt-0.5">
                           توليد وتحميل شهادات تفوق الدروس، إتمام الوحدات، والامتحانات الشاملة
                         </p>
                       </div>
@@ -12803,23 +12812,23 @@ function initAllSheetsMenu() {
                       {calculateAdminCertificates().length > 0 && (
                         <button
                           onClick={() => handleDownloadAllAdminCerts(calculateAdminCertificates())}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-black shadow-md transition-all active:scale-95 flex items-center gap-2 cursor-pointer shrink-0"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
                           title="تحميل جميع شهادات القائمة الحالية دفعة واحدة كصور"
                         >
                           <i className="fas fa-download"></i>
-                          <span>تحميل كل الشهادات ({toEasternArabic(calculateAdminCertificates().length)}) دفعة واحدة</span>
+                          <span>تحميل كل الشهادات ({toEasternArabic(calculateAdminCertificates().length)})</span>
                         </button>
                       )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <label className="text-xs font-black text-gray-700 whitespace-nowrap flex items-center gap-1.5">
+                      <label className="text-[11px] sm:text-xs font-black text-gray-700 whitespace-nowrap flex items-center gap-1.5">
                         <i className="fas fa-filter text-primary"></i> تصفية نوع واختيار الشهادة:
                       </label>
                       <select 
                         value={adminSelectedUnit} 
                         onChange={(e) => setAdminSelectedUnit(e.target.value)}
-                        className="border border-gray-300 rounded-xl px-3 py-2 font-bold text-gray-800 outline-none focus:border-primary focus:ring-1 focus:ring-primary text-xs sm:text-sm bg-white shadow-xs flex-1 min-w-[260px] cursor-pointer"
+                        className="border border-gray-300 rounded-xl px-2.5 py-1.5 sm:px-3 sm:py-2 font-bold text-gray-800 outline-none focus:border-primary focus:ring-1 focus:ring-primary text-xs sm:text-sm bg-white shadow-2xs flex-1 w-full sm:min-w-[260px] cursor-pointer"
                       >
                         <option value="all">📁 جميع شهادات إتمام الوحدات المؤهلة (عرض شامل)</option>
                         
@@ -12865,7 +12874,7 @@ function initAllSheetsMenu() {
                     </div>
                   </div>
 
-                  <div className="p-4 space-y-3">
+                  <div className="p-3 sm:p-4 space-y-2.5 sm:space-y-3">
                     {(() => {
                       if (!adminSelectedUnit) return <div className="text-center py-6 text-gray-500 font-bold">الرجاء اختيار قسم لعرض الحاصلين على الشهادة.</div>;
                       
@@ -12880,15 +12889,15 @@ function initAllSheetsMenu() {
                       }
                       
                       return list.map((st, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3.5 rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-50 transition-colors">
-                          <div className="flex items-center gap-3 min-w-0 pr-1">
-                            <span className="w-9 h-9 rounded-full bg-white flex items-center justify-center shadow-xs border border-blue-200 text-gold text-lg shrink-0">
+                        <div key={idx} className="flex items-center justify-between p-2.5 sm:p-3.5 rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-50 transition-colors">
+                          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 pr-1">
+                            <span className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white flex items-center justify-center shadow-2xs border border-blue-200 text-gold text-base sm:text-lg shrink-0">
                               <i className={`fas ${st.certType === 'comprehensive' ? 'fa-crown text-purple-600' : st.certType === 'lesson' ? 'fa-medal text-emerald-600' : 'fa-trophy text-gold'}`}></i>
                             </span>
                             <div className="flex flex-col items-start truncate min-w-0">
-                              <span className="font-black text-sm text-gray-900 truncate max-w-[150px] sm:max-w-[260px]" title={st.name}>{st.name}</span>
-                              <span className="text-[11px] font-bold text-blue-700 flex items-center gap-1.5 flex-wrap">
-                                <span className="bg-white px-2 py-0.5 rounded border border-blue-200 text-emerald-700 font-black">
+                              <span className="font-black text-xs sm:text-sm text-gray-900 truncate max-w-[150px] sm:max-w-[260px]" title={st.name}>{st.name}</span>
+                              <span className="text-[10px] sm:text-[11px] font-bold text-blue-700 flex items-center gap-1.5 flex-wrap">
+                                <span className="bg-white px-1.5 py-0.2 rounded border border-blue-200 text-emerald-700 font-black">
                                   %{toEasternArabic(st.avg)}
                                 </span>
                                 <span>{st.certType === 'lesson' ? '📝 تفوق في درس' : st.certType === 'comprehensive' ? '🎯 امتحان شامل' : '🏆 إتمام وحدة'}:</span>
@@ -12898,7 +12907,7 @@ function initAllSheetsMenu() {
                           </div>
                           <button 
                             onClick={() => handleDownloadAdminCert(st.name, st.unitTitle, st.avg, st.certType)} 
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-xl text-xs font-black shadow-sm transition-all active:scale-95 shrink-0 flex items-center gap-1.5 cursor-pointer"
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black shadow-2xs transition-all active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer"
                             title="تحميل الشهادة كصورة PNG عالية الجودة"
                           >
                             <i className="fas fa-download"></i>
@@ -12929,17 +12938,17 @@ function initAllSheetsMenu() {
                       </p>
                     </div>
                     
-                    <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full md:w-auto shrink-0">
                       <button
                         onClick={() => setShowManualOnlineModal(true)}
-                        className="flex-1 md:flex-none bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 text-xs sm:text-sm cursor-pointer"
+                        className="flex-1 md:flex-none bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-black px-3 py-1.5 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 sm:gap-2 active:scale-95 text-xs sm:text-sm cursor-pointer"
                       >
-                        <i className="fas fa-user-plus text-base"></i> إضافة طالب أونلاين
+                        <i className="fas fa-user-plus text-sm sm:text-base"></i> إضافة طالب أونلاين
                       </button>
                       <button
                         onClick={fetchAdminData}
                         disabled={isLoading}
-                        className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold px-3 py-2.5 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer active:scale-95"
+                        className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold px-2.5 py-1.5 sm:px-3 sm:py-2.5 rounded-lg sm:rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer active:scale-95"
                         title="تحديث البيانات من السيرفر"
                       >
                         <i className={`fas fa-sync-alt ${isLoading ? 'fa-spin' : ''}`}></i>
@@ -12949,44 +12958,44 @@ function initAllSheetsMenu() {
                   </div>
 
                   {/* كروت الإحصائيات الأربعة (KPIs) */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
                     {/* المشتركون المعتمدون */}
                     <div 
                       onClick={() => setOnlineSubTab('active')}
-                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer ${
-                        onlineSubTab === 'active' ? 'bg-emerald-50/90 border-emerald-500 shadow-md ring-2 ring-emerald-400/40' : 'bg-white border-gray-100 hover:border-emerald-200 shadow-xs'
+                      className={`p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all cursor-pointer ${
+                        onlineSubTab === 'active' ? 'bg-emerald-50/90 border-emerald-500 shadow-xs ring-2 ring-emerald-400/40' : 'bg-white border-gray-100 hover:border-emerald-200 shadow-2xs'
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-black text-gray-600">المشتركون المعتمدون</span>
-                        <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-sm font-black">
+                      <div className="flex items-center justify-between mb-1 sm:mb-2">
+                        <span className="text-[11px] sm:text-xs font-black text-gray-600">المشتركون المعتمدون</span>
+                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs sm:text-sm font-black">
                           <i className="fas fa-user-check"></i>
                         </div>
                       </div>
-                      <div className="text-2xl font-black text-emerald-950">{adminOnlineStudents.length}</div>
-                      <div className="text-[10px] text-emerald-700 font-bold mt-1">حسابات نشطة بالمنصة</div>
+                      <div className="text-xl sm:text-2xl font-black text-emerald-950">{adminOnlineStudents.length}</div>
+                      <div className="text-[9px] sm:text-[10px] text-emerald-700 font-bold mt-0.5 sm:mt-1 truncate">حسابات نشطة بالمنصة</div>
                     </div>
 
                     {/* طلبات الاشتراك المعلقة */}
                     <div 
                       onClick={() => setOnlineSubTab('pending')}
-                      className={`p-4 rounded-2xl border-2 transition-all cursor-pointer relative ${
-                        onlineSubTab === 'pending' ? 'bg-amber-50/90 border-amber-500 shadow-md ring-2 ring-amber-400/40' : 'bg-white border-gray-100 hover:border-amber-200 shadow-xs'
+                      className={`p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all cursor-pointer relative ${
+                        onlineSubTab === 'pending' ? 'bg-amber-50/90 border-amber-500 shadow-xs ring-2 ring-amber-400/40' : 'bg-white border-gray-100 hover:border-amber-200 shadow-2xs'
                       }`}
                     >
                       {adminPendingReqs.length > 0 && (
-                        <span className="absolute -top-1.5 -left-1.5 bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm animate-pulse">
+                        <span className="absolute -top-1.5 -left-1.5 bg-red-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded-full shadow-2xs animate-pulse">
                           جديد
                         </span>
                       )}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-black text-gray-600">طلبات معلقة</span>
-                        <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-sm font-black">
+                      <div className="flex items-center justify-between mb-1 sm:mb-2">
+                        <span className="text-[11px] sm:text-xs font-black text-gray-600">طلبات معلقة</span>
+                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-xs sm:text-sm font-black">
                           <i className="fas fa-clock"></i>
                         </div>
                       </div>
-                      <div className="text-2xl font-black text-amber-950">{adminPendingReqs.length}</div>
-                      <div className="text-[10px] text-amber-700 font-bold mt-1">بانتظار الاعتماد وتوليد الكود</div>
+                      <div className="text-xl sm:text-2xl font-black text-amber-950">{adminPendingReqs.length}</div>
+                      <div className="text-[9px] sm:text-[10px] text-amber-700 font-bold mt-0.5 sm:mt-1 truncate">بانتظار الاعتماد وتوليد الكود</div>
                     </div>
 
                     {/* باقات قاربت أو انتهت */}
@@ -12998,16 +13007,16 @@ function initAllSheetsMenu() {
                       return (
                         <div 
                           onClick={() => setOnlineSubTab('active')}
-                          className="p-4 rounded-2xl border-2 bg-white border-gray-100 hover:border-orange-200 shadow-xs transition-all cursor-pointer"
+                          className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 bg-white border-gray-100 hover:border-orange-200 shadow-2xs transition-all cursor-pointer"
                         >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-black text-gray-600">تجديد مطلوب / يوشك</span>
-                            <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center text-sm font-black">
+                          <div className="flex items-center justify-between mb-1 sm:mb-2">
+                            <span className="text-[11px] sm:text-xs font-black text-gray-600">تجديد مطلوب</span>
+                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center text-xs sm:text-sm font-black">
                               <i className="fas fa-bell"></i>
                             </div>
                           </div>
-                          <div className="text-2xl font-black text-orange-950">{expiringOrExpired}</div>
-                          <div className="text-[10px] text-orange-700 font-bold mt-1">يحتاجون رسائل تذكير للتجديد</div>
+                          <div className="text-xl sm:text-2xl font-black text-orange-950">{expiringOrExpired}</div>
+                          <div className="text-[9px] sm:text-[10px] text-orange-700 font-bold mt-0.5 sm:mt-1 truncate">تذكير للتجديد</div>
                         </div>
                       );
                     })()}
@@ -13019,33 +13028,33 @@ function initAllSheetsMenu() {
                         return sum + (isNaN(val) ? 0 : val);
                       }, 0);
                       return (
-                        <div className="p-4 rounded-2xl border-2 bg-white border-gray-100 shadow-xs">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-black text-gray-600">إجمالي الدخل المحصل</span>
-                            <div className="w-8 h-8 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-black">
+                        <div className="p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border-2 bg-white border-gray-100 shadow-2xs">
+                          <div className="flex items-center justify-between mb-1 sm:mb-2">
+                            <span className="text-[11px] sm:text-xs font-black text-gray-600">إجمالي المحصل</span>
+                            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center text-xs sm:text-sm font-black">
                               <i className="fas fa-coins"></i>
                             </div>
                           </div>
-                          <div className="text-2xl font-black text-teal-950">{toEasternArabic(totalIncome)} <span className="text-xs font-bold text-teal-700">ج.م</span></div>
-                          <div className="text-[10px] text-teal-700 font-bold mt-1">من اشتراكات الأونلاين المسددة</div>
+                          <div className="text-xl sm:text-2xl font-black text-teal-950">{toEasternArabic(totalIncome)} <span className="text-xs font-bold text-teal-700">ج.م</span></div>
+                          <div className="text-[9px] sm:text-[10px] text-teal-700 font-bold mt-0.5 sm:mt-1 truncate">اشتراكات الأونلاين المسددة</div>
                         </div>
                       );
                     })()}
                   </div>
 
                   {/* شريط التبويبات الفرعية الثلاثية */}
-                  <div className="flex items-center gap-2 bg-gray-100/90 p-1.5 rounded-2xl border border-gray-200">
+                  <div className="flex items-center gap-1 sm:gap-2 bg-gray-100/90 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-gray-200">
                     <button
                       onClick={() => setOnlineSubTab('active')}
-                      className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${
+                      className={`flex-1 py-1.5 sm:py-2.5 px-2 sm:px-4 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black transition-all flex items-center justify-center gap-1 sm:gap-2 cursor-pointer ${
                         onlineSubTab === 'active'
-                          ? 'bg-emerald-700 text-white shadow-md'
+                          ? 'bg-emerald-700 text-white shadow-xs'
                           : 'text-gray-700 hover:bg-white/60 hover:text-gray-900'
                       }`}
                     >
                       <i className="fas fa-user-check"></i>
-                      <span>المشتركون المعتمدون</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      <span>المشتركون</span>
+                      <span className={`text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded-full font-bold ${
                         onlineSubTab === 'active' ? 'bg-emerald-800 text-emerald-100' : 'bg-gray-200 text-gray-700'
                       }`}>
                         {adminOnlineStudents.length}
@@ -13054,15 +13063,15 @@ function initAllSheetsMenu() {
 
                     <button
                       onClick={() => setOnlineSubTab('pending')}
-                      className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 relative ${
+                      className={`flex-1 py-1.5 sm:py-2.5 px-2 sm:px-4 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black transition-all flex items-center justify-center gap-1 sm:gap-2 relative cursor-pointer ${
                         onlineSubTab === 'pending'
-                          ? 'bg-amber-600 text-white shadow-md'
+                          ? 'bg-amber-600 text-white shadow-xs'
                           : 'text-gray-700 hover:bg-white/60 hover:text-gray-900'
                       }`}
                     >
                       <i className="fas fa-user-clock"></i>
-                      <span>طلبات الاشتراك المعلقة</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      <span>الطلبات</span>
+                      <span className={`text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded-full font-bold ${
                         onlineSubTab === 'pending' ? 'bg-amber-700 text-amber-100' : 'bg-amber-100 text-amber-800'
                       }`}>
                         {adminPendingReqs.length}
@@ -13071,15 +13080,15 @@ function initAllSheetsMenu() {
 
                     <button
                       onClick={() => setOnlineSubTab('archive')}
-                      className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${
+                      className={`flex-1 py-1.5 sm:py-2.5 px-2 sm:px-4 rounded-lg sm:rounded-xl text-[11px] sm:text-xs md:text-sm font-black transition-all flex items-center justify-center gap-1 sm:gap-2 cursor-pointer ${
                         onlineSubTab === 'archive'
-                          ? 'bg-gray-800 text-white shadow-md'
+                          ? 'bg-gray-800 text-white shadow-xs'
                           : 'text-gray-700 hover:bg-white/60 hover:text-gray-900'
                       }`}
                     >
                       <i className="fas fa-archive"></i>
-                      <span>أرشيف المشتركين</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      <span>الأرشيف</span>
+                      <span className={`text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded-full font-bold ${
                         onlineSubTab === 'archive' ? 'bg-gray-900 text-gray-200' : 'bg-gray-200 text-gray-700'
                       }`}>
                         {adminArchivedOnlineStudents.length}
@@ -13862,43 +13871,43 @@ function initAllSheetsMenu() {
               {adminActiveTab === 'search' && (
                 <div className="space-y-6">
                   {/* بطاقة المزامنة الذكية مع تطبيق السنتر والدرس */}
-                  <div className="bg-gradient-to-br from-indigo-950 via-primary to-slate-900 text-white rounded-2xl shadow-xl p-5 sm:p-6 border border-white/10">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/10 pb-4 mb-5">
+                  <div className="bg-gradient-to-br from-indigo-950 via-primary to-slate-900 text-white rounded-2xl shadow-xl p-4 sm:p-6 border border-white/10">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4 border-b border-white/10 pb-3 sm:pb-4 mb-4 sm:mb-5">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                          <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-[10px] sm:text-xs px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
                             <i className="fas fa-magic text-[10px]"></i> مزامنة آلية ذكية
                           </span>
-                          <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                          <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] sm:text-xs px-2.5 py-0.5 rounded-full font-bold">
                             المرحلة: 2 ثانوي / 2 بكالوريا
                           </span>
                         </div>
-                        <h2 className="text-lg sm:text-xl font-black flex items-center gap-2">
-                          <i className="fab fa-google-drive text-amber-400 text-xl"></i> مزامنة اشتراكات تطبيق الدرس والسنتر
+                        <h2 className="text-base sm:text-xl font-black flex items-center gap-2">
+                          <i className="fab fa-google-drive text-amber-400 text-lg sm:text-xl"></i> مزامنة اشتراكات تطبيق الدرس والسنتر
                         </h2>
-                        <p className="text-blue-200 text-xs sm:text-sm mt-1">تحديث شهور وسداد الطلاب تلقائياً برقم الهاتف من مجلد النسخ الاحتياطية (System_Backups).</p>
+                        <p className="text-blue-200 text-xs sm:text-sm mt-0.5 sm:mt-1">تحديث شهور وسداد الطلاب تلقائياً برقم الهاتف من مجلد النسخ الاحتياطية (System_Backups).</p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       {/* الخيار الأول: سحابياً من Google Drive */}
-                      <div className="bg-white/5 hover:bg-white/10 transition-all backdrop-blur-sm border border-white/10 rounded-xl p-4 flex flex-col justify-between gap-3">
+                      <div className="bg-white/5 hover:bg-white/10 transition-all backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-4 flex flex-col justify-between gap-2.5 sm:gap-3">
                         <div>
-                          <div className="font-bold text-sm text-amber-300 flex items-center gap-1.5 mb-1">
+                          <div className="font-bold text-xs sm:text-sm text-amber-300 flex items-center gap-1.5 mb-1">
                             <i className="fas fa-cloud-download-alt"></i> 1. المزامنة السحابية (Google Drive)
                           </div>
-                          <p className="text-xs text-blue-100/80 leading-relaxed">
+                          <p className="text-[11px] sm:text-xs text-blue-100/80 leading-relaxed">
                             قراءة أحدث ملف باك آب تم رفعه اليوم تلقائياً إلى مجلد <span className="font-mono bg-black/30 px-1 py-0.5 rounded text-amber-200" dir="ltr">System_Backups</span> ومطابقة الشهور المدفوعة.
                           </p>
                         </div>
                         <button
                           onClick={handleSyncDriveBackups}
                           disabled={isSyncingDrive || isSyncingLocal}
-                          className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black py-2.5 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+                          className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black py-2 px-3 sm:py-2.5 sm:px-4 rounded-lg sm:rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 sm:gap-2 disabled:opacity-50 text-xs sm:text-sm cursor-pointer"
                         >
                           {isSyncingDrive ? (
                             <>
-                              <i className="fas fa-spinner fa-spin"></i> جاري قراءة الدرايف وتحديث الشيت...
+                              <i className="fas fa-spinner fa-spin"></i> جاري قراءة الدرايف...
                             </>
                           ) : (
                             <>
@@ -13909,16 +13918,16 @@ function initAllSheetsMenu() {
                       </div>
 
                       {/* الخيار الثاني: رفع ملف الباك آب محلياً */}
-                      <div className="bg-white/5 hover:bg-white/10 transition-all backdrop-blur-sm border border-white/10 rounded-xl p-4 flex flex-col justify-between gap-3">
+                      <div className="bg-white/5 hover:bg-white/10 transition-all backdrop-blur-sm border border-white/10 rounded-xl p-3 sm:p-4 flex flex-col justify-between gap-2.5 sm:gap-3">
                         <div>
-                          <div className="font-bold text-sm text-cyan-300 flex items-center gap-1.5 mb-1">
+                          <div className="font-bold text-xs sm:text-sm text-cyan-300 flex items-center gap-1.5 mb-1">
                             <i className="fas fa-file-code"></i> 2. الرفع المباشر (ملف JSON محلي)
                           </div>
-                          <p className="text-xs text-blue-100/80 leading-relaxed">
+                          <p className="text-[11px] sm:text-xs text-blue-100/80 leading-relaxed">
                             اختيار ملف <span className="font-mono bg-black/30 px-1 py-0.5 rounded text-cyan-200" dir="ltr">emergency_autosave.json</span> أو أي ملف باك آب من جهازك فوراً كخطة بديلة.
                           </p>
                         </div>
-                        <label className={`w-full bg-white/15 hover:bg-white/25 text-white font-black py-2.5 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 text-sm cursor-pointer border border-white/20 ${(isSyncingDrive || isSyncingLocal) ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <label className={`w-full bg-white/15 hover:bg-white/25 text-white font-black py-2 px-3 sm:py-2.5 sm:px-4 rounded-lg sm:rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 sm:gap-2 text-xs sm:text-sm cursor-pointer border border-white/20 ${(isSyncingDrive || isSyncingLocal) ? 'opacity-50 pointer-events-none' : ''}`}>
                           <input
                             type="file"
                             accept=".json"
@@ -13928,7 +13937,7 @@ function initAllSheetsMenu() {
                           />
                           {isSyncingLocal ? (
                             <>
-                              <i className="fas fa-spinner fa-spin"></i> جاري معالجة الملف والتحديث...
+                              <i className="fas fa-spinner fa-spin"></i> جاري معالجة الملف...
                             </>
                           ) : (
                             <>
@@ -13940,8 +13949,11 @@ function initAllSheetsMenu() {
                     </div>
                   </div>
                 <div className="bg-white rounded-2xl shadow-md overflow-hidden">
-                  <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-4"><h2 className="text-xl font-black text-primary"><i className="fas fa-search-dollar text-green-600 ml-1"></i> تفعيل المتأخرات</h2><input type="text" placeholder="بحث بالاسم أو الرقم..." className="border-2 rounded-xl px-4 py-2 w-full sm:w-64 focus:border-primary outline-none text-sm font-bold" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} /></div>
-                  <div className="p-6 space-y-3">
+                  <div className="bg-gray-50 px-3.5 sm:px-6 py-3 sm:py-4 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-4">
+                    <h2 className="text-base sm:text-xl font-black text-primary"><i className="fas fa-search-dollar text-green-600 ml-1"></i> تفعيل المتأخرات</h2>
+                    <input type="text" placeholder="بحث بالاسم أو الرقم..." className="border border-gray-300 rounded-xl px-3 py-1.5 sm:px-4 sm:py-2 w-full sm:w-64 focus:border-primary outline-none text-xs sm:text-sm font-bold bg-white" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} />
+                  </div>
+                  <div className="p-3 sm:p-6 space-y-2.5 sm:space-y-3">
                     {(() => {
                       const list: React.ReactNode[] = [];
                       Object.entries(studentsList).forEach(([phone, arr]) => {
@@ -13956,17 +13968,17 @@ function initAllSheetsMenu() {
                           if (!st.missingMonths || st.missingMonths.length === 0) return;
                           
                           list.push(
-                            <div key={`${phone}-${i}`} className="bg-red-50 border border-red-100 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-4">
-                              <div className="flex items-center gap-3 w-full sm:w-auto">
-                                <div className="font-black text-base sm:text-lg text-red-800 truncate max-w-[150px] sm:max-w-[200px]" title={st.name}>{st.name}</div>
-                                <div className="font-bold text-xs sm:text-sm text-red-500 bg-red-100/50 px-2 py-1 rounded-md" dir="ltr">{phone}</div>
+                            <div key={`${phone}-${i}`} className="bg-red-50 border border-red-100 p-3 sm:p-4 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-4">
+                              <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                                <div className="font-black text-xs sm:text-base text-red-800 truncate max-w-[150px] sm:max-w-[200px]" title={st.name}>{st.name}</div>
+                                <div className="font-bold text-[10px] sm:text-xs text-red-500 bg-red-100/50 px-2 py-0.5 rounded-md" dir="ltr">{phone}</div>
                               </div>
-                              <div className="flex flex-wrap gap-2 justify-center shrink-0">
+                              <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-start sm:justify-center shrink-0 w-full sm:w-auto">
                                 {st.missingMonths.map((m, mIdx) => (
                                   <button 
                                     key={mIdx} 
                                     onClick={() => handleActivateMonth(phone, st.name, m)} 
-                                    className="bg-white border-2 border-red-500 text-red-600 font-bold px-3 py-1.5 rounded-lg text-sm hover:bg-red-500 hover:text-white transition-colors flex items-center gap-1"
+                                    className="bg-white border border-red-500 text-red-600 font-bold px-2.5 py-1 rounded-lg text-xs hover:bg-red-500 hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
                                   >
                                     <i className="fas fa-check-circle"></i> تفعيل {m}
                                   </button>
@@ -13976,7 +13988,7 @@ function initAllSheetsMenu() {
                           );
                         });
                       });
-                      return list.length > 0 ? list : <div className="text-center text-gray-500 font-bold py-6">لا توجد اشتراكات متأخرة مطابقة.</div>;
+                      return list.length > 0 ? list : <div className="text-center text-gray-500 font-bold py-6 text-xs sm:text-sm">لا توجد اشتراكات متأخرة مطابقة.</div>;
                     })()}
                   </div>
                 </div>
@@ -13996,17 +14008,73 @@ function initAllSheetsMenu() {
                   </div>
 
                   <div className="p-4 sm:p-6">
-                    {/* شريط التبويبات الفرعية للإعدادات */}
-                    <div className="bg-gray-100/90 p-1.5 rounded-2xl flex flex-wrap gap-1.5 mb-6 border border-gray-200">
+                    {/* شريط التبويبات الفرعية للإعدادات بتلوين مخصص وظهور كامل مباشر لجميع الأقسام دون إخفاء أو تمرير */}
+                    <div className="bg-slate-100/90 p-1.5 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-5 border border-slate-200">
                       {[
-                        { id: 'prices', label: 'باقات الاشتراك', icon: 'fa-tags' },
-                        { id: 'announcement', label: 'إشعار الطلاب', icon: 'fa-bullhorn' },
-                        { id: 'timer', label: 'العداد الزمني', icon: 'fa-clock' },
-                        { id: 'ai', label: 'الذكاء الاصطناعي', icon: 'fa-robot' },
-                        { id: 'buttons', label: 'ظهور الأزرار', icon: 'fa-sliders-h' },
-                        { id: 'certificates_config', label: 'الشهادات والوحدات', icon: 'fa-award' },
-                        { id: 'security', label: 'الأمان ومكافحة الغش', icon: 'fa-shield-halved' },
-                        { id: 'all', label: 'عرض الكل', icon: 'fa-layer-group' }
+                        { 
+                          id: 'prices', 
+                          label: 'باقات الاشتراك', 
+                          icon: 'fa-tags', 
+                          activeBg: 'bg-blue-600 text-white shadow-xs border-blue-600', 
+                          inactiveBg: 'bg-white text-blue-900 border-blue-200 hover:bg-blue-50',
+                          iconColor: 'text-blue-500' 
+                        },
+                        { 
+                          id: 'announcement', 
+                          label: 'إشعار الطلاب', 
+                          icon: 'fa-bullhorn', 
+                          activeBg: 'bg-amber-500 text-white shadow-xs border-amber-500', 
+                          inactiveBg: 'bg-white text-amber-900 border-amber-200 hover:bg-amber-50',
+                          iconColor: 'text-amber-500' 
+                        },
+                        { 
+                          id: 'timer', 
+                          label: 'العداد الزمني', 
+                          icon: 'fa-clock', 
+                          activeBg: 'bg-emerald-600 text-white shadow-xs border-emerald-600', 
+                          inactiveBg: 'bg-white text-emerald-900 border-emerald-200 hover:bg-emerald-50',
+                          iconColor: 'text-emerald-500' 
+                        },
+                        { 
+                          id: 'ai', 
+                          label: 'الذكاء الاصطناعي', 
+                          icon: 'fa-robot', 
+                          activeBg: 'bg-purple-600 text-white shadow-xs border-purple-600', 
+                          inactiveBg: 'bg-white text-purple-900 border-purple-200 hover:bg-purple-50',
+                          iconColor: 'text-purple-500' 
+                        },
+                        { 
+                          id: 'buttons', 
+                          label: 'ظهور الأزرار', 
+                          icon: 'fa-sliders-h', 
+                          activeBg: 'bg-teal-600 text-white shadow-xs border-teal-600', 
+                          inactiveBg: 'bg-white text-teal-900 border-teal-200 hover:bg-teal-50',
+                          iconColor: 'text-teal-500' 
+                        },
+                        { 
+                          id: 'certificates_config', 
+                          label: 'الشهادات والوحدات', 
+                          icon: 'fa-award', 
+                          activeBg: 'bg-amber-600 text-white shadow-xs border-amber-600', 
+                          inactiveBg: 'bg-white text-amber-950 border-amber-300 hover:bg-amber-50',
+                          iconColor: 'text-amber-600' 
+                        },
+                        { 
+                          id: 'security', 
+                          label: 'الأمان ومكافحة الغش', 
+                          icon: 'fa-shield-halved', 
+                          activeBg: 'bg-rose-600 text-white shadow-xs border-rose-600', 
+                          inactiveBg: 'bg-white text-rose-900 border-rose-200 hover:bg-rose-50',
+                          iconColor: 'text-rose-500' 
+                        },
+                        { 
+                          id: 'all', 
+                          label: 'عرض الكل', 
+                          icon: 'fa-layer-group', 
+                          activeBg: 'bg-slate-800 text-white shadow-xs border-slate-800', 
+                          inactiveBg: 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100',
+                          iconColor: 'text-slate-600' 
+                        }
                       ].map((tab) => {
                         const isActive = settingsSubTab === tab.id;
                         return (
@@ -14014,14 +14082,14 @@ function initAllSheetsMenu() {
                             key={tab.id}
                             type="button"
                             onClick={() => setSettingsSubTab(tab.id as any)}
-                            className={`flex-1 min-w-[110px] py-2 px-3 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                            className={`w-full py-2 px-2 rounded-xl text-[11px] sm:text-xs font-black transition-all flex items-center justify-center gap-1.5 border cursor-pointer active:scale-95 text-center ${
                               isActive
-                                ? 'bg-white text-primary shadow-sm border border-gray-200 scale-[1.02]'
-                                : 'text-gray-600 hover:bg-white/60 hover:text-primary'
+                                ? `${tab.activeBg} font-black shadow-xs scale-[1.02]`
+                                : `${tab.inactiveBg} font-bold shadow-2xs`
                             }`}
                           >
-                            <i className={`fas ${tab.icon} ${isActive ? 'text-secondary' : 'text-gray-400'}`}></i>
-                            <span>{tab.label}</span>
+                            <i className={`fas ${tab.icon} ${isActive ? 'text-white' : tab.iconColor} text-xs sm:text-sm shrink-0`}></i>
+                            <span className="truncate">{tab.label}</span>
                           </button>
                         );
                       })}
@@ -15185,7 +15253,7 @@ function initAllSheetsMenu() {
                       </div>
                       <button 
                         onClick={handleUpdateFee} 
-                        className="w-full sm:w-auto px-7 py-3 text-white font-black rounded-xl shadow-lg shadow-blue-900/20 transition-all bg-primary hover:bg-blue-800 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full sm:w-auto px-5 py-2.5 sm:px-7 sm:py-3 text-xs sm:text-sm text-white font-black rounded-xl shadow-md transition-all bg-primary hover:bg-blue-800 active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <i className="fas fa-save text-base"></i>
                         <span>حفظ كافة الإعدادات 💾</span>
@@ -15467,7 +15535,7 @@ function initAllSheetsMenu() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setSelectedPdfForView(null); setPdfZoom(100); }}
+                  onClick={() => { setSelectedPdfForView(null); setPdfZoom(100); setIsPdfPanMode(true); }}
                   className="bg-gray-800 hover:bg-gray-700 text-white w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer"
                   title="إغلاق العارض"
                 >
@@ -15485,35 +15553,38 @@ function initAllSheetsMenu() {
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
               />
 
-              {/* أداة التحكم العائمة في التكبير والتصغير وتغطية زر الانتقال الخارجي */}
-              <div className="absolute top-2.5 right-2.5 z-40 flex items-center gap-1.5 bg-slate-900/95 text-white backdrop-blur-md px-2.5 py-1.5 rounded-2xl shadow-xl border border-slate-700/90 pointer-events-auto select-none">
+              {/* أداة التحكم العائمة المصغرة في التكبير والتصغير بأقصى اليمين */}
+              <div className="absolute top-2.5 right-2.5 z-40 flex items-center gap-1 bg-slate-900/95 text-white backdrop-blur-md px-2 py-1 rounded-xl shadow-lg border border-slate-700/80 pointer-events-auto select-none">
                 <button
                   type="button"
                   onClick={() => setPdfZoom(prev => Math.min(prev + 20, 200))}
-                  className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-black text-sm transition-all cursor-pointer shadow-sm"
+                  className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
                   title="تكبير العرض (+)"
                 >
-                  <i className="fas fa-search-plus"></i>
+                  <i className="fas fa-search-plus text-[10px]"></i>
                 </button>
 
-                <span className="text-xs font-black px-1 min-w-[36px] text-center text-amber-400">
+                <span className="text-[11px] font-black px-1 min-w-[28px] text-center text-amber-400">
                   {pdfZoom}%
                 </span>
 
                 <button
                   type="button"
                   onClick={() => setPdfZoom(prev => Math.max(prev - 20, 80))}
-                  className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-black text-sm transition-all cursor-pointer shadow-sm"
+                  className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
                   title="تصغير العرض (-)"
                 >
-                  <i className="fas fa-search-minus"></i>
+                  <i className="fas fa-search-minus text-[10px]"></i>
                 </button>
 
                 {pdfZoom !== 100 && (
                   <button
                     type="button"
-                    onClick={() => setPdfZoom(100)}
-                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-gray-300 transition-all cursor-pointer mr-0.5"
+                    onClick={() => {
+                      setPdfZoom(100);
+                      handleScrollPdfToStart();
+                    }}
+                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-gray-300 transition-all cursor-pointer"
                     title="الحجم الافتراضي (100%)"
                   >
                     ١٠٠٪
@@ -15521,13 +15592,26 @@ function initAllSheetsMenu() {
                 )}
               </div>
 
+              {/* زر عائم في أسفل الشاشة يسار للرجوع لأول الصفحة */}
+              {pdfZoom > 100 && (
+                <button
+                  type="button"
+                  onClick={handleScrollPdfToStart}
+                  className="absolute bottom-4 left-4 z-40 w-10 h-10 rounded-full bg-emerald-600 hover:bg-emerald-700 active:scale-90 text-white shadow-2xl flex items-center justify-center transition-all cursor-pointer border border-white/20"
+                  title="الرجوع لأول وأعلى الصفحة"
+                >
+                  <i className="fas fa-arrow-up text-sm"></i>
+                </button>
+              )}
+
               {/* منطقة العرض القابلة للتمرير والتكبير الحقيقي */}
               <div 
-                className="flex-1 w-full h-full overflow-auto custom-scrollbar relative flex items-start justify-center"
+                ref={pdfScrollContainerRef}
+                className="flex-1 w-full h-full overflow-auto custom-scrollbar relative flex items-start justify-start select-none"
                 style={{ touchAction: 'pan-x pan-y' }}
               >
                 <div 
-                  className="transition-all duration-200 flex items-start justify-center shrink-0"
+                  className="transition-all duration-200 flex items-start justify-start shrink-0 relative"
                   style={{
                     width: pdfZoom > 100 ? `${pdfZoom}%` : '100%',
                     height: pdfZoom > 100 ? `${pdfZoom}%` : '100%',
@@ -15536,21 +15620,79 @@ function initAllSheetsMenu() {
                   }}
                 >
                   <div
-                    className="w-full h-full flex origin-top"
+                    className="w-full h-full flex origin-top-right relative overflow-hidden"
                     style={{
                       width: pdfZoom > 100 ? `${(100 / (pdfZoom / 100))}%` : '100%',
                       height: pdfZoom > 100 ? `${(100 / (pdfZoom / 100))}%` : '100%',
                       transform: `scale(${pdfZoom / 100})`,
-                      transformOrigin: 'top center',
+                      transformOrigin: 'top right',
                       transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
                     }}
                   >
                     <iframe
                       src={getPdfViewerLink(selectedPdfForView.url)}
-                      className="w-full h-full border-0 flex-1 block"
+                      className="w-full border-0 flex-1 block"
+                      style={{
+                        height: 'calc(100% + 42px)',
+                        marginTop: '-42px'
+                      }}
                       title={selectedPdfForView.title}
+                      sandbox="allow-scripts allow-same-origin allow-forms"
                       allowFullScreen
                     />
+
+                    {/* طبقة التقاط اللمس والسحب بالأصابع تلقائياً على كامل الشاشة عند التكبير */}
+                    {pdfZoom > 100 && (
+                      <div
+                        className="absolute inset-0 z-30 cursor-grab active:cursor-grabbing bg-transparent"
+                        style={{ touchAction: 'none' }}
+                        onTouchStart={(e) => {
+                          if (!pdfScrollContainerRef.current || e.touches.length === 0) return;
+                          const touch = e.touches[0];
+                          pdfTouchStartRef.current = {
+                            x: touch.clientX,
+                            y: touch.clientY,
+                            scrollLeft: pdfScrollContainerRef.current.scrollLeft,
+                            scrollTop: pdfScrollContainerRef.current.scrollTop,
+                          };
+                        }}
+                        onTouchMove={(e) => {
+                          if (!pdfTouchStartRef.current || !pdfScrollContainerRef.current || e.touches.length === 0) return;
+                          const touch = e.touches[0];
+                          const deltaX = touch.clientX - pdfTouchStartRef.current.x;
+                          const deltaY = touch.clientY - pdfTouchStartRef.current.y;
+                          
+                          pdfScrollContainerRef.current.scrollLeft = pdfTouchStartRef.current.scrollLeft - deltaX;
+                          pdfScrollContainerRef.current.scrollTop = pdfTouchStartRef.current.scrollTop - deltaY;
+                        }}
+                        onTouchEnd={() => {
+                          pdfTouchStartRef.current = null;
+                        }}
+                        onMouseDown={(e) => {
+                          if (!pdfScrollContainerRef.current || e.button !== 0) return;
+                          const startX = e.clientX;
+                          const startY = e.clientY;
+                          const startScrollLeft = pdfScrollContainerRef.current.scrollLeft;
+                          const startScrollTop = pdfScrollContainerRef.current.scrollTop;
+
+                          const onMouseMove = (moveEvent: MouseEvent) => {
+                            if (!pdfScrollContainerRef.current) return;
+                            const deltaX = moveEvent.clientX - startX;
+                            const deltaY = moveEvent.clientY - startY;
+                            pdfScrollContainerRef.current.scrollLeft = startScrollLeft - deltaX;
+                            pdfScrollContainerRef.current.scrollTop = startScrollTop - deltaY;
+                          };
+
+                          const onMouseUp = () => {
+                            window.removeEventListener('mousemove', onMouseMove);
+                            window.removeEventListener('mouseup', onMouseUp);
+                          };
+
+                          window.addEventListener('mousemove', onMouseMove, { passive: true });
+                          window.addEventListener('mouseup', onMouseUp, { once: true });
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               </div>

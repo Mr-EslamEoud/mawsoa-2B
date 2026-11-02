@@ -1093,26 +1093,26 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
     <>
       <div className={`bg-white rounded-2xl shadow-md overflow-hidden animate-fade-in ${selectedSubForReview ? 'hidden' : ''}`} dir="rtl">
       {/* رأس التبويب */}
-      <div className="bg-gradient-to-l from-amber-50/90 via-white to-orange-50/60 p-3 sm:p-5 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+      <div className="bg-gradient-to-l from-amber-50/90 via-white to-orange-50/60 p-2.5 sm:p-5 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5 sm:gap-3">
         <div>
-          <h2 className="text-base sm:text-xl font-black text-primary flex items-center gap-2">
+          <h2 className="text-sm sm:text-xl font-black text-primary flex items-center gap-1.5 sm:gap-2">
             <i className="fas fa-feather-alt text-amber-500"></i> تصحيح الأسئلة المقالية ✍️
           </h2>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
           {/* زر تفعيل / إيقاف الذكاء الاصطناعي الفوري */}
           <button
             type="button"
             onClick={handleToggleAiGrading}
-            className={`font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
+            className={`font-black text-[11px] sm:text-xs md:text-sm px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl shadow-2xs sm:shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer border ${
               isAiEnabled
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
                 : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
             }`}
             title={isAiEnabled ? "التصحيح التلقائي بالذكاء الاصطناعي مفعل (انقر للإيقاف المؤقت)" : "التصحيح التلقائي بالذكاء الاصطناعي موقوف (انقر للتفعيل)"}
           >
-            <span className={`w-2.5 h-2.5 rounded-full ${isAiEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+            <span className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${isAiEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
             <span>{isAiEnabled ? "الذكاء الاصطناعي: نشط 🟢" : "الذكاء الاصطناعي: موقوف ⏸️"}</span>
           </button>
 
@@ -1126,13 +1126,13 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
               setCustomPromptVal(getCustomAiPrompt());
               setShowAiSettingsModal(true);
             }}
-            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-black text-[11px] sm:text-xs md:text-sm px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl shadow-2xs sm:shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer"
             title="إعدادات مفاتيح الذكاء الاصطناعي والتدوير التلقائي وبرومبت التقييم"
           >
-            <i className="fas fa-brain text-indigo-600"></i>
+            <i className="fas fa-brain text-indigo-600 text-xs sm:text-sm"></i>
             <span>منظومة AI ⚙️</span>
             {geminiKeysList.length > 0 && (
-              <span className="bg-indigo-600 text-white text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full">
+              <span className="bg-indigo-600 text-white text-[9px] sm:text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full">
                 {toEasternArabic(geminiKeysList.length)}
               </span>
             )}
@@ -1142,10 +1142,10 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             type="button"
             onClick={() => fetchCloudSubmissions(true)}
             disabled={isLoadingCloud}
-            className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-[11px] sm:text-xs md:text-sm px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl shadow-2xs sm:shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer"
             title="تحديث وجلب كافة إجابات الطلاب المقالية من السحابة"
           >
-            <i className={isLoadingCloud ? "fas fa-spinner fa-spin" : "fas fa-cloud-arrow-down"}></i>
+            <i className={isLoadingCloud ? "fas fa-spinner fa-spin text-xs sm:text-sm" : "fas fa-cloud-arrow-down text-xs sm:text-sm"}></i>
             <span>{isLoadingCloud ? "جاري التحديث..." : "تحديث السحابة 🔄"}</span>
           </button>
 
@@ -1153,13 +1153,13 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
             <button
               type="button"
               onClick={onNavigateToApproval}
-              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm px-3.5 py-2 sm:py-2.5 rounded-xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer relative"
+              className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] sm:text-xs md:text-sm px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl shadow-2xs sm:shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer relative"
               title="الانتقال لاعتماد نتائج الطلاب ونشرها"
             >
-              <i className="fas fa-stamp text-yellow-300"></i>
+              <i className="fas fa-stamp text-yellow-300 text-xs sm:text-sm"></i>
               <span>اعتماد النتائج 🎯</span>
               {stats.reviewed > 0 && (
-                <span className="bg-white text-emerald-800 text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full shadow-2xs">
+                <span className="bg-white text-emerald-800 text-[9px] sm:text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full shadow-2xs">
                   {toEasternArabic(stats.reviewed)}
                 </span>
               )}
@@ -1179,22 +1179,22 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
         )}
 
         {/* لوحة المؤشرات الذكية والفلاتر السريعة بنقرة واحدة */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-3">
           {/* 1. بانتظار التصحيح */}
           <div 
             onClick={() => setStatusFilter('pending')}
-            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+            className={`p-2 sm:p-3.5 rounded-lg sm:rounded-2xl border sm:border-2 text-center cursor-pointer transition-all duration-200 select-none ${
               statusFilter === 'pending'
-                ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-400/40 shadow-xs'
+                ? 'border-amber-500 bg-amber-50 ring-1 sm:ring-2 ring-amber-400/40 shadow-xs'
                 : 'border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50/20'
             }`}
             title="انقر لعرض الطلاب بانتظار التصحيح فقط"
           >
-            <div className="flex items-center justify-center gap-1.5 mb-1">
-              <span className={`w-2 h-2 rounded-full bg-amber-500 ${stats.pending > 0 ? 'animate-ping' : ''}`}></span>
-              <span className="text-[11px] sm:text-xs font-black text-amber-800">⏳ بانتظار التصحيح</span>
+            <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5 sm:mb-1">
+              <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-amber-500 ${stats.pending > 0 ? 'animate-ping' : ''}`}></span>
+              <span className="text-[10px] sm:text-xs font-black text-amber-800">⏳ بانتظار التصحيح</span>
             </div>
-            <span className="text-lg sm:text-2xl font-black text-amber-950 block">
+            <span className="text-base sm:text-2xl font-black text-amber-950 block">
               {toEasternArabic(stats.pending)} طالب
             </span>
           </div>
@@ -1202,17 +1202,17 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           {/* 2. مسودات مصححة */}
           <div 
             onClick={() => setStatusFilter('reviewed')}
-            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+            className={`p-2 sm:p-3.5 rounded-lg sm:rounded-2xl border sm:border-2 text-center cursor-pointer transition-all duration-200 select-none ${
               statusFilter === 'reviewed'
-                ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-400/40 shadow-xs'
+                ? 'border-purple-500 bg-purple-50 ring-1 sm:ring-2 ring-purple-400/40 shadow-xs'
                 : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/20'
             }`}
             title="انقر لعرض المسودات المصححة الجاهزة للاعتماد"
           >
-            <div className="flex items-center justify-center gap-1.5 mb-1">
-              <span className="text-[11px] sm:text-xs font-black text-purple-800">💾 مسودات مصححة</span>
+            <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5 sm:mb-1">
+              <span className="text-[10px] sm:text-xs font-black text-purple-800">💾 مسودات مصححة</span>
             </div>
-            <span className="text-lg sm:text-2xl font-black text-purple-950 block">
+            <span className="text-base sm:text-2xl font-black text-purple-950 block">
               {toEasternArabic(stats.reviewed)} طالب
             </span>
           </div>
@@ -1220,17 +1220,17 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           {/* 3. معتمد ومؤرشف */}
           <div 
             onClick={() => setStatusFilter('approved')}
-            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+            className={`p-2 sm:p-3.5 rounded-lg sm:rounded-2xl border sm:border-2 text-center cursor-pointer transition-all duration-200 select-none ${
               statusFilter === 'approved'
-                ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-400/40 shadow-xs'
+                ? 'border-emerald-500 bg-emerald-50 ring-1 sm:ring-2 ring-emerald-400/40 shadow-xs'
                 : 'border-gray-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/20'
             }`}
             title="انقر لعرض الطلاب والامتحانات المعتمدة والمؤرشفة"
           >
-            <div className="flex items-center justify-center gap-1.5 mb-1">
-              <span className="text-[11px] sm:text-xs font-black text-emerald-800">✅ معتمد ومؤرشف</span>
+            <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5 sm:mb-1">
+              <span className="text-[10px] sm:text-xs font-black text-emerald-800">✅ معتمد ومؤرشف</span>
             </div>
-            <span className="text-lg sm:text-2xl font-black text-emerald-950 block">
+            <span className="text-base sm:text-2xl font-black text-emerald-950 block">
               {toEasternArabic(stats.approved)} طالب
             </span>
           </div>
@@ -1238,17 +1238,17 @@ export const AdminEssayReviewTab: React.FC<AdminEssayReviewTabProps> = ({
           {/* 4. إجمالي التسليمات */}
           <div 
             onClick={() => setStatusFilter('all')}
-            className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border-2 text-center cursor-pointer transition-all duration-200 select-none ${
+            className={`p-2 sm:p-3.5 rounded-lg sm:rounded-2xl border sm:border-2 text-center cursor-pointer transition-all duration-200 select-none ${
               statusFilter === 'all'
-                ? 'border-slate-800 bg-slate-100 ring-2 ring-slate-400/40 shadow-xs'
+                ? 'border-slate-800 bg-slate-100 ring-1 sm:ring-2 ring-slate-400/40 shadow-xs'
                 : 'border-gray-200 bg-white hover:border-slate-300 hover:bg-slate-50'
             }`}
             title="انقر لعرض كافة الطلاب بلا استثناء"
           >
-            <div className="flex items-center justify-center gap-1.5 mb-1">
-              <span className="text-[11px] sm:text-xs font-black text-slate-800">📁 إجمالي التسليمات</span>
+            <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-0.5 sm:mb-1">
+              <span className="text-[10px] sm:text-xs font-black text-slate-800">📁 إجمالي التسليمات</span>
             </div>
-            <span className="text-lg sm:text-2xl font-black text-slate-900 block">
+            <span className="text-base sm:text-2xl font-black text-slate-900 block">
               {toEasternArabic(stats.total)} تسليم
             </span>
           </div>

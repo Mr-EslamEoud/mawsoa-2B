@@ -839,12 +839,12 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto flex-wrap">
           <button
             type="button"
             onClick={handleRepairPastResults}
             disabled={isRepairingPast || isLoadingCloud}
-            className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer shadow-2xs active:scale-95"
             title="إعادة احتساب وتصحيح نسب الطلاب التي سُجلت سابقاً بنسب متدنية بسبب خلل القسمة"
           >
             <i className={`fas fa-wand-magic-sparkles ${isRepairingPast ? 'animate-spin' : 'text-amber-600'}`}></i>
@@ -855,7 +855,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
             type="button"
             onClick={refreshData}
             disabled={isLoadingCloud}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+            className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer shadow-2xs active:scale-95"
           >
             <i className={`fas fa-rotate ${isLoadingCloud ? 'animate-spin' : ''}`}></i>
             <span>تحديث</span>
@@ -865,29 +865,39 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
             type="button"
             onClick={handleReleaseExamForTraining}
             disabled={isReleasingTraining || isWithholdingTraining || isLoadingCloud}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
+            className="flex-1 sm:flex-initial px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-black text-[11px] sm:text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 sm:gap-2 shadow-xs active:scale-95 cursor-pointer"
             title="اعتماد كافة تسليمات هذا الامتحان ونشر النتيجة وإتاحة الامتحان فوراً لتدريب ومراجعة الطلاب"
           >
             <i className={`fas fa-paper-plane ${isReleasingTraining ? 'animate-bounce' : ''}`}></i>
-            <span>{isReleasingTraining ? 'جاري الإتاحة...' : (selectedQuizFilter !== 'all' ? `اعتماد وإتاحة التدريب (${toEasternArabic(filteredSubmissions.length)}) 📢` : 'اعتماد وإتاحة التدريب 📢')}</span>
+            <span>
+              {isReleasingTraining
+                ? 'جاري الإتاحة...'
+                : (selectedQuizFilter !== 'all' 
+                    ? `اعتماد وإتاحة (${toEasternArabic(filteredSubmissions.length)}) 📢` 
+                    : 'اعتماد وإتاحة التدريب 📢')}
+            </span>
           </button>
 
           <button
             type="button"
             onClick={handleApproveWithheldTraining}
             disabled={isReleasingTraining || isWithholdingTraining || isLoadingCloud}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
+            className="flex-1 sm:flex-initial px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg sm:rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-[11px] sm:text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 sm:gap-2 shadow-xs active:scale-95 cursor-pointer"
             title="اعتماد نتائج وشهادات الطلاب فوراً مع حجب الأسئلة وبنك الأخطاء مؤقتاً لمنع تسريب الامتحان للغائبين"
           >
             <i className={`fas fa-shield-halved ${isWithholdingTraining ? 'animate-spin' : 'text-amber-400'}`}></i>
-            <span>{isWithholdingTraining ? 'جاري الاعتماد والحجب...' : 'اعتماد وحجب الأسئلة (لمنع التسريب) 🔒'}</span>
+            <span>
+              {isWithholdingTraining
+                ? 'جاري الحجب...'
+                : 'اعتماد وحجب الأسئلة 🔒'}
+            </span>
           </button>
 
           {stats.totalReady > 0 && (
             <button
               type="button"
               onClick={() => setBatchModalOpen(true)}
-              className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 cursor-pointer"
+              className="flex-1 sm:flex-initial px-3.5 py-1.5 sm:px-5 sm:py-2 rounded-lg sm:rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] sm:text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 sm:gap-2 shadow-xs active:scale-95 cursor-pointer"
             >
               <i className="fas fa-check-double"></i>
               <span>اعتماد الكل ({toEasternArabic(stats.totalReady)})</span>
@@ -961,45 +971,45 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       </div>
 
       {/* 4. كروت الإحصاءات السريعة (أزرار تصفية باللمس مريحة للموبايل) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2">
         <button
           type="button"
           onClick={() => setStatusTab('ready')}
-          className={`p-3 rounded-2xl border-2 text-right transition-all cursor-pointer ${
+          className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl border-2 text-right transition-all cursor-pointer ${
             statusTab === 'ready'
-              ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 shadow-sm'
+              ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 shadow-2xs'
               : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-black">جاهز للاعتماد</span>
-            <span className="text-base">⚡</span>
+          <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+            <span className="text-[11px] sm:text-xs font-black">جاهز للاعتماد</span>
+            <span className="text-sm sm:text-base">⚡</span>
           </div>
-          <div className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
+          <div className="text-lg sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
             {toEasternArabic(stats.totalReady)}
           </div>
-          <div className="text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5">
-            فارغ ({stats.readyFast}) + مصحح ({stats.readyGraded})
+          <div className="text-[9px] sm:text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5 truncate">
+            فارغ ({toEasternArabic(stats.readyFast)}) + مصحح ({toEasternArabic(stats.readyGraded)})
           </div>
         </button>
 
         <button
           type="button"
           onClick={() => setStatusTab('needs_grading')}
-          className={`p-3 rounded-2xl border-2 text-right transition-all cursor-pointer ${
+          className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl border-2 text-right transition-all cursor-pointer ${
             statusTab === 'needs_grading'
-              ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 shadow-sm'
+              ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200 shadow-2xs'
               : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-black">يحتاج تصحيح</span>
-            <span className="text-base">✍️</span>
+          <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+            <span className="text-[11px] sm:text-xs font-black">يحتاج تصحيح</span>
+            <span className="text-sm sm:text-base">✍️</span>
           </div>
-          <div className="text-xl sm:text-2xl font-black text-amber-600 dark:text-amber-400">
+          <div className="text-lg sm:text-2xl font-black text-amber-600 dark:text-amber-400">
             {toEasternArabic(stats.needsGrading)}
           </div>
-          <div className="text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5">
+          <div className="text-[9px] sm:text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5 truncate">
             مقالي بانتظار تقديرك
           </div>
         </button>
@@ -1007,20 +1017,20 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         <button
           type="button"
           onClick={() => setStatusTab('approved')}
-          className={`p-3 rounded-2xl border-2 text-right transition-all cursor-pointer ${
+          className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl border-2 text-right transition-all cursor-pointer ${
             statusTab === 'approved'
-              ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-200 shadow-sm'
+              ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-200 shadow-2xs'
               : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-black">معتمد ومنشور</span>
-            <span className="text-base">✅</span>
+          <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+            <span className="text-[11px] sm:text-xs font-black">معتمد ومنشور</span>
+            <span className="text-sm sm:text-base">✅</span>
           </div>
-          <div className="text-xl sm:text-2xl font-black text-blue-600 dark:text-blue-400">
+          <div className="text-lg sm:text-2xl font-black text-blue-600 dark:text-blue-400">
             {toEasternArabic(stats.approved)}
           </div>
-          <div className="text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5">
+          <div className="text-[9px] sm:text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5 truncate">
             ظهرت نتيجتهم للطالب
           </div>
         </button>
@@ -1028,20 +1038,20 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
         <button
           type="button"
           onClick={() => setStatusTab('all')}
-          className={`p-3 rounded-2xl border-2 text-right transition-all cursor-pointer ${
+          className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl border-2 text-right transition-all cursor-pointer ${
             statusTab === 'all'
-              ? 'border-gray-500 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+              ? 'border-gray-500 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white shadow-2xs'
               : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-black">إجمالي التسليمات</span>
-            <span className="text-base">📁</span>
+          <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+            <span className="text-[11px] sm:text-xs font-black">إجمالي التسليمات</span>
+            <span className="text-sm sm:text-base">📁</span>
           </div>
-          <div className="text-xl sm:text-2xl font-black text-gray-800 dark:text-gray-200">
+          <div className="text-lg sm:text-2xl font-black text-gray-800 dark:text-gray-200">
             {toEasternArabic(stats.total)}
           </div>
-          <div className="text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5">
+          <div className="text-[9px] sm:text-[10px] text-gray-500 dark:text-gray-400 font-bold mt-0.5 truncate">
             كافة طلاب هذا الاختبار
           </div>
         </button>
@@ -1193,13 +1203,13 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 </div>
 
                 {/* أزرار التحكم والاعتماد بحجم مريح للموبايل وبدون نصوص طويلة */}
-                <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto">
+                <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 w-full sm:w-auto flex-wrap sm:flex-nowrap pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-gray-700">
                   {!sub.isFullyApproved && (cat === 'blank_or_pulled' || cat === 'graded_ready') && (
                     <>
                       <button
                         type="button"
                         onClick={() => handleApproveSingle(sub, true)}
-                        className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                        className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                         title="اعتماد النتيجة وإتاحة الامتحان وبنك الأخطاء للتدريب فوراً"
                       >
                         <i className="fas fa-check"></i>
@@ -1209,7 +1219,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                       <button
                         type="button"
                         onClick={() => handleApproveSingle(sub, false)}
-                        className="flex-1 sm:flex-initial px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-xs transition-all flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                        className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl bg-slate-800 hover:bg-slate-900 text-amber-300 border border-amber-500/40 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                         title="اعتماد النتيجة وإصدار الشهادة مع حجب الامتحان وبنك الأخطاء مؤقتاً لمنع التسريب"
                       >
                         <i className="fas fa-shield-halved text-amber-400"></i>
@@ -1222,7 +1232,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                     <button
                       type="button"
                       onClick={() => setQuickEditSub(sub)}
-                      className="flex-1 sm:flex-initial px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xs active:scale-95 cursor-pointer"
+                      className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                       title="بدء تصحيح المقالي لهذا الطالب"
                     >
                       <i className="fas fa-file-pen"></i>
@@ -1235,7 +1245,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                     <button
                       type="button"
                       onClick={() => setQuickEditSub(sub)}
-                      className="flex-1 sm:flex-initial px-3 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer"
+                      className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
                       title="إعادة فحص وتصحيح المقالي وتعديل الدرجات لهذا الطالب"
                     >
                       <i className="fas fa-feather-alt text-amber-500"></i>
@@ -1246,9 +1256,9 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setRetakeInlineSubId(prev => prev === sub.id ? null : sub.id)}
-                    className={`p-2.5 rounded-xl font-black text-xs transition-colors cursor-pointer ${
+                    className={`w-8 h-8 sm:w-auto sm:h-auto px-2 py-1.5 sm:p-2 rounded-lg sm:rounded-xl font-black text-[11px] sm:text-xs transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
                       retakeInlineSubId === sub.id
-                        ? 'bg-amber-500 text-white shadow-sm'
+                        ? 'bg-amber-500 text-white shadow-2xs'
                         : 'bg-gray-100 hover:bg-amber-100 dark:bg-gray-700 text-gray-600 hover:text-amber-700'
                     }`}
                     title="منح إعادة المحاولة للطالب"
@@ -1286,7 +1296,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                       <button
                         type="button"
                         onClick={() => handleGrantRetake(sub, 'full')}
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95 transition-all"
+                        className="flex-1 py-2 px-2.5 sm:py-2.5 sm:px-3 rounded-lg sm:rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] sm:text-xs flex items-center justify-center gap-1.5 sm:gap-2 shadow-2xs cursor-pointer active:scale-95 transition-all"
                       >
                         <i className="fas fa-sync-alt"></i>
                         <span>إعادة الامتحان بالكامل 🔄</span>
@@ -1294,7 +1304,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                       <button
                         type="button"
                         onClick={() => handleGrantRetake(sub, 'essay_only')}
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-white hover:bg-amber-50 dark:bg-gray-700 hover:dark:bg-gray-650 text-indigo-950 dark:text-indigo-200 font-black text-xs flex items-center justify-center gap-2 border-2 border-indigo-300 dark:border-indigo-500 shadow-xs cursor-pointer active:scale-95 transition-all"
+                        className="flex-1 py-2 px-2.5 sm:py-2.5 sm:px-3 rounded-lg sm:rounded-xl bg-white hover:bg-amber-50 dark:bg-gray-700 hover:dark:bg-gray-650 text-indigo-950 dark:text-indigo-200 font-black text-[11px] sm:text-xs flex items-center justify-center gap-1.5 sm:gap-2 border-2 border-indigo-300 dark:border-indigo-500 shadow-2xs cursor-pointer active:scale-95 transition-all"
                       >
                         <i className="fas fa-pen-fancy text-amber-500"></i>
                         <span>إعادة المقالي فقط مع حفظ الاختياري ✍️</span>

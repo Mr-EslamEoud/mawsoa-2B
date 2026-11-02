@@ -604,49 +604,50 @@ export const ExamSettingsModal: React.FC<ExamSettingsModalProps> = ({
         </div>
 
         {/* تذييل النافذة وإجراءات النشر والحفظ */}
-        <div className={`p-4 border-t flex flex-wrap items-center justify-between gap-3 shrink-0 ${
+        <div className={`p-3 sm:p-4 border-t flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0 ${
           isDarkMode ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-200'
         }`}>
           {/* زر المعاينة كمعلم */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 justify-between sm:justify-start">
             {onPreviewExam && (
               <button
                 type="button"
                 onClick={() => onPreviewExam(lesson, config)}
-                className="px-4 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center gap-2 transition-all border border-indigo-200 active:scale-95"
+                className="px-3 py-1.5 sm:px-4 sm:py-2.5 rounded-lg sm:rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] sm:text-xs flex items-center gap-1.5 sm:gap-2 transition-all border border-indigo-200 active:scale-95 cursor-pointer"
               >
                 <i className="fas fa-eye"></i> معاينة وتجربة كمعلم
               </button>
             )}
             {saveToast && (
-              <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 animate-fade-in flex items-center gap-1.5">
-                <i className="fas fa-check-circle"></i> تم حفظ الإعدادات بنجاح
+              <span className="text-[11px] sm:text-xs font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-emerald-200 animate-fade-in flex items-center gap-1.5">
+                <i className="fas fa-check-circle"></i> تم الحفظ
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2 mr-auto">
+          <div className="flex items-center gap-2 mr-auto w-full sm:w-auto">
             {/* زر النشر والإخفاء */}
             <button
               type="button"
               onClick={handlePublishToggle}
-              className={`px-4 sm:px-5 py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all flex items-center gap-2 shadow-md active:scale-95 ${
+              className={`flex-1 sm:flex-initial px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl font-black text-[11px] sm:text-xs md:text-sm transition-all flex items-center justify-center gap-1.5 sm:gap-2 shadow-xs active:scale-95 cursor-pointer ${
                 isPublished
                   ? 'bg-amber-600 hover:bg-amber-700 text-white'
                   : 'bg-emerald-600 hover:bg-emerald-700 text-white'
               }`}
             >
               <i className={`fas ${isPublished ? 'fa-eye-slash' : 'fa-rocket'}`}></i>
-              {isPublished ? 'إخفاء الامتحان (تحويل لمسودة)' : 'اعتماد ونشر الامتحان للطلاب 🚀'}
+              <span>{isPublished ? 'إخفاء (مسودة)' : 'اعتماد ونشر للطلاب 🚀'}</span>
             </button>
 
             {/* زر حفظ الإعدادات فقط */}
             <button
               type="button"
               onClick={handleSave}
-              className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-dark text-white font-black text-xs sm:text-sm transition-all shadow-md active:scale-95 flex items-center gap-2"
+              className="flex-1 sm:flex-initial px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl bg-primary hover:bg-primary-dark text-white font-black text-[11px] sm:text-xs md:text-sm transition-all shadow-xs active:scale-95 flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer"
             >
-              <i className="fas fa-save"></i> حفظ الإعدادات
+              <i className="fas fa-save"></i>
+              <span>حفظ الإعدادات</span>
             </button>
           </div>
         </div>
