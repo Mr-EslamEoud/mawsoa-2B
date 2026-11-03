@@ -877,6 +877,7 @@ export default function App() {
   const [isPdfPanMode, setIsPdfPanMode] = useState<boolean>(true);
   const pdfScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pdfTouchStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+  const pdfPinchStartRef = useRef<{ distance: number; initialZoom: number } | null>(null);
 
   const handleScrollPdfToStart = () => {
     if (pdfScrollContainerRef.current) {
@@ -5169,7 +5170,7 @@ export default function App() {
   const sendWhatsAppStudentWelcome = (phone: string, name: string, code: string, pkgType: string) => {
     const appLink = OFFICIAL_APP_URL;
     const cleanP = formatWhatsAppPhone(phone);
-    const welcomeMsg = `أهلاً بك يا بطل في موسوعة الكنز التعليمي 🎓\nيسعدنا انضمامك معنا في منصة التاريخ (2 بكالوريا) للأستاذ / إسلام سعود ✨\n\nتم تفعيل اشتراكك بنجاح (${pkgType})، وبيانات دخولك هي:\n📱 رقم الهاتف المسجل: ${phone}\n🔑 كود الطالب: ${code}\n🌐 رابط المنصة: ${appLink}\n\nنتمنى لك رحلة تفوق مميزة والدرجة النهائية بإذن الله! 🌟`;
+    const welcomeMsg = `أهلاً بك (${name}) في موسوعة الكنز التعليمي 🎓\nيسعدنا انضمامك معنا في منصة التاريخ (2 بكالوريا) للأستاذ / إسلام سعود ✨\n\nتم تفعيل اشتراكك بنجاح (${pkgType})، وبيانات دخولك هي:\n📱 رقم الهاتف المسجل: ${phone}\n🔑 كود الطالب: ${code}\n🌐 رابط المنصة: ${appLink}\n\nنتمنى لك رحلة تفوق مميزة والدرجة النهائية بإذن الله! 🌟`;
     const waUrl = `https://api.whatsapp.com/send?phone=${cleanP}&text=${encodeURIComponent(welcomeMsg)}`;
     const opened = window.open(waUrl, '_blank');
     if (!opened) {
@@ -5209,7 +5210,7 @@ export default function App() {
 
   const sendWhatsAppRenewalReminder = (phone: string, name: string, pkgType: string) => {
     const cleanP = formatWhatsAppPhone(phone);
-    const msg = `أهلاً بك يا بطل في موسوعة الكنز التعليمي 🎓\nالأستاذ / إسلام سعود يحييك ويتمنى لك دوام التفوق والتميز ✨\n\nنود تذكيرك بأن اشتراكك الحالي (${pkgType}) يوشك على الانتهاء.\nلضمان استمرار فتح الامتحانات وبنك الأسئلة ومتابعة التدريبات دون توقف، يمكنك تجديد الاشتراك بسهولة عبر:\n📱 فودافون كاش / إنستاباي: 01228466613\n\nبعد التحويل، يرجى إرسال صورة التحويل ليتم تجديد تفعيل حسابك فوراً.\nبالتوفيق دائماً يا بطل والدرجة النهائية بإذن الله! 🌟`;
+    const msg = `أهلاً بك (${name}) في موسوعة الكنز التعليمي 🎓\nالأستاذ / إسلام سعود يحييك ويتمنى لك دوام التفوق والتميز ✨\n\nنود تذكيرك بأن اشتراكك الحالي (${pkgType}) يوشك على الانتهاء.\nلضمان استمرار فتح الامتحانات وبنك الأسئلة ومتابعة التدريبات دون توقف، يمكنك تجديد الاشتراك بسهولة عبر:\n📱 فودافون كاش / إنستاباي: 01228466613\n\nبعد التحويل، يرجى إرسال صورة التحويل ليتم تجديد تفعيل حسابك فوراً.\nبالتوفيق دائماً والدرجة النهائية بإذن الله! 🌟`;
     const waUrl = `https://api.whatsapp.com/send?phone=${cleanP}&text=${encodeURIComponent(msg)}`;
     const opened = window.open(waUrl, '_blank');
     if (!opened) window.location.href = waUrl;
@@ -13847,7 +13848,7 @@ function initAllSheetsMenu() {
                           <button
                             onClick={() => {
                               const appLink = OFFICIAL_APP_URL;
-                              const msg = `أهلاً بك يا بطل في موسوعة الكنز التعليمي 🎓\nيسعدنا انضمامك معنا في منصة التاريخ (2 بكالوريا) للأستاذ / إسلام سعود ✨\n\nتم تفعيل اشتراكك بنجاح (${activationSuccess.packageType})، وبيانات دخولك هي:\n📱 رقم الهاتف المسجل: ${activationSuccess.phone}\n🔑 كود الطالب: ${activationSuccess.code}\n🌐 رابط المنصة: ${appLink}\n\nنتمنى لك رحلة تفوق مميزة والدرجة النهائية بإذن الله! 🌟`;
+                              const msg = `أهلاً بك (${activationSuccess.name}) في موسوعة الكنز التعليمي 🎓\nيسعدنا انضمامك معنا في منصة التاريخ (2 بكالوريا) للأستاذ / إسلام سعود ✨\n\nتم تفعيل اشتراكك بنجاح (${activationSuccess.packageType})، وبيانات دخولك هي:\n📱 رقم الهاتف المسجل: ${activationSuccess.phone}\n🔑 كود الطالب: ${activationSuccess.code}\n🌐 رابط المنصة: ${appLink}\n\nنتمنى لك رحلة تفوق مميزة والدرجة النهائية بإذن الله! 🌟`;
                               navigator.clipboard.writeText(msg);
                               showAlert('تم نسخ الرسالة وبيانات الدخول إلى الحافظة بنجاح!');
                             }}
@@ -15557,7 +15558,7 @@ function initAllSheetsMenu() {
               <div className="absolute top-2.5 right-2.5 z-40 flex items-center gap-1 bg-slate-900/95 text-white backdrop-blur-md px-2 py-1 rounded-xl shadow-lg border border-slate-700/80 pointer-events-auto select-none">
                 <button
                   type="button"
-                  onClick={() => setPdfZoom(prev => Math.min(prev + 20, 200))}
+                  onClick={() => setPdfZoom(prev => Math.min(prev + 25, 350))}
                   className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
                   title="تكبير العرض (+)"
                 >
@@ -15570,7 +15571,7 @@ function initAllSheetsMenu() {
 
                 <button
                   type="button"
-                  onClick={() => setPdfZoom(prev => Math.max(prev - 20, 80))}
+                  onClick={() => setPdfZoom(prev => Math.max(prev - 25, 75))}
                   className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-indigo-600 active:scale-95 text-white flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
                   title="تصغير العرض (-)"
                 >
@@ -15641,32 +15642,63 @@ function initAllSheetsMenu() {
                       allowFullScreen
                     />
 
-                    {/* طبقة التقاط اللمس والسحب بالأصابع تلقائياً على كامل الشاشة عند التكبير */}
+                    {/* طبقة التقاط اللمس والسحب بالأصابع والتكبير بإصبعين (Pinch to Zoom) */}
                     {pdfZoom > 100 && (
                       <div
                         className="absolute inset-0 z-30 cursor-grab active:cursor-grabbing bg-transparent"
                         style={{ touchAction: 'none' }}
                         onTouchStart={(e) => {
-                          if (!pdfScrollContainerRef.current || e.touches.length === 0) return;
-                          const touch = e.touches[0];
-                          pdfTouchStartRef.current = {
-                            x: touch.clientX,
-                            y: touch.clientY,
-                            scrollLeft: pdfScrollContainerRef.current.scrollLeft,
-                            scrollTop: pdfScrollContainerRef.current.scrollTop,
-                          };
+                          if (!pdfScrollContainerRef.current) return;
+                          if (e.touches.length === 1) {
+                            const touch = e.touches[0];
+                            pdfPinchStartRef.current = null;
+                            pdfTouchStartRef.current = {
+                              x: touch.clientX,
+                              y: touch.clientY,
+                              scrollLeft: pdfScrollContainerRef.current.scrollLeft,
+                              scrollTop: pdfScrollContainerRef.current.scrollTop,
+                            };
+                          } else if (e.touches.length === 2) {
+                            pdfTouchStartRef.current = null;
+                            const t1 = e.touches[0];
+                            const t2 = e.touches[1];
+                            const distance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+                            pdfPinchStartRef.current = { distance, initialZoom: pdfZoom };
+                          }
                         }}
                         onTouchMove={(e) => {
-                          if (!pdfTouchStartRef.current || !pdfScrollContainerRef.current || e.touches.length === 0) return;
-                          const touch = e.touches[0];
-                          const deltaX = touch.clientX - pdfTouchStartRef.current.x;
-                          const deltaY = touch.clientY - pdfTouchStartRef.current.y;
-                          
-                          pdfScrollContainerRef.current.scrollLeft = pdfTouchStartRef.current.scrollLeft - deltaX;
-                          pdfScrollContainerRef.current.scrollTop = pdfTouchStartRef.current.scrollTop - deltaY;
+                          if (e.touches.length === 2 && pdfPinchStartRef.current && pdfPinchStartRef.current.distance > 0) {
+                            // تكبير وتصغير فوري وسلس بإصبعين (Pinch to Zoom)
+                            const t1 = e.touches[0];
+                            const t2 = e.touches[1];
+                            const currentDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+                            const factor = currentDist / pdfPinchStartRef.current.distance;
+                            const targetZoom = Math.round(Math.min(350, Math.max(80, pdfPinchStartRef.current.initialZoom * factor)));
+                            setPdfZoom(targetZoom);
+                          } else if (e.touches.length === 1 && pdfTouchStartRef.current && pdfScrollContainerRef.current) {
+                            // سحب وتصفح بإصبع واحد
+                            const touch = e.touches[0];
+                            const deltaX = touch.clientX - pdfTouchStartRef.current.x;
+                            const deltaY = touch.clientY - pdfTouchStartRef.current.y;
+                            pdfScrollContainerRef.current.scrollLeft = pdfTouchStartRef.current.scrollLeft - deltaX;
+                            pdfScrollContainerRef.current.scrollTop = pdfTouchStartRef.current.scrollTop - deltaY;
+                          }
                         }}
-                        onTouchEnd={() => {
-                          pdfTouchStartRef.current = null;
+                        onTouchEnd={(e) => {
+                          if (e.touches.length === 0) {
+                            pdfTouchStartRef.current = null;
+                            pdfPinchStartRef.current = null;
+                          } else if (e.touches.length === 1 && pdfScrollContainerRef.current) {
+                            // الانتقال السلس للسحب بإصبع واحد عند رفع أحد الأصابع
+                            pdfPinchStartRef.current = null;
+                            const touch = e.touches[0];
+                            pdfTouchStartRef.current = {
+                              x: touch.clientX,
+                              y: touch.clientY,
+                              scrollLeft: pdfScrollContainerRef.current.scrollLeft,
+                              scrollTop: pdfScrollContainerRef.current.scrollTop,
+                            };
+                          }
                         }}
                         onMouseDown={(e) => {
                           if (!pdfScrollContainerRef.current || e.button !== 0) return;

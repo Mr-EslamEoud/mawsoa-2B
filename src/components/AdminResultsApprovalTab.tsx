@@ -677,7 +677,7 @@ export const AdminResultsApprovalTab: React.FC<AdminResultsApprovalTabProps> = (
                                     const cleanPhone = String(sub.studentPhone || '').replace(/[^\d]/g, '');
                                     const intl = cleanPhone.startsWith('0') ? `+20${cleanPhone.slice(1)}` : `+20${cleanPhone}`;
                                     const msg = encodeURIComponent(
-                                      `مرحباً بك يا بطل (${sub.studentName}) 🌟\nمعك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
+                                      `مرحباً بك (${sub.studentName}) 🌟\nمعك أستاذك إسلام سعود من منصة "موسوعة الكنز التعليمي".\n\n` +
                                       `✅ نتيجة امتحانك: *${sub.quizTitle}*\n` +
                                       `📊 الدرجة المعتمدة: *${currentScore} من ${maxSc}* (${perc}%)\n` +
                                       `حالة النتيجة: ${sub.isFullyApproved ? 'معتمدة ومنشورة 📢' : 'قيد المراجعة والاعتماد ⏳'}\n\n` +

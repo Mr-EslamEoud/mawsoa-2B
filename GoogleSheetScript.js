@@ -496,7 +496,7 @@ function doPost(e) {
               var curStatus = eData[ei][8];
               var newScore = (payload.teacherScore !== undefined && targetQText) ? payload.teacherScore : curScore;
               var newFeedback = (payload.teacherFeedback !== undefined && targetQText) ? payload.teacherFeedback : curFeedback;
-              var newStatus = payload.isApproved !== undefined ? (payload.isApproved ? "معتمد" : "قيد المراجعة") : (payload.status ? payload.status : curStatus);
+              var newStatus = (payload.status) ? payload.status : (payload.isApproved !== undefined ? (payload.isApproved ? "معتمد" : "قيد المراجعة") : curStatus);
               // تحديث جماعي للأعمدة 7، 8، 9 بدفعة واحدة
               essaySheet.getRange(ei + 1, 7, 1, 3).setValues([[newScore, newFeedback, newStatus]]);
             }

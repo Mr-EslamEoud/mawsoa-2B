@@ -1077,11 +1077,16 @@ export const evaluateHighSchoolEssayEngine = (
   let suggestedScore = Math.round(totalEarnedScore * 4) / 4;
   suggestedScore = Math.max(0, Math.min(maxScore, suggestedScore));
 
+  // إذا استوفى الطالب جميع كيانات ومفاهيم السجل التاريخي دون أي استطراد أو خصم، يمنح الدرجة الكاملة فوراً
+  if (missingEntities.length === 0 && offTopicCheck.penalty === 0 && !hasEgyptianColloquial && totalEarnedScore >= maxScore * 0.85) {
+    suggestedScore = maxScore;
+  }
+
   const perc = Math.round((suggestedScore / maxScore) * 100);
 
   // إذا كانت الدرجة غير كاملة لكن جميع كيانات السجل التاريخي تم ذكرها:
   // هذا يعني أن إجابة الطالب موجزة وتفتقر إلى التفاصيل والشرح الوارد بنموذج الإجابة
-  if (suggestedScore < maxScore * 0.85 && missingEntities.length === 0) {
+  if (suggestedScore < maxScore && missingEntities.length === 0) {
     const modelClauses = modelAnswer
       .split(/[.\n;،:-]/)
       .map(s => s.trim())
@@ -1115,9 +1120,9 @@ export const evaluateHighSchoolEssayEngine = (
     styleNote = `${offTopicCheck.note} نوصيك بتركيز إجابتك على الفترة الزمنية المطلوبة وتجنب الاستطراد في أحداث خارجة عن السؤال.`;
   } else if (hasEgyptianColloquial) {
     styleNote = 'لاحظتُ استخدام بعض التعبيرات العامية، واحرص دائماً على الاعتماد الكامل على الفصحى لضمان الدرجة النهائية في الثانوية العامة.';
-  } else if (suggestedScore >= maxScore * 0.85) {
-    styleNote = 'صياغة ممتازة ومنضبطة تاريخياً ولغوياً، والأفكار مترابطة وواضحة.';
-  } else if (matchedFigures.length > 0 && missingFigures.length === 0) {
+  } else if (suggestedScore >= maxScore) {
+    styleNote = 'صياغة ممتازة ومنضبطة تاريخياً ولغوياً، والأفكار مترابطة وواضحة ومكتملة.';
+  } else if (suggestedScore >= maxScore * 0.8) {
     styleNote = 'صياغة جيدة ومترابطة، ولكن يُفضل التوسع في السرد التحليلي وربط الأدوار بالنتائج لاستحقاق الدرجة النهائية.';
   } else if (missingFigures.length > 0) {
     styleNote = 'صياغتك مقبولة، ولكن ينقص إجابتك الدقة في ذكر الشخصيات القيادية المحددة ودور كل منها.';
@@ -1126,47 +1131,62 @@ export const evaluateHighSchoolEssayEngine = (
   }
 
   let verdictSummary = '';
-  if (suggestedScore >= maxScore * 0.85) {
-    verdictSummary = `ما شاء الله! ${ahsant} إجابة نموذجية ومكتملة استوفيتَ فيها كافة المحاور والأحداث والنتائج المطلوبة بدقة (${suggestedScore} من ${maxScore}).`;
+  if (suggestedScore >= maxScore) {
+    verdictSummary = `ما شاء الله! ${ahsant} إجابة نموذجية ومكتملة استوفيتَ فيها كافة المحاور والأحداث والنتائج المطلوبة بدقة.`;
+  } else if (suggestedScore >= maxScore * 0.8) {
+    verdictSummary = `${ahsant} في استيفاء معظم المحاور والمفاهيم الأساسية، ولكن إجابتك ينقصها مزيد من الاستفاضة والتدقيق التاريخي لنيل الدرجة الكاملة.`;
   } else if (missingEntities.length === 0 || (matchedFigures.length > 0 && missingFigures.length === 0 && missingCauses.length === 0 && missingResults.length === 0)) {
-    verdictSummary = `${ahsant} في استيفاء المحاور والمفاهيم الأساسية، ولكن إجابتك موجزة وينقصها الاستفاضة في الشرح والتحليل التاريخي لنيل الدرجة الكاملة (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في استيفاء المحاور والمفاهيم الأساسية، ولكن إجابتك موجزة وينقصها الاستفاضة في الشرح والتحليل التاريخي لنيل الدرجة الكاملة.`;
   } else if (missingCauses.length > 0 && missingResults.length > 0) {
-    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، لكنك ${aghfalt} عن استيفاء الأسباب والنتائج التاريخية المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، لكنك ${aghfalt} عن استيفاء الأسباب والنتائج التاريخية المحددة بالنموذج.`;
   } else if (missingCauses.length > 0) {
-    verdictSummary = `${ahsant} في سرد الأحداث، لكنك ${aghfalt} عن توضيح الأسباب والدوافع التاريخية المطلوبة (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في سرد الأحداث، لكنك ${aghfalt} عن توضيح الأسباب والدوافع التاريخية المطلوبة.`;
   } else if (missingResults.length > 0) {
-    verdictSummary = `${ahsant} في توضيح المقدمات، لكنك ${aghfalt} عن استنتاج النتائج والآثار التاريخية المترتبة عليها (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في توضيح المقدمات، لكنك ${aghfalt} عن استنتاج النتائج والآثار التاريخية المترتبة عليها.`;
   } else if (missingFigures.length > 0 && matchedFigures.length > 0) {
-    verdictSummary = `${ahsant} في الإشارة لبعض الشخصيات، لكنك ${aghfalt} عن ذكر شخصيات رئيسية أخرى وتوضيح دورها الوارد بالنموذج (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في الإشارة لبعض الشخصيات، لكنك ${aghfalt} عن ذكر شخصيات رئيسية أخرى وتوضيح دورها الوارد بالنموذج.`;
   } else if (missingFigures.length > 0 && matchedFigures.length === 0) {
-    verdictSummary = `أوردتَ فكرة عامة، لكنك ${aghfalt} عن ذكر الشخصيات التاريخية المحورية وأدوارها المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `أوردتَ فكرة عامة، لكنك ${aghfalt} عن ذكر الشخصيات التاريخية المحورية وأدوارها المحددة بالنموذج.`;
   } else {
-    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، ولكن إجابتك غير مكتملة وتفتقر للحقائق والتفاصيل المحددة بالنموذج (${suggestedScore} من ${maxScore}).`;
+    verdictSummary = `${ahsant} في الإلمام ببعض الجوانب، ولكن إجابتك غير مكتملة وتفتقر للحقائق والتفاصيل المحددة بالنموذج.`;
   }
 
   const validMissing = missingEntities
-    .map(p => p.replace(/^[^\s]+\s+/, '').replace(/^\[[^\]]+\]:\s*/, ''))
+    .filter(p => p && !p.includes('جميع العناصر') && !p.includes('جميع عناصر') && !p.includes('جميع النقاط') && !p.includes('استوفيت') && !p.includes('مكتملة'))
+    .map(p => 
+      p.replace(/^💡\s*/, '')
+       .replace(/^\[[^\]]+\]:\s*/, '')
+       .replace(/^(ينقصك|ينقص إجابتك|ينقصكِ)\s*(التوسع في توضيح|توضيح|ذكر)?:\s*/, '')
+       .replace(/^لم (يشر|يذكر|تشر|تذكر) إلى:\s*"?/, '')
+       .replace(/^أغفلتَ?\s*(عن)?\s*(ذكر|توضيح)?:\s*/, '')
+       .replace(/^\*{2,3}\s*/, '')
+       .replace(/\s*\*{2,3}$/, '')
+       .replace(/^["'«]/, '')
+       .replace(/["'»]$/, '')
+       .trim()
+    )
     .filter(Boolean);
 
   let studentFeedback = '';
-  if (suggestedScore >= maxScore * 0.85) {
+  const ahsantWord = isFemale ? 'أحسنتِ' : 'أحسنتَ';
+  const litaDmanWord = isFemale ? 'لتضمني' : 'لتضمن';
+  const yanqosWord = isFemale ? 'ينقص إجابتكِ' : 'ينقص إجابتكَ';
+
+  if (suggestedScore >= maxScore * 0.95 || (validMissing.length === 0 && suggestedScore >= maxScore * 0.85)) {
     studentFeedback = isFemale
       ? '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتِ وبارك الله فيكِ! 🌟'
       : '🎉 إجابة ممتازة ونموذجية ومكتملة العناصر بدقة، أحسنتَ وبارك الله فيك! 🌟';
-  } else if (matchedFigures.length > 0 && missingFigures.length === 0) {
-    studentFeedback = isFemale
-      ? `👍 أحسنتِ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقصكِ التوسع في الشرح والتحليل التاريخي لتضمني الدرجة الكاملة (${suggestedScore} من ${maxScore}). 💡`
-      : `👍 أحسنتَ بذكر الشخصيات والمفاهيم المطلوبة، ولكن ينقصكَ التوسع في الشرح والتحليل التاريخي لتضمن الدرجة الكاملة (${suggestedScore} من ${maxScore}). 💡`;
-  } else if (suggestedScore >= maxScore * 0.4) {
-    const missingClean = validMissing.slice(0, 2).join('، ');
-    studentFeedback = isFemale
-      ? `👍 أوردتِ فكرة عامة طيبة، ولكن ينقصكِ لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركّزي جيداً عليها لتضمني الدرجة الكاملة! 💡`
-      : `👍 أوردتَ فكرة عامة طيبة، ولكن ينقصكَ لاكتمال الدرجة النهائية توضيح: (${missingClean}). ركّز جيداً عليها لتضمن الدرجة الكاملة! 💡`;
+  } else if (validMissing.length > 0) {
+    const missingClean = validMissing.slice(0, 3).map(m => `• ${m}`).join('\n');
+    if (suggestedScore >= maxScore * 0.5) {
+      studentFeedback = `👍 ${ahsantWord} في الإلمام ببعض المحاور والمفاهيم الأساسية، ولكن ${yanqosWord} استكمال وتوضيح العناصر التالية ${litaDmanWord} الدرجة الكاملة:\n${missingClean}`;
+    } else {
+      studentFeedback = `⚠️ ${yanqosWord} مزيد من التركيز والاستفاضة في الشرح؛ حيث أغفلتَ عن توضيح العناصر التالية من نموذج الإجابة:\n${missingClean}`;
+    }
   } else {
-    const missingClean = validMissing.slice(0, 2).join('، ');
     studentFeedback = isFemale
-      ? `⚠️ إجابتكِ ناقصة وبحاجة لتركيز؛ حيث أغفلتِ عن توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`
-      : `⚠️ إجابتكَ ناقصة وبحاجة لتركيز؛ حيث أغفلتَ عن توضيح: (${missingClean}). يرجى مراجعة نموذج الإجابة جيداً.`;
+      ? '👍 أحسنتِ بذكر المفاهيم الأساسية، ولكن ينقص إجابتكِ مزيد من التوسع والتحليل التاريخي لاستحقاق الدرجة الكاملة. 💡'
+      : '👍 أحسنتَ بذكر المفاهيم الأساسية، ولكن ينقص إجابتكَ مزيد من التوسع والتحليل التاريخي لاستحقاق الدرجة الكاملة. 💡';
   }
 
   return {

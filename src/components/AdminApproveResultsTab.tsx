@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { StudentEssaySubmission, Unit } from '../types';
 import { formatPhoneStr, toEasternArabic, API_URL, SECRET_API_KEY } from '../utils';
 import { 
@@ -171,8 +172,10 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
           }
 
           const isAllApproved = grp.questions.length > 0 && grp.questions.every((q: any) => q.isApproved);
+          const essayQsInGrp = grp.questions.filter((q: any) => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ');
+          const hasTeacherScoreOnEssays = essayQsInGrp.length > 0 && essayQsInGrp.some((q: any) => q.teacherScore !== undefined && q.teacherScore !== null);
           const hasAllTeacherScores = grp.questions.length > 0 && grp.questions.every((q: any) => q.teacherScore !== undefined && q.teacherScore !== null);
-          const isReviewed = Boolean(isAllApproved || (grp as any).hasGradedStatus || hasAllTeacherScores);
+          const isReviewed = Boolean(isAllApproved || (grp as any).hasGradedStatus || hasAllTeacherScores || hasTeacherScoreOnEssays);
           
           const matchedLesson = findLessonForQuizInUnits(grp.quizTitle, undefined, data);
           const structure = matchedLesson ? calculateExamStructure(matchedLesson.questions, getExamConfig(matchedLesson.id)) : null;
@@ -273,6 +276,17 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   useEffect(() => {
     refreshData();
   }, []);
+
+  // قفل تمرير الشاشة الخلفية أثناء فتح نافذة الاعتماد الجماعي لضمان بقائها في مركز الشاشة المرئية دائماً
+  useEffect(() => {
+    if (batchModalOpen) {
+      const origOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = origOverflow;
+      };
+    }
+  }, [batchModalOpen]);
 
   // تحديد تصنيف حالة الطالب:
   // 1. blank_or_pulled: مقالي فارغ أو تم سحب الورقة لمخالفات (جاهز للاعتماد الفوري)
@@ -817,10 +831,11 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
   return (
     <div className="space-y-4 max-w-6xl mx-auto pb-16 animate-fade-in" dir="rtl">
       {/* 1. التنبيه العائم للأشعارات */}
-      {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[999999] bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl text-xs sm:text-sm font-black border border-white/20 animate-bounce">
+      {toastMessage && createPortal(
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[999999] bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl text-xs sm:text-sm font-black border border-white/20 animate-bounce" dir="rtl">
           {toastMessage}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 2. رأس الصفحة والأزرار الرئيسية */}
@@ -1240,16 +1255,16 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                     </button>
                   )}
 
-                  {/* زر إعادة التصحيح المطلوب: متاح للطلاب المصححين أو المعتمدين لتعديل الدرجات ومراجعة المقالي */}
+                  {/* زر تعديل درجات المقالي: متاح للطلاب المصححين أو المعتمدين لتعديل الدرجات ومراجعة المقالي اختيارياً */}
                   {(cat === 'graded_ready' || cat === 'already_approved' || (sub.questions && sub.questions.some(q => q.essayType !== 'اختر من متعدد' && q.essayType !== 'صح وخطأ'))) && (
                     <button
                       type="button"
                       onClick={() => setQuickEditSub(sub)}
-                      className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1 shadow-2xs active:scale-95 cursor-pointer"
-                      title="إعادة فحص وتصحيح المقالي وتعديل الدرجات لهذا الطالب"
+                      className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-black text-[11px] sm:text-xs transition-all flex items-center justify-center gap-1.5 shadow-2xs active:scale-95 cursor-pointer"
+                      title="تعديل درجات وملاحظات المقالي لهذا الطالب"
                     >
-                      <i className="fas fa-feather-alt text-amber-500"></i>
-                      <span>إعادة التصحيح</span>
+                      <i className="fas fa-pen-to-square text-indigo-600 dark:text-indigo-400"></i>
+                      <span>تعديل الدرجات ✏️</span>
                     </button>
                   )}
 
@@ -1319,8 +1334,8 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
       </div>
 
       {/* 6. نافذة تأكيد الاعتماد الجماعي */}
-      {batchModalOpen && (
-        <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+      {batchModalOpen && createPortal(
+        <div className="fixed inset-0 z-[999999] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 select-none" dir="rtl">
           <div className="bg-white dark:bg-gray-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl border-t-8 border-emerald-600 text-right space-y-4 animate-scale-up">
             <div className="flex items-center gap-3 border-b pb-3 dark:border-gray-700">
               <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl shrink-0">
@@ -1364,7 +1379,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 type="button"
                 disabled={processingBatch}
                 onClick={() => handleApproveBatch(true)}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-95"
               >
                 <i className="fas fa-check-circle"></i>
                 <span>اعتماد مع إتاحة بنك الأخطاء</span>
@@ -1374,7 +1389,7 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 type="button"
                 disabled={processingBatch}
                 onClick={() => handleApproveBatch(false)}
-                className="w-full py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                className="w-full py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
               >
                 <span>اعتماد فقط (حجب بنك الأخطاء)</span>
               </button>
@@ -1383,13 +1398,14 @@ export const AdminApproveResultsTab: React.FC<AdminApproveResultsTabProps> = ({
                 type="button"
                 disabled={processingBatch}
                 onClick={() => setBatchModalOpen(false)}
-                className="w-full py-2 rounded-xl text-gray-500 hover:text-gray-700 font-bold text-xs transition-colors"
+                className="w-full py-2 rounded-xl text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 font-bold text-xs transition-colors cursor-pointer"
               >
                 إلغاء
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 8. نافذة فحص وإعادة تصحيح إجابات الطالب المقالية مباشرة */}
